@@ -3,9 +3,8 @@
 from migration_fonction import *
 
 #** Paramètres *****************************************************************
-db_src = "odoo12"
-db_dst = "odoo13"
-#db_dst = "odoo13_migre"
+db_src = "coheliance8"
+db_dst = "coheliance14"
 #*******************************************************************************
 
 
@@ -171,12 +170,20 @@ if action=='compare_tables':
             nb_dst = CountRow(cr_dst, table)
             nb_champs_dst = NbChampsTable(cr_dst, table)
 
-        test1=test2=''
+        test1=test2=test3=test4=''
         if nb_src=='' or nb_dst=='':
             test1='test1'
         if str(nb_src)!=str(nb_dst):
             test2='test2'
-        print(s(str(ct)+'/'+str(nb),10),s(table,60),s(nb_src,10),s(nb_dst,10),s(nb_champs_src,15),s(nb_champs_dst,15),s(test1,10),s(test2,10))
+        if str(nb_src)!='' and nb_src>0 and nb_dst=='':
+            test3='test3'
+        if str(nb_src)!='' and nb_src>0 and str(nb_dst)!='':
+            test4='test4'
+        print(s(str(ct)+'/'+str(nb),10),s(table,50),s(nb_src,8),s(nb_dst,8),s(nb_champs_src,8),s(nb_champs_dst,8),s(test1,6),s(test2,6),s(test3,6),s(test4,6))
+    print("test1 : nb_src=='' or nb_dst==''")
+    print("test2 : str(nb_src)!=str(nb_dst)")
+    print("test3 : nb_src>0 and nb_dst=='' => Données dans la table source et table de destination inexistante")
+    print("test4 : str(nb_src)!='' and nb_src>0 and str(nb_dst)!='' => La table existe dans les 2 bases et contient des données dans src")
 
 
 if action=='table2csv':
