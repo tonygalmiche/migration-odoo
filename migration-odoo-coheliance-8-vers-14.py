@@ -42,7 +42,7 @@ tables=[
     # 'calendar_event_type',
     'crm_lead',
     'decimal_precision',
-    #'hr_employee',
+    'hr_employee',
     # 'ir_act_client',
     # 'ir_act_report_xml',
     # 'ir_act_server',
@@ -114,18 +114,18 @@ tables=[
     # 'payment_acquirer',
     # 'procurement_group',
     'product_category',
-    #'product_pricelist',
-    #'product_pricelist_item',
+    'product_pricelist',
+    'product_pricelist_item',
     'product_product',
-    # 'product_removal',
-    # 'product_supplier_taxes_rel',
-    # 'product_taxes_rel',
-    # 'product_template',
-    #'project_task_type',
+    'product_removal',
+    'product_supplier_taxes_rel',
+    'product_taxes_rel',
+    'product_template',
+    'project_task_type',
     #'report_paperformat',
     'res_bank',
-    #'res_company',
-    #'res_company_users_rel',
+    'res_company',
+    'res_company_users_rel',
     'res_country',
     'res_country_group',
     # 'res_country_res_country_group_rel',
@@ -142,11 +142,11 @@ tables=[
     'res_partner_category',
     'res_partner_res_partner_category_rel',
     'res_partner_title',
-    # 'res_users',
+    'res_users',
     #'resource_resource',
     # 'rule_group_rel',
     'sale_order',
-    #'sale_order_line',
+    'sale_order_line',
     # 'sale_order_line_invoice_rel',
     'stock_inventory',
     # 'stock_inventory_line',
@@ -169,11 +169,80 @@ for table in tables:
     if table=='product_attribute':
         rename={'type':'display_type'}
 
-    MigrationTable(db_src,db_dst,table,rename=rename)
+    # if table=='product_pricelist_item':
+    #     rename={'base_pricelist_id':'pricelist_id'}
 
 
 
+    default={}
+    if table=="product_template":
+        default={
+            'sale_line_warn'    : 'no-message',
+            'purchase_line_warn': 'no-message',
+            'tracking'          : 'none',
+        }
 
+    if table=="sale_order_line":
+        default={
+            'customer_lead': 0,
+        }
+
+    if table=="product_pricelist":
+        default={
+            'discount_policy': 'with_discount',
+        }
+
+    if table=="product_pricelist_item":
+        default={
+            'applied_on'   : '3_global',
+            'pricelist_id' : 1,
+            'compute_price': 'fixed',
+        }
+
+
+
+    if table=="project_task_type":
+        default={
+            'legend_blocked': 'Blocked',
+            'legend_done'   : 'Ready',
+            'legend_normal' : 'In Progress',
+        }
+
+    if table=="res_users":
+        default={
+            'notification_type': 'email',
+        }
+
+
+    if table=="hr_employee":
+        default={
+            'company_id': 1,
+            'active': True,
+        }
+
+
+    if table=="res_company":
+        default={
+            'fiscalyear_last_day'  : 31,
+            'fiscalyear_last_month': 12,
+            'account_opening_date' : '2020-01-01',
+        }
+
+
+    MigrationTable(db_src,db_dst,table,rename=rename,default=default)
+
+
+ 
+
+cnx_src,cr_src=GetCR(db_src)
+cnx_dst,cr_dst=GetCR(db_dst)
+
+
+#** Réinitialisation du mot de passe *******************************************
+SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
 
 
 
@@ -183,8 +252,6 @@ for table in tables:
 
 
 # #** res_partner ****************************************************************
-# cnx_src,cr_src=GetCR(db_src)
-# cnx_dst,cr_dst=GetCR(db_dst)
 
 # SQL="""
 #     SELECT id,name,supplier,customer

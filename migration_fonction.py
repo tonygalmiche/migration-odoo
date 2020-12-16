@@ -164,9 +164,9 @@ def NbChampsTable(cursor,table):
     return nb
 
 
-def Table2CSV(cursor,table,champs='*',rename=False):
+def Table2CSV(cursor,table,champs='*',rename=False, default={}):
     path = "/tmp/"+table+".csv"
-    if rename:
+    if rename or default:
         SQL="SELECT "+champs+" FROM "+table
         cursor.execute(SQL)
         rows = cursor.fetchall()
@@ -180,12 +180,17 @@ def Table2CSV(cursor,table,champs='*',rename=False):
                     x=rename[k]
                 keys2.append(x)
             break
+        for x in default:
+            keys1.append(x)
+            keys2.append(x)
         f = open(path, 'w', newline ='')
         writer = csv.DictWriter(f, fieldnames=keys1)
         f.write(','.join(keys2)+'\r\n')
         for row in rows:
+            for x in default:
+                row[x] = default[x]
             writer.writerow(row)
-    else:
+    if not rename and not default:
         #Source : https://kb.objectrocket.com/postgresql/from-postgres-to-csv-with-python-910
         SQL="SELECT "+champs+" FROM "+table
         SQL_for_file_output = "COPY ({0}) TO STDOUT WITH CSV HEADER".format(SQL)
@@ -223,7 +228,7 @@ def SetSequence(cr_dst,cnx_dst,table):
         pass
 
 
-def MigrationTable(db_src,db_dst,table,rename={}):
+def MigrationTable(db_src,db_dst,table,rename={},default={}):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     champs_src = GetChamps(cr_src,table)
@@ -232,6 +237,11 @@ def MigrationTable(db_src,db_dst,table,rename={}):
     for k in rename:
         champs_src.append(k)
         champs_dst.append(k)
+
+    #for k in default:
+    #    champs_src.append(k)
+    #    champs_dst.append(k)
+
     champs = list(set(champs))       # Supprimer les doublons
     champs.sort()                    # Trier
     communs=[]
@@ -239,7 +249,7 @@ def MigrationTable(db_src,db_dst,table,rename={}):
         if champ in champs_src and champ in champs_dst:
             communs.append(champ)
     champs=','.join(communs)
-    Table2CSV(cr_src,table,champs,rename=rename)
+    Table2CSV(cr_src,table,champs,rename=rename,default=default)
     CSV2Table(cnx_dst,cr_dst,table)
     SetSequence(cr_dst,cnx_dst,table)
 
