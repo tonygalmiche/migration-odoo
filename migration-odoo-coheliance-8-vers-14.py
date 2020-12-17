@@ -17,63 +17,6 @@ db_dst = db_migre
 
 
 
-tables=[
-    'is_affaire',
-    'res_partner',
-    'res_users',
-    'stock_location',
-]
-for table in tables:
-    print('Migration ',table)
-    rename={}
-    default={}
-
-    if table=="res_users":
-        default={
-            'notification_type': 'email',
-        }
-
-
-    MigrationTable(db_src,db_dst,table,rename=rename,default=default)
-
-
-MigrationResGroups(db_src,db_dst)
-MigrationDonneesTable(db_src,db_dst,'res_company')
-
-cnx_src,cr_src=GetCR(db_src)
-cnx_dst,cr_dst=GetCR(db_dst)
-
-#** Réinitialisation du mot de passe *******************************************
-SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
-cr_dst.execute(SQL)
-cnx_dst.commit()
-#*******************************************************************************
-
-#  id | active |     login      |                                                              password       
-#                                                         | company_id | partner_id |        create_date         |        
-#                                                                          signature                    
-#                                                                               | action_id | share | create_uid | write_uid |   
-#                                                                                     write_date         | totp_secret | notification_type | 
-#                                                                                      odoobot_state   | odoobot_failed | sale_team_id | 
-#                                                                                      target_sales_won | target_sales_done 
-
-champs='active,password,company_id,partner_id,notification_type'
-SQL="""
-    INSERT INTO res_users(id,login,"""+champs+""")
-    SELECT 2,'superuser',"""+champs+"""
-    FROM res_users WHERE id=1;
-    UPDATE res_users set login='__system__' where id=1;
-    UPDATE res_users set login='admin' where id=2;   
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-
-
-
-
-
-
-sys.exit()
 
 
 tables=[
@@ -289,20 +232,76 @@ for table in tables:
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
 
+
+
+
 MigrationResGroups(db_src,db_dst)
 MigrationDonneesTable(db_src,db_dst,'res_company')
 
- 
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
-
 
 #** Réinitialisation du mot de passe *******************************************
 SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
+
+
+
+#** res_users (id=2) *************************************************************
+champs = GetChamps(cr_dst,'res_partner')
+champs.remove('id')
+champs=','.join(champs)
+SQL="""
+    INSERT INTO res_partner(id,"""+champs+""")
+    SELECT 2,"""+champs+"""
+    FROM res_partner WHERE id=3;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+champs = GetChamps(cr_dst,'res_users')
+champs.remove('id')
+champs.remove('login')
+champs=','.join(champs)
+SQL="""
+    INSERT INTO res_users(id,login,"""+champs+""")
+    SELECT 2,'superuser',"""+champs+"""
+    FROM res_users WHERE id=1;
+    UPDATE res_users set login='__system__', partner_id=2 where id=1;
+    UPDATE res_users set login='admin', partner_id=3 where id=2;   
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
+
+
+rename={
+    'type'        : 'move_type',
+    'date_invoice': 'invoice_date',
+    'date_due'    : 'invoice_date_due',
+}
+default={
+    'date':'1990-01-01',
+    'name':'MIGRATION',
+    'invoice_partner_display_name': 'MIGRATION',
+    'state': 'draft',
+}
+MigrationTable(db_src,db_dst,'account_invoice', table_dst='account_move', rename=rename,default=default)
+
+
+
+rename={
+    'invoice_id': 'move_id',
+}
+default={
+    'currency_id': 1,
+}
+MigrationTable(db_src,db_dst,'account_invoice_line', table_dst='account_move_line', rename=rename,default=default)
+
+
 
 
 #** siret res_company migré dans res_partner ***********************************

@@ -200,16 +200,18 @@ def Table2CSV(cursor,table,champs='*',rename=False, default={}):
             cursor.copy_expert(SQL_for_file_output, f_output)
 
 
-def CSV2Table(cnx_dst,cr_dst,table):
+def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False):
     #Source : https://www.postgresqltutorial.com/import-csv-file-into-posgresql-table/
-    path = "/tmp/"+table+".csv"
+    if not table_dst:
+        table_dst=table_src
+    path = "/tmp/"+table_src+".csv"
     f = open(path, "r")
     champs = f.readline()
     SQL="""
-        ALTER TABLE """+table+""" DISABLE TRIGGER ALL;
-        DELETE FROM """+table+""";
-        COPY """+table+""" ("""+champs+""") FROM '/tmp/"""+table+""".csv' DELIMITER ',' CSV HEADER;
-        ALTER TABLE """+table+""" ENABLE TRIGGER ALL;
+        ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
+        DELETE FROM """+table_dst+""";
+        COPY """+table_dst+""" ("""+champs+""") FROM '/tmp/"""+table_src+""".csv' DELIMITER ',' CSV HEADER;
+        ALTER TABLE """+table_dst+""" ENABLE TRIGGER ALL;
     """
     cr_dst.execute(SQL)
     cnx_dst.commit()
@@ -230,11 +232,13 @@ def SetSequence(cr_dst,cnx_dst,table):
         pass
 
 
-def MigrationTable(db_src,db_dst,table,rename={},default={}):
+def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={}):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
-    champs_src = GetChamps(cr_src,table)
-    champs_dst = GetChamps(cr_dst,table)
+    if not table_dst:
+        table_dst=table_src
+    champs_src = GetChamps(cr_src,table_src)
+    champs_dst = GetChamps(cr_dst,table_dst)
     champs = champs_src + champs_dst # Concatener les 2 listes
     for k in rename:
         champs_src.append(k)
@@ -246,9 +250,9 @@ def MigrationTable(db_src,db_dst,table,rename={},default={}):
         if champ in champs_src and champ in champs_dst:
             communs.append(champ)
     champs=','.join(communs)
-    Table2CSV(cr_src,table,champs,rename=rename,default=default)
-    CSV2Table(cnx_dst,cr_dst,table)
-    SetSequence(cr_dst,cnx_dst,table)
+    Table2CSV(cr_src,table_src,champs,rename=rename,default=default)
+    CSV2Table(cnx_dst,cr_dst,table_src,table_dst)
+    SetSequence(cr_dst,cnx_dst,table_dst)
 
 
 def GetChampsCommuns(cr_src,cr_dst,table):

@@ -18,7 +18,7 @@ if len(sys.argv)<2:
     print('- compare_modules : Compare les modules disponibles et installés entre 2 bases')
     print('- compare_res_groups : Compare les groupes de la table res_groups entre 2 bases')
     print('- compare_tables : Compare les tables entre 2 bases')
-    print('- compare_champs table : Compare les champs d\'une table entre 2 bases')
+    print('- compare_champs table [table_dst] : Compare les champs d\'une table entre 2 bases. Si table_dst est indiqué compare avec celle-ci')
     print('- table2csv table : table de db_src dans /tmp/table.csv')
     print('- csv2screen table : Afficher /tmp/table.csv à l\'écran')
     print('- csv2table table : /tmp/table.csv dans table de db_dst')
@@ -130,12 +130,16 @@ if action=='compare_res_groups':
 
 
 if action=='compare_champs':
-    if len(sys.argv)!=3:
-        print('table obligatoire pour cette action')
+    if len(sys.argv)<3:
+        print('table [table_dst] obligatoire pour cette action')
         sys.exit()
-    table = sys.argv[2]
-    champs_src = GetChamps(cr_src,table)
-    champs_dst = GetChamps(cr_dst,table)
+    table_src = sys.argv[2]
+    table_dst = table_src
+    if len(sys.argv)>3:
+        table_dst = sys.argv[3]
+
+    champs_src = GetChamps(cr_src,table_src)
+    champs_dst = GetChamps(cr_dst,table_dst)
     champs = champs_src + champs_dst # Concatener les 2 listes
     champs = list(set(champs))       # Supprimer les doublons
     champs.sort()                    # Trier
@@ -144,10 +148,10 @@ if action=='compare_champs':
         ok_src = ok_dst = type_src = type_dst = ''
         if champ in champs_src:
             ok_src='ok_src'
-            type_src = GetChampsTable(cr_src,table,champ)[0][1]
+            type_src = GetChampsTable(cr_src,table_src,champ)[0][1]
         if champ in champs_dst:
             ok_dst='ok_dst'
-            type_dst = GetChampsTable(cr_dst,table,champ)[0][1]
+            type_dst = GetChampsTable(cr_dst,table_dst,champ)[0][1]
         print('-',s(champ,30),s(type_src,30),s(type_dst,30),s(ok_src,8),s(ok_dst,8))
 
 
