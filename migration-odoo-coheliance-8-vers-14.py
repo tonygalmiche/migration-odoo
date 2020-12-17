@@ -12,11 +12,68 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
 cde='echo "'+SQL+'" | psql postgres'
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
 
-#sys.exit()
+
+tables=[
+    'is_affaire',
+    'res_partner',
+    'res_users',
+    'stock_location',
+]
+for table in tables:
+    print('Migration ',table)
+    rename={}
+    default={}
+
+    if table=="res_users":
+        default={
+            'notification_type': 'email',
+        }
+
+
+    MigrationTable(db_src,db_dst,table,rename=rename,default=default)
+
+
+MigrationResGroups(db_src,db_dst)
+MigrationDonneesTable(db_src,db_dst,'res_company')
+
+cnx_src,cr_src=GetCR(db_src)
+cnx_dst,cr_dst=GetCR(db_dst)
+
+#** Réinitialisation du mot de passe *******************************************
+SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
+
+#  id | active |     login      |                                                              password       
+#                                                         | company_id | partner_id |        create_date         |        
+#                                                                          signature                    
+#                                                                               | action_id | share | create_uid | write_uid |   
+#                                                                                     write_date         | totp_secret | notification_type | 
+#                                                                                      odoobot_state   | odoobot_failed | sale_team_id | 
+#                                                                                      target_sales_won | target_sales_done 
+
+champs='active,password,company_id,partner_id,notification_type'
+SQL="""
+    INSERT INTO res_users(id,login,"""+champs+""")
+    SELECT 2,'superuser',"""+champs+"""
+    FROM res_users WHERE id=1;
+    UPDATE res_users set login='__system__' where id=1;
+    UPDATE res_users set login='admin' where id=2;   
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+
+
+
+
+
+sys.exit()
 
 
 tables=[
@@ -250,8 +307,8 @@ cnx_dst.commit()
 
 #** siret res_company migré dans res_partner ***********************************
 SQL="SELECT siret FROM res_company WHERE id=1"
-cr.execute(SQL)
-rows = cr.fetchall()
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
 for row in rows:
     SQL="UPDATE res_partner SET siret='"+row['siret']+"' WHERE id=1"
     cr_dst.execute(SQL)
@@ -266,33 +323,31 @@ cnx_dst.commit()
 #*******************************************************************************
 
 
+#** res_partner ****************************************************************
+SQL="""
+    SELECT id,name,supplier,customer
+    FROM res_partner
+    ORDER BY name
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    customer_rank=supplier_rank='0'
+    if row['supplier']:
+        supplier_rank='1'
+    if row['customer']:
+        customer_rank='1'
+    SQL="UPDATE res_partner SET customer_rank="+customer_rank+", supplier_rank="+supplier_rank+" WHERE id="+str(row['id'])
+    cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
 
 
-# #** res_partner ****************************************************************
-# SQL="""
-#     SELECT id,name,supplier,customer
-#     FROM res_partner
-#     ORDER BY name
-# """
-# cr.execute(SQL)
-# rows = cr.fetchall()
-# for row in rows:
-#     customer_rank=supplier_rank='0'
-#     if row['supplier']:
-#         supplier_rank='1'
-#     if row['customer']:
-#         customer_rank='1'
-#     SQL="UPDATE res_partner SET customer_rank="+customer_rank+", supplier_rank="+supplier_rank+" WHERE id="+str(row['id'])
-#     cr_dst.execute(SQL)
-# cnx_dst.commit()
-# #*******************************************************************************
-
-
-# #** product_pricelist_item *****************************************************
-# SQL="update product_pricelist_item set active='t'"
-# cr_dst.execute(SQL)
-# cnx_dst.commit()
-# #*******************************************************************************
+#** product_pricelist_item *****************************************************
+SQL="update product_pricelist_item set active='t'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
 
 
 # #** ir_property ****************************************************************
@@ -305,14 +360,6 @@ cnx_dst.commit()
 #     field = p[1]
 #     MigrationIrProperty(db_src,db_dst,model,field)
 # #*******************************************************************************
-
-
-
-
-
-
-
-
 
 
 # cde="rsync -rva /home/odoo/.local/share/Odoo/filestore/"+db_src+"/ /home/odoo/.local/share/Odoo/filestore/"+db_dst
