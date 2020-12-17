@@ -8,12 +8,15 @@ db_src = "coheliance8"
 db_dst = "coheliance14"
 #*******************************************************************************
 
-# cnx,cr=GetCR(db_src)
-# db_migre = db_dst+'_migre'
-# SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
-# cde='echo "'+SQL+'" | psql postgres'
-# #lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
-# db_dst = db_migre
+cnx,cr=GetCR(db_src)
+db_migre = db_dst+'_migre'
+SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
+cde='echo "'+SQL+'" | psql postgres'
+#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+db_dst = db_migre
+
+
+#sys.exit()
 
 
 tables=[
@@ -55,7 +58,7 @@ tables=[
     # 'ir_config_parameter',
     # 'ir_cron',
     # 'ir_filters',
-    # 'ir_mail_server',
+    #'ir_mail_server',
     # 'ir_model',
     # 'ir_model_access',
     # 'ir_model_constraint',
@@ -106,10 +109,10 @@ tables=[
     'is_typologie_stagiaire',
     'mail_alias',
     'mail_followers',
-    # 'mail_followers_mail_message_subtype_rel',
+    'mail_followers_mail_message_subtype_rel',
     #'mail_mail',
-    #'mail_message',
-    # 'mail_message_subtype',
+    'mail_message',
+    #'mail_message_subtype',
     # 'message_attachment_rel',
     # 'payment_acquirer',
     # 'procurement_group',
@@ -124,8 +127,8 @@ tables=[
     'project_task_type',
     #'report_paperformat',
     'res_bank',
-    'res_company',
-    'res_company_users_rel',
+    #'res_company',
+    #'res_company_users_rel',
     'res_country',
     'res_country_group',
     # 'res_country_res_country_group_rel',
@@ -138,7 +141,7 @@ tables=[
     # 'res_groups_users_rel',
     # 'res_lang',
     'res_partner',
-    # 'res_partner_bank',
+    'res_partner_bank',
     'res_partner_category',
     'res_partner_res_partner_category_rel',
     'res_partner_title',
@@ -162,17 +165,11 @@ tables=[
 ]
 
 
-
 for table in tables:
     print('Migration ',table)
     rename={}
     if table=='product_attribute':
         rename={'type':'display_type'}
-
-    # if table=='product_pricelist_item':
-    #     rename={'base_pricelist_id':'pricelist_id'}
-
-
 
     default={}
     if table=="product_template":
@@ -181,46 +178,35 @@ for table in tables:
             'purchase_line_warn': 'no-message',
             'tracking'          : 'none',
         }
-
     if table=="sale_order_line":
         default={
             'customer_lead': 0,
         }
-
     if table=="product_pricelist":
         default={
             'discount_policy': 'with_discount',
         }
-
     if table=="product_pricelist_item":
         default={
             'applied_on'   : '3_global',
             'pricelist_id' : 1,
             'compute_price': 'fixed',
         }
-
-
-
     if table=="project_task_type":
         default={
             'legend_blocked': 'Blocked',
             'legend_done'   : 'Ready',
             'legend_normal' : 'In Progress',
         }
-
     if table=="res_users":
         default={
             'notification_type': 'email',
         }
-
-
     if table=="hr_employee":
         default={
             'company_id': 1,
             'active': True,
         }
-
-
     if table=="res_company":
         default={
             'fiscalyear_last_day'  : 31,
@@ -228,9 +214,26 @@ for table in tables:
             'account_opening_date' : '2020-01-01',
         }
 
+    if table=="mail_message":
+        default={
+            'message_type'  : 'notification',
+        }
+
+    if table=="res_partner_bank":
+        default={
+            'partner_id'  : 1,
+            'active'  : True,
+        }
+
+
+
+
 
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
+
+MigrationResGroups(db_src,db_dst)
+MigrationDonneesTable(db_src,db_dst,'res_company')
 
  
 
@@ -245,14 +248,27 @@ cnx_dst.commit()
 #*******************************************************************************
 
 
+#** siret res_company migré dans res_partner ***********************************
+SQL="SELECT siret FROM res_company WHERE id=1"
+cr.execute(SQL)
+rows = cr.fetchall()
+for row in rows:
+    SQL="UPDATE res_partner SET siret='"+row['siret']+"' WHERE id=1"
+    cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
 
 
-# MigrationResGroups(db_src,db_dst)
+#** Les traductions des pays ne corresponden plus suite migration table ********
+SQL="DELETE FROM ir_translation WHERE name like 'res.country%'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
+
 
 
 
 # #** res_partner ****************************************************************
-
 # SQL="""
 #     SELECT id,name,supplier,customer
 #     FROM res_partner

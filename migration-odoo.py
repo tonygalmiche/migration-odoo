@@ -143,10 +143,10 @@ if action=='compare_champs':
     for champ in champs:
         ok_src = ok_dst = type_src = type_dst = ''
         if champ in champs_src:
-            ok_src='OK'
+            ok_src='ok_src'
             type_src = GetChampsTable(cr_src,table,champ)[0][1]
         if champ in champs_dst:
-            ok_dst='OK'
+            ok_dst='ok_dst'
             type_dst = GetChampsTable(cr_dst,table,champ)[0][1]
         print('-',s(champ,30),s(type_src,30),s(type_dst,30),s(ok_src,8),s(ok_dst,8))
 

@@ -181,8 +181,10 @@ def Table2CSV(cursor,table,champs='*',rename=False, default={}):
                 keys2.append(x)
             break
         for x in default:
-            keys1.append(x)
-            keys2.append(x)
+            if x not in keys1:
+                keys1.append(x)
+            if x not in keys2:
+                keys2.append(x)
         f = open(path, 'w', newline ='')
         writer = csv.DictWriter(f, fieldnames=keys1)
         f.write(','.join(keys2)+'\r\n')
@@ -237,11 +239,6 @@ def MigrationTable(db_src,db_dst,table,rename={},default={}):
     for k in rename:
         champs_src.append(k)
         champs_dst.append(k)
-
-    #for k in default:
-    #    champs_src.append(k)
-    #    champs_dst.append(k)
-
     champs = list(set(champs))       # Supprimer les doublons
     champs.sort()                    # Trier
     communs=[]
@@ -252,6 +249,41 @@ def MigrationTable(db_src,db_dst,table,rename={},default={}):
     Table2CSV(cr_src,table,champs,rename=rename,default=default)
     CSV2Table(cnx_dst,cr_dst,table)
     SetSequence(cr_dst,cnx_dst,table)
+
+
+def GetChampsCommuns(cr_src,cr_dst,table):
+    """Retourne la liste des champs communs aux 2 tables"""
+    champs_src = GetChamps(cr_src,table)
+    champs_dst = GetChamps(cr_dst,table)
+    champs = champs_src + champs_dst # Concatener les 2 listes
+    champs = list(set(champs))       # Supprimer les doublons
+    champs.sort()                    # Trier
+    communs=[]
+    for champ in champs:
+        if champ in champs_src and champ in champs_dst:
+            communs.append(champ)
+    return(communs)
+
+
+def MigrationDonneesTable(db_src,db_dst,table):
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    champs = GetChampsCommuns(cr_src,cr_dst,table)
+    for champ in champs:
+        SQL="SELECT id,"+champ+" FROM "+table
+        cr_src.execute(SQL)
+        rows = cr_src.fetchall()
+        for row in rows:
+            v = row[champ]
+            SQL=False
+            if v:
+                if type(v) is int or type(v) is float:
+                    SQL="UPDATE "+table+" SET "+champ+"="+str(v)+" WHERE id="+str(row['id'])
+                if type(v) is str:
+                    SQL="UPDATE "+table+" SET "+champ+"='"+v+"' WHERE id="+str(row['id'])
+            if SQL:
+                cr_dst.execute(SQL)
+    cnx_dst.commit()
 
 
 def GroupName2Id(cr,name):
