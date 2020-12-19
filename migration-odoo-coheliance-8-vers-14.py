@@ -12,28 +12,35 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
 cde='echo "'+SQL+'" | psql postgres'
-lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
+
+
+
+
+#sys.exit()
+
+
 
 
 
 
 
 tables=[
-    # 'account_account',
+    'account_account',
     # 'account_account_tax_default_rel',
     # 'account_account_template',
     # 'account_account_template_tax_rel',
-    # 'account_account_type',
-    # 'account_analytic_account',
+    'account_account_type',
+    'account_analytic_account',
     # 'account_bank_statement',
     # 'account_bank_statement_line',
     # 'account_chart_template',
-    # 'account_fiscal_position',
+    'account_fiscal_position',
     # 'account_fiscal_position_tax',
     # 'account_fiscal_position_tax_template',
     # 'account_fiscal_position_template',
-    # 'account_journal',
+    'account_journal',
     # 'account_move',
     # 'account_move_line',
     # 'account_payment_term',
@@ -76,6 +83,8 @@ tables=[
     # 'ir_ui_menu_group_rel',
     # 'ir_ui_view',
     # 'ir_ui_view_group_rel',
+
+
     'is_acompte',
     'is_affaire',
     'is_affaire_intervenant',
@@ -110,8 +119,18 @@ tables=[
     'mail_alias',
     'mail_followers',
     'mail_followers_mail_message_subtype_rel',
+
+
+
+
+
     #'mail_mail',
+
     'mail_message',
+
+
+
+
     #'mail_message_subtype',
     # 'message_attachment_rel',
     # 'payment_acquirer',
@@ -167,11 +186,37 @@ tables=[
 
 for table in tables:
     print('Migration ',table)
+
     rename={}
+    if table=='account_account':
+        rename={
+            'user_type': 'user_type_id',
+            #'active'   : 'deprecated',
+        }
+    if table=='account_account_type':
+        rename={
+            'report_type': 'type',
+            'code': 'internal_group',
+        }
+    if table=="account_journal":
+        rename={
+            'currency'   : 'currency_id',
+            'sequence_id': 'sequence',
+        }
     if table=='product_attribute':
         rename={'type':'display_type'}
 
+
+
+
+
     default={}
+    if table=="account_journal":
+        default={
+            'active'                 : True,
+            'invoice_reference_type' :'invoice',
+            'invoice_reference_model': 'odoo',
+        }
     if table=="product_template":
         default={
             'sale_line_warn'    : 'no-message',
@@ -235,8 +280,6 @@ for table in tables:
 
 
 
-MigrationResGroups(db_src,db_dst)
-MigrationDonneesTable(db_src,db_dst,'res_company')
 
 
 cnx_src,cr_src=GetCR(db_src)
@@ -276,31 +319,6 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
-
-
-rename={
-    'type'        : 'move_type',
-    'date_invoice': 'invoice_date',
-    'date_due'    : 'invoice_date_due',
-}
-default={
-    'date':'1990-01-01',
-    'name':'MIGRATION',
-    'invoice_partner_display_name': 'MIGRATION',
-    'state': 'draft',
-}
-MigrationTable(db_src,db_dst,'account_invoice', table_dst='account_move', rename=rename,default=default)
-
-
-
-rename={
-    'invoice_id': 'move_id',
-}
-default={
-    'currency_id': 1,
-}
-MigrationTable(db_src,db_dst,'account_invoice_line', table_dst='account_move_line', rename=rename,default=default)
-
 
 
 
@@ -347,6 +365,123 @@ SQL="update product_pricelist_item set active='t'"
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
+
+
+
+
+#** TODO : Je n'arrviais pas à afficher ceraines factures, mais après avoir migré la table account_account, cela a fonctionné
+rename={
+}
+default={
+    'move_type'  : 'out_invoice',
+    'currency_id': 1,
+}
+MigrationTable(db_src,db_dst,'account_move'     , table_dst='account_move'     , rename=rename,default=default)
+
+
+default={
+    'currency_id': 1,
+}
+MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
+
+
+MigrationResGroups(db_src,db_dst)
+MigrationDonneesTable(db_src,db_dst,'res_company')
+
+
+
+
+
+
+
+
+
+
+
+
+
+# #** Fusion des tables account_move et account_invoice_line dans account_move **
+# cnx_src,cr_src=GetCR(db_src)
+# cnx_dst,cr_dst=GetCR(db_dst)
+
+# rename={
+# }
+# default={
+#     # 'move_id'    : 1,
+#     'currency_id': 1,
+#     # 'account_id' : 1,
+# }
+# MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
+
+# SQL="""
+#     select ai.id,ai.number,ai.name,ai.move_id 
+#     from account_invoice ai inner join account_move am on ai.move_id=am.id 
+#     where ai.id>0
+#     order by ai.id
+# """
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     print(row['number'],row['move_id'])
+#     SQL="UPDATE account_move_line WHERE "
+
+
+# # coheliance8=# select ai.id,ai.number,ai.name,ai.move_id from account_invoice ai inner join account_move am on ai.move_id=am.id where ai.id=4908;
+# #   id  |   number   | name  | move_id 
+# # ------+------------+-------+---------
+# #  4908 | 20-12-1254 | SO434 |    7154
+# # (1 ligne)
+
+
+# #*******************************************************************************
+
+
+
+
+
+
+#   id  |       name       |  move_type  
+# ------+------------------+-------------
+#  4912 | FAC/2020/12/0001 | out_invoice
+
+
+
+
+
+
+
+# rename={
+#     'type'        : 'move_type',
+#     'date_invoice': 'invoice_date',
+#     'date_due'    : 'invoice_date_due',
+# }
+# default={
+#     'date':'1990-01-01',
+#     'name':'MIGRATION',
+#     'invoice_partner_display_name': 'MIGRATION',
+#     'state': 'draft',
+# }
+# MigrationTable(db_src,db_dst,'account_invoice', table_dst='account_move', rename=rename,default=default)
+# rename={
+#     'invoice_id': 'move_id',
+# }
+# default={
+#     'currency_id': 1,
+# }
+# MigrationTable(db_src,db_dst,'account_invoice_line', table_dst='account_move_line', rename=rename,default=default)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # #** ir_property ****************************************************************
