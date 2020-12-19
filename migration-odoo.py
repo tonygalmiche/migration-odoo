@@ -4,7 +4,7 @@ from migration_fonction import *
 
 #** Paramètres *****************************************************************
 db_src = "coheliance8"
-db_dst = "coheliance14"
+db_dst = "coheliance14_migre"
 #*******************************************************************************
 
 

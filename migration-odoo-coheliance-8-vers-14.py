@@ -18,35 +18,81 @@ db_dst = db_migre
 
 
 
-#sys.exit()
+#** account_invoice_line => account_move **************************************
+cnx_src,cr_src=GetCR(db_src)
+cnx_dst,cr_dst=GetCR(db_dst)
+
+#SQL="SELECT * from account_invoice where move_id=7150 order by id"
+SQL="SELECT * from account_invoice order by id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=0
+for row in rows:
+    ct+=1
+    move_id = row['move_id']
+    if move_id:
+        print(ct,'/',nb,row['number'],move_id)
+        SQL="UPDATE account_move set invoice_date='"+str(row['date_invoice'])+"' where id="+str(move_id)
+        cr_dst.execute(SQL)
+        SQL="""
+            SELECT ail.id,ail.product_id,ail.name,ail.price_unit,ail.price_subtotal
+            from account_invoice_line ail inner join account_invoice ai on ail.invoice_id=ai.id
+            WHERE ai.id="""+str(row['id'])+"""
+            order by ail.id
+        """
+        cr_src.execute(SQL)
+        rows2 = cr_src.fetchall()
+        nb2=len(rows2)
+        ct2=0
+        for row2 in rows2:
+            #print('-',row2['id'],row2['product_id'])
+            SQL="""
+                UPDATE account_move_line 
+                set 
+                    name=%s, 
+                    price_unit=%s,
+                    price_subtotal=%s
+                WHERE id IN (
+                    SELECT id
+                    FROM account_move_line
+                    WHERE move_id=%s
+                    ORDER BY id
+                    LIMIT 1 OFFSET %s
+                ) 
+            """
+            cr_dst.execute(SQL,(row2['name'],row2['price_unit'],row2['price_subtotal'],move_id,ct2))
+            ct2+=1
+cnx_dst.commit()
+#******************************************************************************
 
 
 
 
-
-
+sys.exit()
 
 tables=[
     'account_account',
-    # 'account_account_tax_default_rel',
-    # 'account_account_template',
-    # 'account_account_template_tax_rel',
+    'account_account_tax_default_rel',
+    #'account_account_template',
+    #'account_account_template_tax_rel',
     'account_account_type',
     'account_analytic_account',
-    # 'account_bank_statement',
-    # 'account_bank_statement_line',
-    # 'account_chart_template',
+    'account_bank_statement',
+    'account_bank_statement_line',
+    #'account_chart_template',
     'account_fiscal_position',
-    # 'account_fiscal_position_tax',
-    # 'account_fiscal_position_tax_template',
-    # 'account_fiscal_position_template',
+    'account_fiscal_position_tax',
+    #'account_fiscal_position_tax_template',
+    #'account_fiscal_position_template',
     'account_journal',
-    # 'account_move',
-    # 'account_move_line',
-    # 'account_payment_term',
-    # 'account_payment_term_line',
-    # 'account_tax',
-    # 'account_tax_template',
+    #'account_move',
+    #'account_move_line',
+    'account_payment_term',
+    'account_payment_term_line',
+    'account_tax',
+    #'account_tax_template',
+
     # 'bus_bus',
     # 'calendar_alarm',
     # 'calendar_event_type',
@@ -84,7 +130,6 @@ tables=[
     # 'ir_ui_view',
     # 'ir_ui_view_group_rel',
 
-
     'is_acompte',
     'is_affaire',
     'is_affaire_intervenant',
@@ -120,16 +165,8 @@ tables=[
     'mail_followers',
     'mail_followers_mail_message_subtype_rel',
 
-
-
-
-
     #'mail_mail',
-
     'mail_message',
-
-
-
 
     #'mail_message_subtype',
     # 'message_attachment_rel',
@@ -188,35 +225,55 @@ for table in tables:
     print('Migration ',table)
 
     rename={}
+    default={}
+
     if table=='account_account':
         rename={
             'user_type': 'user_type_id',
-            #'active'   : 'deprecated',
         }
     if table=='account_account_type':
         rename={
-            'report_type': 'type',
-            'code': 'internal_group',
+            'code'       : 'type',
+            'report_type': 'internal_group',
         }
+
+
+#coheliance14_migre=# update account_account_type set internal_group='asset';
+
+
+
     if table=="account_journal":
         rename={
             'currency'   : 'currency_id',
             'sequence_id': 'sequence',
         }
-    if table=='product_attribute':
-        rename={'type':'display_type'}
-
-
-
-
-
-    default={}
-    if table=="account_journal":
         default={
             'active'                 : True,
             'invoice_reference_type' :'invoice',
             'invoice_reference_model': 'odoo',
         }
+    if table=='account_bank_statement_line':
+        rename={'name':'payment_ref'}
+        default={
+            'move_id': 1,
+        }
+    if table=="account_payment_term":
+        default={
+            'active': 1,
+            'sequence': 1,
+        }
+    if table=='account_payment_term_line':
+        rename={'days2':'day_of_the_month'}
+        default={
+            'option': 'day_after_invoice_date',
+        }
+    if table=='account_tax':
+        rename={'type':'amount_type'}
+        default={
+            'tax_group_id': 2,
+        }
+    if table=='product_attribute':
+        rename={'type':'display_type'}
     if table=="product_template":
         default={
             'sale_line_warn'    : 'no-message',
@@ -258,28 +315,17 @@ for table in tables:
             'fiscalyear_last_month': 12,
             'account_opening_date' : '2020-01-01',
         }
-
     if table=="mail_message":
         default={
             'message_type'  : 'notification',
         }
-
     if table=="res_partner_bank":
         default={
             'partner_id'  : 1,
             'active'  : True,
         }
 
-
-
-
-
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
-
-
-
-
-
 
 
 cnx_src,cr_src=GetCR(db_src)
@@ -290,7 +336,6 @@ SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
-
 
 
 #** res_users (id=2) *************************************************************
@@ -319,7 +364,6 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
-
 
 
 #** siret res_company migré dans res_partner ***********************************
@@ -367,18 +411,13 @@ cnx_dst.commit()
 #*******************************************************************************
 
 
-
-
 #** TODO : Je n'arrviais pas à afficher ceraines factures, mais après avoir migré la table account_account, cela a fonctionné
-rename={
-}
+rename={}
 default={
     'move_type'  : 'out_invoice',
     'currency_id': 1,
 }
 MigrationTable(db_src,db_dst,'account_move'     , table_dst='account_move'     , rename=rename,default=default)
-
-
 default={
     'currency_id': 1,
 }
@@ -389,7 +428,11 @@ MigrationResGroups(db_src,db_dst)
 MigrationDonneesTable(db_src,db_dst,'res_company')
 
 
-
+#** account_account_type ******************************************************
+SQL="update account_account_type set type='other' where type not in ('receivable','payable','liquidity')"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
 
 
 
@@ -469,17 +512,6 @@ MigrationDonneesTable(db_src,db_dst,'res_company')
 #     'currency_id': 1,
 # }
 # MigrationTable(db_src,db_dst,'account_invoice_line', table_dst='account_move_line', rename=rename,default=default)
-
-
-
-
-
-
-
-
-
-
-
 
 
 
