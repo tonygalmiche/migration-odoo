@@ -12,64 +12,12 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
 cde='echo "'+SQL+'" | psql postgres'
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
-
-
-
-#** account_invoice_line => account_move **************************************
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
-#SQL="SELECT * from account_invoice where move_id=7150 order by id"
-SQL="SELECT * from account_invoice order by id"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-nb=len(rows)
-ct=0
-for row in rows:
-    ct+=1
-    move_id = row['move_id']
-    if move_id:
-        print(ct,'/',nb,row['number'],move_id)
-        SQL="UPDATE account_move set invoice_date='"+str(row['date_invoice'])+"' where id="+str(move_id)
-        cr_dst.execute(SQL)
-        SQL="""
-            SELECT ail.id,ail.product_id,ail.name,ail.price_unit,ail.price_subtotal
-            from account_invoice_line ail inner join account_invoice ai on ail.invoice_id=ai.id
-            WHERE ai.id="""+str(row['id'])+"""
-            order by ail.id
-        """
-        cr_src.execute(SQL)
-        rows2 = cr_src.fetchall()
-        nb2=len(rows2)
-        ct2=0
-        for row2 in rows2:
-            #print('-',row2['id'],row2['product_id'])
-            SQL="""
-                UPDATE account_move_line 
-                set 
-                    name=%s, 
-                    price_unit=%s,
-                    price_subtotal=%s
-                WHERE id IN (
-                    SELECT id
-                    FROM account_move_line
-                    WHERE move_id=%s
-                    ORDER BY id
-                    LIMIT 1 OFFSET %s
-                ) 
-            """
-            cr_dst.execute(SQL,(row2['name'],row2['price_unit'],row2['price_subtotal'],move_id,ct2))
-            ct2+=1
-cnx_dst.commit()
-#******************************************************************************
-
-
-
-
-sys.exit()
 
 tables=[
     'account_account',
@@ -223,10 +171,8 @@ tables=[
 
 for table in tables:
     print('Migration ',table)
-
     rename={}
     default={}
-
     if table=='account_account':
         rename={
             'user_type': 'user_type_id',
@@ -236,12 +182,6 @@ for table in tables:
             'code'       : 'type',
             'report_type': 'internal_group',
         }
-
-
-#coheliance14_migre=# update account_account_type set internal_group='asset';
-
-
-
     if table=="account_journal":
         rename={
             'currency'   : 'currency_id',
@@ -324,12 +264,8 @@ for table in tables:
             'partner_id'  : 1,
             'active'  : True,
         }
-
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
-
-cnx_src,cr_src=GetCR(db_src)
-cnx_dst,cr_dst=GetCR(db_dst)
 
 #** Réinitialisation du mot de passe *******************************************
 SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
@@ -431,6 +367,122 @@ MigrationDonneesTable(db_src,db_dst,'res_company')
 #** account_account_type ******************************************************
 SQL="update account_account_type set type='other' where type not in ('receivable','payable','liquidity')"
 cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_invoice_line => account_move **************************************
+#SQL="SELECT * from account_invoice where move_id=7150 order by id"
+SQL="""
+    SELECT 
+        ai.id,
+        ai.move_id,
+        ai.number,
+        ai.date_invoice,
+        ai.type,
+        rp.name,
+        ai.date_due,
+        ai.amount_untaxed,
+        ai.order_id,
+        ai.is_affaire_id,
+        ai.is_refacturable,
+        ai.is_nom_fournisseur,
+        ai.is_personne_concernee_id
+    from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
+    order by ai.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=0
+for row in rows:
+    ct+=1
+    move_id = row['move_id']
+    if move_id:
+        print(ct,'/',nb,row['number'],move_id)
+        SQL="""
+            UPDATE account_move 
+            set 
+                invoice_date=%s,
+                move_type=%s,
+                invoice_partner_display_name=%s,
+                invoice_date_due=%s,
+                amount_total=%s,
+                amount_total_signed=%s,
+                order_id=%s,
+                is_affaire_id=%s,
+                is_refacturable=%s,
+                is_nom_fournisseur=%s,
+                is_personne_concernee_id=%s
+            where id=%s
+        """
+        cr_dst.execute(SQL,(
+                row['date_invoice'],
+                row['type'],
+                row['name'],
+                row['date_due'],
+                row['amount_untaxed'],
+                row['amount_untaxed'],
+                row['order_id'],
+                row['is_affaire_id'],
+                row['is_refacturable'],
+                row['is_nom_fournisseur'],
+                row['is_personne_concernee_id'],
+                move_id
+            )
+        )
+        SQL="""
+            SELECT 
+                ail.id,
+                ail.product_id,
+                ail.name,
+                ail.price_unit,
+                ail.price_subtotal
+            from account_invoice_line ail inner join account_invoice ai on ail.invoice_id=ai.id
+            WHERE ai.id="""+str(row['id'])+"""
+            order by ail.id
+        """
+        cr_src.execute(SQL)
+        rows2 = cr_src.fetchall()
+        nb2=len(rows2)
+        ct2=0
+        for row2 in rows2:
+            #print('-',row2['id'],row2['product_id'])
+            SQL="""
+                UPDATE account_move_line 
+                set 
+                    name=%s, 
+                    price_unit=%s,
+                    price_subtotal=%s
+                WHERE id IN (
+                    SELECT id
+                    FROM account_move_line
+                    WHERE move_id=%s
+                    ORDER BY id
+                    LIMIT 1 OFFSET %s
+                ) 
+            """
+            cr_dst.execute(SQL,(row2['name'],row2['price_unit'],row2['price_subtotal'],move_id,ct2))
+            ct2+=1
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** factures sur les affaires *************************************************
+SQL="""
+    SELECT ia.id, ia.account_id, ai.move_id
+    FROM is_acompte ia inner join account_invoice ai on ia.account_id=ai.id 
+    WHERE ia.account_id is not null
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=0
+for row in rows:
+    ct+=1
+    print(ct,'/',nb,row['account_id'],row['move_id'])
+    SQL="UPDATE is_acompte set account_id='"+str(row['move_id'])+"' where id="+str(row['id'])
+    cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
