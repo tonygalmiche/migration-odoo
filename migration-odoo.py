@@ -3,8 +3,11 @@
 from migration_fonction import *
 
 #** Paramètres *****************************************************************
-db_src = "coheliance8"
-db_dst = "coheliance14_migre"
+#db_src = "coheliance8"
+#db_dst = "coheliance14_migre"
+
+db_src = "nouvelle-trajectoire8"
+db_dst = "nouvelle-trajectoire14_migre"
 #*******************************************************************************
 
 
