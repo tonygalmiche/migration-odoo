@@ -91,7 +91,11 @@ if action=='liste_champs':
     cnx,cr=GetCR(db)
     res = GetChampsTable(cr,table)
     for row3 in res:
-        print('-',s(row3[0],30),row3[1])
+        nb=row3[2]
+        test=''
+        if nb>1:
+            test='nb>1'
+        print('-',s(row3[0],30),s(row3[1],30),s(nb,10),test)
 
 
 if action=='compare_modules':
@@ -141,21 +145,29 @@ if action=='compare_champs':
     if len(sys.argv)>3:
         table_dst = sys.argv[3]
 
+
+
     champs_src = GetChamps(cr_src,table_src)
     champs_dst = GetChamps(cr_dst,table_dst)
     champs = champs_src + champs_dst # Concatener les 2 listes
     champs = list(set(champs))       # Supprimer les doublons
     champs.sort()                    # Trier
-    print('-',s('champ',30),s('type_src',30),s('type_dst',30),s('ok_src',8),s('ok_dst',8))
+    print('-',s('champ',30),s('type_src',30),s('type_dst',30),s('ok_src',8),s('ok_dst',8),s('nb',8),s('test_nb',8))
     for champ in champs:
-        ok_src = ok_dst = type_src = type_dst = ''
+        nb=0
+
+
+        ok_src = ok_dst = type_src = type_dst = test_nb = ''
         if champ in champs_src:
+            nb=GetDistinctVal(cr_src,table_src,champ)
+            if nb>1:
+                test_nb="nb>1"
             ok_src='ok_src'
             type_src = GetChampsTable(cr_src,table_src,champ)[0][1]
         if champ in champs_dst:
             ok_dst='ok_dst'
             type_dst = GetChampsTable(cr_dst,table_dst,champ)[0][1]
-        print('-',s(champ,30),s(type_src,30),s(type_dst,30),s(ok_src,8),s(ok_dst,8))
+        print('-',s(champ,30),s(type_src,30),s(type_dst,30),s(ok_src,8),s(ok_dst,8),s(nb,8),s(test_nb,8))
 
 
 if action=='compare_tables':

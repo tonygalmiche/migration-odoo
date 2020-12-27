@@ -12,11 +12,12 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL='DROP DATABASE \"'+db_migre+'\";CREATE DATABASE \"'+db_migre+'\" WITH TEMPLATE \"'+db_dst+'\"'
 cde="""echo '"""+SQL+"""' | psql postgres"""
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
+
 
 tables=[
     'is_base_documentaire',
@@ -27,6 +28,7 @@ tables=[
     'is_statut_sportif',
     'res_partner',
     'res_users',
+    'ir_attachment',
 ]
 
 for table in tables:
@@ -36,14 +38,29 @@ for table in tables:
         default={
             'notification_type': 'email',
         }
+        #rename={
+        #    'password_crypt': 'password',
+        #}
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
 
-#** Réinitialisation du mot de passe *******************************************
-SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
-cr_dst.execute(SQL)
+# #** Réinitialisation du mot de passe *******************************************
+# SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# #*******************************************************************************
+
+
+# #** Migration mot de passe *****************************************************
+
+SQL="SELECT id,password_crypt FROM res_users"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE res_users SET password=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['password_crypt'],row['id']])
 cnx_dst.commit()
-#*******************************************************************************
+# #*******************************************************************************
 
 
 #** res_users (id=2) *************************************************************
@@ -91,4 +108,26 @@ for row in rows:
     SQL="UPDATE res_partner SET customer_rank="+customer_rank+", supplier_rank="+supplier_rank+" WHERE id="+str(row['id'])
     cr_dst.execute(SQL)
 cnx_dst.commit()
-#*******************************************************************************
+#******************************************************************************
+
+
+#** res_country ***************************************************************
+CountrySrc2Dst = GetCountrySrc2Dst(cr_src,cr_dst)
+MigrationChampTable(db_src,db_dst,'res_partner', 'country_id', CountrySrc2Dst)
+#******************************************************************************
+
+
+#** ir_attachment *************************************************************
+cde="rsync -rva /home/odoo/.local/share/Odoo/filestore/"+db_src+"/ /home/odoo/.local/share/Odoo/filestore/"+db_dst
+lines=os.popen(cde).readlines()
+
+SQL="""
+    update ir_attachment set res_field='image_128'  where res_field='image_small';
+    update ir_attachment set res_field='image_1920' where res_field='image';
+"""
+cnx_dst,cr_dst=GetCR(db_dst)
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+

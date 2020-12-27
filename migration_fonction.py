@@ -74,6 +74,13 @@ def GetChamps(cursor,table):
     return res
 
 
+def GetDistinctVal(cursor,table,champ):
+    SQL="select distinct "+champ+" from "+table
+    cursor.execute(SQL)
+    rows = cursor.fetchall()
+    return len(rows)
+
+
 def GetChampsTable(cursor,table,champ=False):
     SQL="""
         SELECT
@@ -103,7 +110,8 @@ def GetChampsTable(cursor,table,champ=False):
     rows = cursor.fetchall()
     res=[]
     for row in rows:
-        res.append([row['attname'],row['type']])
+        nb = GetDistinctVal(cursor,table,row['attname'])
+        res.append([row['attname'],row['type'], nb])
     return res
 
 
@@ -337,6 +345,50 @@ def GetFielsdId(cr,model,field):
     for row in rows:
         fields_id=row['id']
     return fields_id
+
+
+def GetCountrySrc2Dst(cr_src,cr_dst):
+    """Correspondance entre les id src et dst de res_country"""
+    SQL="""
+        SELECT id,name
+        FROM res_country
+        ORDER BY name
+    """
+    CountrySrc2Dst={}
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        SQL="""
+            SELECT id
+            FROM res_country
+            WHERE name=%s
+        """
+        cr_dst.execute(SQL,[row['name']])
+        rows_dst = cr_dst.fetchall()
+        for row_dst in rows_dst:
+            CountrySrc2Dst[row['id']]=row_dst['id']
+    return CountrySrc2Dst
+
+
+def MigrationChampTable(db_src,db_dst,table,champ,ids):
+    """Migration des id d'un champ d'une table à partir des ids"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+
+    SQL="SELECT id,"+champ+" FROM "+table
+    cr_dst.execute(SQL)
+    rows = cr_dst.fetchall()
+    for row in rows:
+        id_src=row[champ]
+        if id_src:
+            id_dst = ids[id_src]
+            SQL="UPDATE "+table+" SET "+champ+"=%s WHERE id=%s"
+            cr_dst.execute(SQL,[
+                    id_dst,
+                    row['id'],
+                ]
+            )
+    cnx_dst.commit()
 
 
 def MigrationIrProperty(db_src,db_dst,model,field):
