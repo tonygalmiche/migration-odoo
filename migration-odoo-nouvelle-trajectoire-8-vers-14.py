@@ -19,6 +19,12 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
 
+
+
+#sys.exit()
+
+
+
 tables=[
     'is_base_documentaire',
     'is_niveau',
@@ -28,6 +34,7 @@ tables=[
     'is_statut_sportif',
     'res_partner',
     'res_users',
+    'res_company_users_rel',
     'ir_attachment',
 ]
 
@@ -52,7 +59,6 @@ for table in tables:
 
 
 # #** Migration mot de passe *****************************************************
-
 SQL="SELECT id,password_crypt FROM res_users"
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
@@ -89,6 +95,17 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
+
+
+#** Mettre le nouveau user_id 2 dans la company_id=1 **************************
+SQL="""
+    INSERT INTO res_company_users_rel (cid, user_id)
+    VALUES (1,2)
+    ON CONFLICT DO NOTHING
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
 
 
 #** res_partner ****************************************************************
@@ -129,5 +146,16 @@ cnx_dst,cr_dst=GetCR(db_dst)
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
+#** Groupes *******************************************************************
+MigrationResGroups(db_src,db_dst)
+#******************************************************************************
+
+
+
+
+
+
 
 

@@ -125,13 +125,38 @@ def GetModules(cursor):
     return res
 
 
-def GetGroups(cursor):
-    SQL="SELECT name FROM res_groups"
+def GetExternalIdGroups(cursor):
+    """Liste des external id des groupes"""
+    SQL="""
+        select name
+        from ir_model_data
+        where model='res.groups' 
+        order by name 
+    """
     cursor.execute(SQL)
     rows = cursor.fetchall()
     res=[]
     for row in rows:
         res.append(row['name'])
+    return res
+
+
+def GetGroup(cursor,external_id):
+    """Infos sur un groupe à partir de son external id"""
+    SQL="""
+        select 
+            i.module, 
+            g.name,
+            i.res_id 
+        from ir_model_data i inner join res_groups g on g.id=i.res_id 
+        where i.model='res.groups' and i.name='"""+external_id+"""' 
+        order by i.module,i.name 
+    """
+    cursor.execute(SQL)
+    rows = cursor.fetchall()
+    res=[]
+    for row in rows:
+        res=row
     return res
 
 
@@ -308,20 +333,37 @@ def GroupName2Id(cr,name):
     return id
 
 
+def ExternalId2GroupId(cr,external_id):
+    SQL="""
+        select res_id
+        from ir_model_data 
+        where model='res.groups' and name='"""+external_id+"""'
+    """
+    cr.execute(SQL)
+    rows = cr.fetchall()
+    id=0
+    for row in rows:
+        id=row['res_id']
+    return id
+
+
 def MigrationResGroups(db_src,db_dst):
-    """Migration des groupes par utilisateur en se basant sur le nom du groupe"""
+    """Migration des groupes par utilisateur en se basant sur l'external id du groupe"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     SQL="""
-        select r.gid,r.uid,g.name
+        select r.gid,r.uid,g.name,i.name external_id
         from res_groups_users_rel r inner join res_groups g on g.id=r.gid
+                                    inner join ir_model_data i on g.id=i.res_id and i.model='res.groups'
     """
     cr_src.execute(SQL)
     rows = cr_src.fetchall()
     for row in rows:
-        name = row['name']
-        uid  = row['uid']
-        gid=GroupName2Id(cr_dst,name)
+        external_id = row['external_id']
+        gid = ExternalId2GroupId(cr_dst,external_id)
+        uid = row['uid']
+        if uid==1:
+            uid=2
         if gid:
             SQL="""
                 INSERT INTO res_groups_users_rel (gid, uid)
@@ -330,7 +372,6 @@ def MigrationResGroups(db_src,db_dst):
             """
             cr_dst.execute(SQL)
     cnx_dst.commit()
-
 
 
 def GetFielsdId(cr,model,field):

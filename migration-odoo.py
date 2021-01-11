@@ -120,20 +120,24 @@ if action=='compare_modules':
 if action=='compare_res_groups':
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
-    groups_src=GetGroups(cr_src)
-    groups_dst=GetGroups(cr_dst)
+    groups_src=GetExternalIdGroups(cr_src)
+    groups_dst=GetExternalIdGroups(cr_dst)
     groups = groups_src + groups_dst # Concatener les 2 listes
-    groups = list(set(groups))        # Supprimer les doublons
-    groups.sort()                      # Trier
+    groups = list(set(groups))       # Supprimer les doublons
+    groups.sort()                    # Trier
+    print('#',s('group',40),s('module',20),s('name',60),s('res_id',6),s('ok_src',8),s('ok_dst',8),s('test',12))
     for group in groups:
         ok_src = ok_dst = test = ''
         if group in groups_src:
-            ok_src='OK'
+            ok_src='ok_src'
+            infos = GetGroup(cr_src,group)
         if group in groups_dst:
-            ok_dst='OK'
+            ok_dst='ok_dst'
+            infos = GetGroup(cr_dst,group)
+        test='pareil'
         if ok_src=='' or ok_dst=='':
-            test='test'
-        print('-',s(group,30),s(ok_src,8),s(ok_dst,8),s(test,8))
+            test='different'
+        print('-',s(group,40),s(infos['module'],20),s(infos['name'],60),s(infos['res_id'],6),s(ok_src,8),s(ok_dst,8),s(test,12))
 
 
 if action=='compare_champs':
