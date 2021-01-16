@@ -3,6 +3,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import sys
 import csv
+import base64
+import magic
+import os
+from xmlrpc import client as xmlrpclib
 
 
 def s(txt,lg=0):
@@ -197,10 +201,12 @@ def NbChampsTable(cursor,table):
     return nb
 
 
-def Table2CSV(cursor,table,champs='*',rename=False, default={}):
+def Table2CSV(cursor,table,champs='*',rename=False, default={},where=""):
+    SQL="SELECT "+champs+" FROM "+table
+    if where!="":
+        SQL=SQL+" WHERE "+where
     path = "/tmp/"+table+".csv"
     if rename or default:
-        SQL="SELECT "+champs+" FROM "+table
         cursor.execute(SQL)
         rows = cursor.fetchall()
         keys1 = []
@@ -227,7 +233,6 @@ def Table2CSV(cursor,table,champs='*',rename=False, default={}):
             writer.writerow(row)
     if not rename and not default:
         #Source : https://kb.objectrocket.com/postgresql/from-postgres-to-csv-with-python-910
-        SQL="SELECT "+champs+" FROM "+table
         SQL_for_file_output = "COPY ({0}) TO STDOUT WITH CSV HEADER".format(SQL)
         with open(path, 'w') as f_output:
             cursor.copy_expert(SQL_for_file_output, f_output)
@@ -265,7 +270,7 @@ def SetSequence(cr_dst,cnx_dst,table):
         pass
 
 
-def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={}):
+def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where=""):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     if not table_dst:
@@ -283,7 +288,7 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={})
         if champ in champs_src and champ in champs_dst:
             communs.append(champ)
     champs=','.join(communs)
-    Table2CSV(cr_src,table_src,champs,rename=rename,default=default)
+    Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where)
     CSV2Table(cnx_dst,cr_dst,table_src,table_dst)
     SetSequence(cr_dst,cnx_dst,table_dst)
 
@@ -471,6 +476,68 @@ def MigrationIrProperty(db_src,db_dst,model,field):
         cr_dst.execute(SQL)
     cnx_dst.commit()
 
+
+def Memoryview2File(data,path):
+    """Converti un champ postgres memoryview contenant des images ou pieces jointes en fichier"""
+    f = open(path,'wb')
+    image =base64.b64decode(data)
+    f.write(image)
+    f.close()
+    mime=magic.from_file(path, mime=True)
+    ext=mime.split('/')[1]
+    new_path = path+"."+ext
+    os.rename(path,new_path )
+    return new_path
+
+
+def GetAdminPassword():
+    try:
+        f = open('admin.pwd', 'r')
+        for line in f.readlines():
+            password = line.strip()
+    except FileNotFoundError:
+        password='admin'
+    return password
+
+
+def XmlRpcConnection(db_dst):
+    url = "http://127.0.0.1:8069"
+    username = 'admin'
+    password = GetAdminPassword()
+    common = xmlrpclib.ServerProxy('{}/xmlrpc/2/common'.format(url))
+    models = xmlrpclib.ServerProxy('{}/xmlrpc/2/object'.format(url))
+    uid = common.login(db_dst, username, password)
+    return models,uid,password
+
+
+def ImageField2IrAttachment(models,db_dst,uid,password,res_model,res_id,ImageField):
+    """Copie un champ image de type binary dans ir_attachment"""
+    image=base64.b64decode(ImageField)
+    path='/tmp/ImageField'
+    f = open(path,'wb')
+    f.write(image)
+    f.close()
+    mime=magic.from_file(path, mime=True)
+    ext=mime.split('/')[1]
+    new_path = path+"."+ext
+    os.rename(path,new_path )
+    BytesImage  = open(new_path,'rb').read()
+    ImageBase64 = base64.b64encode(BytesImage)
+    datas       = ImageBase64.decode('ascii')
+    os.unlink(new_path)
+    sizes=['image_1024', 'image_256', 'image_512', 'image_128', 'image_1920']
+    for size in sizes:
+        vals={
+            'res_model': res_model,
+            'name'     : size,
+            'res_field': size,
+            'res_id'   : res_id,
+            'res_name' : res_model+"/"+size,
+            'type'     : 'binary',
+            'datas'    : datas,
+            'mimetype' : mime,
+        }
+        id = models.execute(db_dst, uid, password, 'ir.attachment', 'create', [vals])
 
 
 

@@ -1,28 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from migration_fonction import *
-import os
 
 #** Paramètres *****************************************************************
 db_src = "nouvelle-trajectoire8"
 db_dst = "nouvelle-trajectoire14"
 #*******************************************************************************
 
+
 cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL='DROP DATABASE \"'+db_migre+'\";CREATE DATABASE \"'+db_migre+'\" WITH TEMPLATE \"'+db_dst+'\"'
 cde="""echo '"""+SQL+"""' | psql postgres"""
-lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
-
-
-
-
-#sys.exit()
-
 
 
 tables=[
@@ -36,8 +30,8 @@ tables=[
     'res_users',
     'res_company_users_rel',
     'ir_attachment',
+    'res_partner_financeur_rel',
 ]
-
 for table in tables:
     print('Migration ',table)
     rename=default={}
@@ -45,20 +39,54 @@ for table in tables:
         default={
             'notification_type': 'email',
         }
-        #rename={
-        #    'password_crypt': 'password',
-        #}
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
 
-# #** Réinitialisation du mot de passe *******************************************
-# SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
-# cr_dst.execute(SQL)
-# cnx_dst.commit()
-# #*******************************************************************************
+tables=[
+    'calendar_event_type',
+    'calendar_event',
+    'calendar_event_res_partner_rel',
+    'meeting_category_rel',
+    'crm_phonecall',
+]
+for table in tables:
+    print('Migration ',table)
+    rename=default={}
+    if table=="calendar_event":
+        default={
+            'privacy': 'public',
+        }
+    if table=="crm_phonecall":
+        default={
+            'direction': 'out',
+        }
+    MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
 
-# #** Migration mot de passe *****************************************************
+# ** calendar_attendee ********************************************************
+table = 'calendar_attendee'
+print('Migration ',table)
+default={
+    'partner_id': 1,
+    'event_id': 1,
+}
+MigrationTable(db_src,db_dst,table,default=default)
+
+SQL="SELECT id,partner_id, event_id FROM calendar_attendee"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    if row['event_id']:
+        SQL="UPDATE calendar_attendee SET event_id=%s WHERE id=%s"
+        cr_dst.execute(SQL,[row['event_id'],row['id']])
+    if row['partner_id']:
+        SQL="UPDATE calendar_attendee SET partner_id=%s WHERE id=%s"
+        cr_dst.execute(SQL,[row['partner_id'],row['id']])
+cnx_dst.commit()
+# *****************************************************************************
+
+
+# #** Migration mot de passe **************************************************
 SQL="SELECT id,password_crypt FROM res_users"
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
@@ -66,10 +94,10 @@ for row in rows:
     SQL="UPDATE res_users SET password=%s WHERE id=%s"
     cr_dst.execute(SQL,[row['password_crypt'],row['id']])
 cnx_dst.commit()
-# #*******************************************************************************
+# #****************************************************************************
 
 
-#** res_users (id=2) *************************************************************
+#** res_users (id=2) **********************************************************
 champs = GetChamps(cr_dst,'res_partner')
 champs.remove('id')
 champs=','.join(champs)
@@ -94,7 +122,7 @@ SQL="""
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
-#*******************************************************************************
+#******************************************************************************
 
 
 #** Mettre le nouveau user_id 2 dans la company_id=1 **************************
@@ -108,7 +136,7 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-#** res_partner ****************************************************************
+#** res_partner ***************************************************************
 SQL="""
     SELECT id,name,supplier,customer
     FROM res_partner
@@ -134,28 +162,53 @@ MigrationChampTable(db_src,db_dst,'res_partner', 'country_id', CountrySrc2Dst)
 #******************************************************************************
 
 
-#** ir_attachment *************************************************************
-cde="rsync -rva /home/odoo/.local/share/Odoo/filestore/"+db_src+"/ /home/odoo/.local/share/Odoo/filestore/"+db_dst
-lines=os.popen(cde).readlines()
-
-SQL="""
-    update ir_attachment set res_field='image_128'  where res_field='image_small';
-    update ir_attachment set res_field='image_1920' where res_field='image';
-"""
-cnx_dst,cr_dst=GetCR(db_dst)
-cr_dst.execute(SQL)
-cnx_dst.commit()
-#******************************************************************************
-
-
 #** Groupes *******************************************************************
 MigrationResGroups(db_src,db_dst)
 #******************************************************************************
 
 
+print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
+print("/opt/odoo-14/odoo-bin -c /etc/odoo/nouvelle-trajectoire.con")
+name = input("Appuyer sur Entrée pour continuer") 
+
+
+# ** ir_attachment ************************************************************
+table = 'ir_attachment'
+print('Migration ',table,db_src,db_dst)
+MigrationTable(db_src,db_dst,table)
+SQL="""
+    update ir_attachment set res_field='image_128'  where res_field='image_small';
+    update ir_attachment set res_field='image_1920' where res_field='image';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
+
+
+# ** image dans res_partner dans ir_attachment ********************************
+models,uid,password = XmlRpcConnection(db_dst)
+SQL="SELECT id,image_small,image,name  from res_partner where image is not null order by name"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=1
+for row in rows:
+    ImageField2IrAttachment(models,db_dst,uid,password,"res.partner",row["id"],row["image"])
+    print(ct,"/",nb,row["name"])
+    ct+=1
+#*******************************************************************************
 
 
 
+# #** ir_attachment *************************************************************
+# SQL="""
+#     update ir_attachment set res_field='image_128'  where res_field='image_small';
+#     update ir_attachment set res_field='image_1920' where res_field='image';
+# """
+# cnx_dst,cr_dst=GetCR(db_dst)
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# #******************************************************************************
 
 
 
