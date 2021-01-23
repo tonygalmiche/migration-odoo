@@ -12,7 +12,7 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL='DROP DATABASE \"'+db_migre+'\";CREATE DATABASE \"'+db_migre+'\" WITH TEMPLATE \"'+db_dst+'\"'
 cde="""echo '"""+SQL+"""' | psql postgres"""
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
 cnx_src,cr_src=GetCR(db_src)
@@ -26,23 +26,13 @@ tables=[
     'is_sport',
     'is_statut',
     'is_statut_sportif',
+    'res_partner_title',
+    'res_partner_category',
     'res_partner',
+    'res_partner_res_partner_category_rel',
     'res_users',
     'res_company_users_rel',
-    'ir_attachment',
     'res_partner_financeur_rel',
-]
-for table in tables:
-    print('Migration ',table)
-    rename=default={}
-    if table=="res_users":
-        default={
-            'notification_type': 'email',
-        }
-    MigrationTable(db_src,db_dst,table,rename=rename,default=default)
-
-
-tables=[
     'calendar_event_type',
     'calendar_event',
     'calendar_event_res_partner_rel',
@@ -59,6 +49,10 @@ for table in tables:
     if table=="crm_phonecall":
         default={
             'direction': 'out',
+        }
+    if table=="res_users":
+        default={
+            'notification_type': 'email',
         }
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
@@ -174,8 +168,11 @@ name = input("Appuyer sur Entrée pour continuer")
 
 # ** ir_attachment ************************************************************
 table = 'ir_attachment'
+rename={
+    'file_type': 'mimetype',
+}
 print('Migration ',table,db_src,db_dst)
-MigrationTable(db_src,db_dst,table)
+MigrationTable(db_src,db_dst,table,rename=rename)
 SQL="""
     update ir_attachment set res_field='image_128'  where res_field='image_small';
     update ir_attachment set res_field='image_1920' where res_field='image';

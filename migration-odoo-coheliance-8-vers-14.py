@@ -3,10 +3,10 @@
 from migration_fonction import *
 import os
 
-#** Paramètres *****************************************************************
+#** Paramètres ****************************************************************
 db_src = "coheliance8"
 db_dst = "coheliance14"
-#*******************************************************************************
+#******************************************************************************
 
 cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
@@ -17,6 +17,13 @@ db_dst = db_migre
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
+
+
+
+
+
+
+#sys.exit()
 
 
 tables=[
@@ -40,7 +47,6 @@ tables=[
     'account_payment_term_line',
     'account_tax',
     #'account_tax_template',
-
     # 'bus_bus',
     # 'calendar_alarm',
     # 'calendar_event_type',
@@ -77,7 +83,6 @@ tables=[
     # 'ir_ui_menu_group_rel',
     # 'ir_ui_view',
     # 'ir_ui_view_group_rel',
-
     'is_acompte',
     'is_affaire',
     'is_affaire_intervenant',
@@ -112,10 +117,8 @@ tables=[
     'mail_alias',
     'mail_followers',
     'mail_followers_mail_message_subtype_rel',
-
     #'mail_mail',
     'mail_message',
-
     #'mail_message_subtype',
     # 'message_attachment_rel',
     # 'payment_acquirer',
@@ -133,8 +136,8 @@ tables=[
     'res_bank',
     #'res_company',
     #'res_company_users_rel',
-    'res_country',
-    'res_country_group',
+    #'res_country', TODO : Ne pas migrer cette table a cause des traductions
+    #'res_country_group',
     # 'res_country_res_country_group_rel',
     # 'res_country_state',
     # 'res_currency',
@@ -155,11 +158,11 @@ tables=[
     'sale_order',
     'sale_order_line',
     # 'sale_order_line_invoice_rel',
-    'stock_inventory',
+    #'stock_inventory',
     # 'stock_inventory_line',
     'stock_location',
     # 'stock_location_route',
-    'stock_move',
+    #'stock_move',
     #'stock_picking',
     #'stock_picking_type',
     #'stock_quant',
@@ -264,11 +267,35 @@ for table in tables:
             'partner_id'  : 1,
             'active'  : True,
         }
+
     MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 
 
-#** Réinitialisation du mot de passe *******************************************
-SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
+# ** Requetes diverses  *******************************************************
+SQL="""
+    update stock_location set parent_path=name;
+    update product_category set parent_path='/' where parent_path is null;
+    update product_category set complete_name=name;
+    update account_account_type set internal_group='asset' where internal_group='none';
+    update account_tax set amount=100*amount;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+# *****************************************************************************
+
+
+# ** Migration sale_order_tax => account_tax_sale_order_line_rel **************
+print('Migration sale_order_tax => account_tax_sale_order_line_rel')
+rename={
+    'order_line_id': 'sale_order_line_id',
+    'tax_id'       : 'account_tax_id',
+}
+MigrationTable(db_src,db_dst,'sale_order_tax',table_dst='account_tax_sale_order_line_rel',rename=rename)
+# *****************************************************************************
+
+
+#** compute sale_order_line / price_subtotal ***********************************
+SQL="UPDATE sale_order_line SET price_subtotal=product_uom_qty*price_unit"
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
@@ -313,13 +340,6 @@ cnx_dst.commit()
 #*******************************************************************************
 
 
-#** Les traductions des pays ne corresponden plus suite migration table ********
-SQL="DELETE FROM ir_translation WHERE name like 'res.country%'"
-cr_dst.execute(SQL)
-cnx_dst.commit()
-#*******************************************************************************
-
-
 #** res_partner ****************************************************************
 SQL="""
     SELECT id,name,supplier,customer
@@ -347,21 +367,44 @@ cnx_dst.commit()
 #*******************************************************************************
 
 
+MigrationResGroups(db_src,db_dst)
+MigrationDonneesTable(db_src,db_dst,'res_company')
+
+
+#** state sale_order **********************************************************
+print("state sale_order")
+SQL="UPDATE sale_order SET state='sale', invoice_status='invoiced'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT id,name,state FROM sale_order"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    if row['state']=='manual':
+        cr_dst.execute("UPDATE sale_order SET invoice_status='to invoice' WHERE id="+str(row["id"]))
+    if row['state']=='draft':
+        cr_dst.execute("UPDATE sale_order SET state='draft' WHERE id="+str(row["id"]))
+    if row['state']=='cancel':
+        cr_dst.execute("UPDATE sale_order SET state='cancel' WHERE id="+str(row["id"]))
+cnx_dst.commit()
+#*******************************************************************************
+
+
+
 #** TODO : Je n'arrviais pas à afficher ceraines factures, mais après avoir migré la table account_account, cela a fonctionné
 rename={}
 default={
-    'move_type'  : 'out_invoice',
+    'move_type'  : 'entry',
     'currency_id': 1,
 }
 MigrationTable(db_src,db_dst,'account_move'     , table_dst='account_move'     , rename=rename,default=default)
 default={
     'currency_id': 1,
 }
+rename={
+    'tax_amount': 'tax_base_amount',
+}
 MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
-
-
-MigrationResGroups(db_src,db_dst)
-MigrationDonneesTable(db_src,db_dst,'res_company')
 
 
 #** account_account_type ******************************************************
@@ -371,8 +414,12 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+
+
+
+
 #** account_invoice_line => account_move **************************************
-#SQL="SELECT * from account_invoice where move_id=7150 order by id"
+print("account_invoice => account_move")
 SQL="""
     SELECT 
         ai.id,
@@ -382,12 +429,15 @@ SQL="""
         ai.type,
         rp.name,
         ai.date_due,
-        ai.amount_untaxed,
         ai.order_id,
         ai.is_affaire_id,
         ai.is_refacturable,
         ai.is_nom_fournisseur,
-        ai.is_personne_concernee_id
+        ai.is_personne_concernee_id,
+        ai.amount_untaxed,
+        ai.amount_tax,
+        ai.amount_total,
+        ai.residual
     from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
     order by ai.id
 """
@@ -399,7 +449,6 @@ for row in rows:
     ct+=1
     move_id = row['move_id']
     if move_id:
-        print(ct,'/',nb,row['number'],move_id)
         SQL="""
             UPDATE account_move 
             set 
@@ -407,13 +456,19 @@ for row in rows:
                 move_type=%s,
                 invoice_partner_display_name=%s,
                 invoice_date_due=%s,
-                amount_total=%s,
-                amount_total_signed=%s,
                 order_id=%s,
                 is_affaire_id=%s,
                 is_refacturable=%s,
                 is_nom_fournisseur=%s,
-                is_personne_concernee_id=%s
+                is_personne_concernee_id=%s,
+                amount_untaxed=%s,
+                amount_tax=%s,
+                amount_total=%s,
+                amount_residual=%s,
+                amount_untaxed_signed=%s,
+                amount_tax_signed=%s,
+                amount_total_signed=%s,
+                amount_residual_signed=%s
             where id=%s
         """
         cr_dst.execute(SQL,(
@@ -421,16 +476,24 @@ for row in rows:
                 row['type'],
                 row['name'],
                 row['date_due'],
-                row['amount_untaxed'],
-                row['amount_untaxed'],
-                row['order_id'],
+                 row['order_id'],
                 row['is_affaire_id'],
                 row['is_refacturable'],
                 row['is_nom_fournisseur'],
                 row['is_personne_concernee_id'],
+                row['amount_untaxed'],
+                row['amount_tax'],
+                row['amount_total'],
+                row['residual'],
+                row['amount_untaxed'],
+                row['amount_tax'],
+                row['amount_total'],
+                row['residual'],
+
                 move_id
             )
         )
+
         SQL="""
             SELECT 
                 ail.id,
@@ -446,29 +509,73 @@ for row in rows:
         rows2 = cr_src.fetchall()
         nb2=len(rows2)
         ct2=0
+        #Comme il n'y a pas de lien entre account_invoice_line et account_move_line, je considère que les id sont dans le même ordre
         for row2 in rows2:
-            #print('-',row2['id'],row2['product_id'])
             SQL="""
                 UPDATE account_move_line 
                 set 
                     name=%s, 
+                    is_account_invoice_line_id=%s,
                     price_unit=%s,
-                    price_subtotal=%s
+                    price_subtotal=%s,
+                    price_total=%s,
+                    balance=(debit-credit),
+                    amount_currency=(debit-credit)
                 WHERE id IN (
                     SELECT id
                     FROM account_move_line
-                    WHERE move_id=%s
+                    WHERE move_id=%s and product_id is not null
                     ORDER BY id
                     LIMIT 1 OFFSET %s
                 ) 
             """
-            cr_dst.execute(SQL,(row2['name'],row2['price_unit'],row2['price_subtotal'],move_id,ct2))
+            cr_dst.execute(SQL,(row2['name'],row2['id'],row2['price_unit'],row2['price_subtotal'],row2['price_subtotal'],move_id,ct2))
             ct2+=1
+cnx_dst.commit()
+SQL="""
+    update account_move_line set price_unit=(credit-debit) where price_unit is null;
+    update account_move_line set balance=(debit-credit) where balance is null;
+    update account_move_line set amount_currency=balance where amount_currency=0;
+    update account_move_line set price_subtotal=(credit-debit) where price_subtotal is null;
+    update account_move_line set price_total=(credit-debit) where price_total is null;
+"""
+cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
 
-#** factures sur les affaires *************************************************
+#** Enlever les écritures de TVA des lignes de factures ***********************
+SQL="""UPDATE account_move_line set exclude_from_invoice_tab='t' WHERE product_id is null"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** Migration des taxes sur les factures **************************************
+print("Migration des taxes sur les factures")
+SQL="DELETE FROM account_move_line_account_tax_rel"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT invoice_line_id, tax_id  FROM account_invoice_line_tax"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="SELECT id FROM account_move_line WHERE is_account_invoice_line_id="+str(row['invoice_line_id'])
+    cr_dst.execute(SQL)
+    rows2 = cr_dst.fetchall()
+    for row2 in rows2:
+        SQL="""
+            INSERT INTO account_move_line_account_tax_rel (account_move_line_id, account_tax_id)
+            VALUES (%s,%s)
+            ON CONFLICT DO NOTHING
+        """
+        cr_dst.execute(SQL,[row2['id'],row['tax_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** Factures sur les affaires *************************************************
+print("Factures sur les affaires")
 SQL="""
     SELECT ia.id, ia.account_id, ai.move_id
     FROM is_acompte ia inner join account_invoice ai on ia.account_id=ai.id 
@@ -476,23 +583,161 @@ SQL="""
 """
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
-nb=len(rows)
-ct=0
 for row in rows:
-    ct+=1
-    print(ct,'/',nb,row['account_id'],row['move_id'])
     SQL="UPDATE is_acompte set account_id='"+str(row['move_id'])+"' where id="+str(row['id'])
     cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
 
+# ** Migration country_id dans res_partner ************************************
+print("Migration country_id dans res_partner")
+SQL="""
+    select distinct rp.country_id,rc.name
+    from res_partner rp inner join res_country rc on rp.country_id=rc.id 
+    where country_id is not null 
+"""
+cr_src.execute(SQL)
+rows_src = cr_src.fetchall()
+src2dst={}
+for row_src in rows_src:
+    SQL="SELECT id FROM res_country WHERE name='"+row_src['name']+"'"
+    cr_dst.execute(SQL)
+    rows_dst = cr_dst.fetchall()
+    for row_dst in rows_dst:
+        src2dst[row_src['country_id']]=row_dst['id']
+SQL="select id,name,country_id from res_partner where country_id is not null order by name"
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    if row['country_id'] in src2dst:
+        country_id = src2dst[row['country_id']]
+        SQL="UPDATE res_partner SET country_id=%s WHERE id=%s"
+        cr_dst.execute(SQL,[country_id,row['id']])
+cr_dst.execute("update res_partner set country_id=75 where  country_id=255")
+cnx_dst.commit()
+# *****************************************************************************
+
+
+#** Migration traduction name dans product.template **************************************
+print("Migration traduction name dans product.template")
+MigrationNameTraduction(db_src,db_dst,'product.template,name')
+# *****************************************************************************
 
 
 
 
 
 
+
+
+
+
+
+
+# # #** Migration mot de passe **************************************************
+# TODO : Ne fonctionne pas
+# SQL="SELECT id,password_crypt FROM res_users"
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     SQL="UPDATE res_users SET password=%s WHERE id=%s"
+#     cr_dst.execute(SQL,[row['password_crypt'],row['id']])
+# cnx_dst.commit()
+# # #****************************************************************************
+
+
+#** Réinitialisation du mot de passe *******************************************
+SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
+
+
+# ** Migration des pièces jointes *********************************************
+SQL="""
+    select *
+    from ir_attachment 
+    where res_model<>'ir.ui.view' 
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+SQL="DELETE FROM ir_attachment WHERE res_model<>'ir.ui.view' and res_field is null"
+cr_dst.execute(SQL)
+for row in rows:
+    res_id    = row['res_id']
+    res_model = row['res_model']
+    if row['res_model']=='account.invoice':
+        res_id = InvoiceId2MoveId(cr_src,res_id)
+        res_model = 'account.move'
+    SQL="""
+        INSERT INTO ir_attachment (name,res_model,res_id,company_id,create_date,create_uid,file_size,mimetype,store_fname,type,url,write_date,write_uid)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    cr_dst.execute(SQL,[
+        row['name'],
+        res_model,
+        res_id,
+        row['company_id'],
+        row['create_date'],
+        row['create_uid'],
+        row['file_size'],
+        row['file_type'],
+        row['store_fname'],
+        row['type'],
+        row['url'],
+        row['write_date'],
+        row['write_uid'],
+    ])
+cnx_dst.commit()
+# *****************************************************************************
+
+
+# ** image dans res_partner dans ir_attachment ********************************
+print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
+print("/opt/odoo-14/odoo-bin -c /etc/odoo/coheliance14.conf")
+name = input("Appuyer sur Entrée pour continuer") 
+models,uid,password = XmlRpcConnection(db_dst)
+SQL="SELECT id,image_small,image,name  from res_partner where image is not null order by name"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=1
+for row in rows:
+    ImageField2IrAttachment(models,db_dst,uid,password,"res.partner",row["id"],row["image"])
+    print(ct,"/",nb,row["name"])
+    ct+=1
+#*******************************************************************************
+
+
+
+
+
+
+
+
+# #** Les traductions des pays ne corresponden plus suite migration table ********
+# SQL="DELETE FROM ir_translation WHERE name like 'res.country%'"
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# #*******************************************************************************
+
+
+
+# # ** ir_attachment ************************************************************
+# table = 'ir_attachment'
+# rename={
+#     'file_type': 'mimetype',
+# }
+# print('Migration ',table,db_src,db_dst)
+# MigrationTable(db_src,db_dst,table,rename=rename)
+# SQL="""
+#     update ir_attachment set res_field='image_128'  where res_field='image_small';
+#     update ir_attachment set res_field='image_1920' where res_field='image';
+# """
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# #*******************************************************************************
 
 
 # #** Fusion des tables account_move et account_invoice_line dans account_move **
@@ -519,32 +764,6 @@ cnx_dst.commit()
 # for row in rows:
 #     print(row['number'],row['move_id'])
 #     SQL="UPDATE account_move_line WHERE "
-
-
-# # coheliance8=# select ai.id,ai.number,ai.name,ai.move_id from account_invoice ai inner join account_move am on ai.move_id=am.id where ai.id=4908;
-# #   id  |   number   | name  | move_id 
-# # ------+------------+-------+---------
-# #  4908 | 20-12-1254 | SO434 |    7154
-# # (1 ligne)
-
-
-# #*******************************************************************************
-
-
-
-
-
-
-#   id  |       name       |  move_type  
-# ------+------------------+-------------
-#  4912 | FAC/2020/12/0001 | out_invoice
-
-
-
-
-
-
-
 # rename={
 #     'type'        : 'move_type',
 #     'date_invoice': 'invoice_date',
@@ -566,8 +785,6 @@ cnx_dst.commit()
 # MigrationTable(db_src,db_dst,'account_invoice_line', table_dst='account_move_line', rename=rename,default=default)
 
 
-
-
 # #** ir_property ****************************************************************
 # properties=[
 #     ('res.partner','property_payment_term_id'),
@@ -578,7 +795,6 @@ cnx_dst.commit()
 #     field = p[1]
 #     MigrationIrProperty(db_src,db_dst,model,field)
 # #*******************************************************************************
-
 
 # cde="rsync -rva /home/odoo/.local/share/Odoo/filestore/"+db_src+"/ /home/odoo/.local/share/Odoo/filestore/"+db_dst
 # lines=os.popen(cde).readlines()

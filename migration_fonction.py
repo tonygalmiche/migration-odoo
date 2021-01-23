@@ -477,6 +477,35 @@ def MigrationIrProperty(db_src,db_dst,model,field):
     cnx_dst.commit()
 
 
+def MigrationNameTraduction(db_src,db_dst,name):
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    SQL="DELETE FROM ir_translation WHERE name='"+name+"'"
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    SQL="SELECT * FROM ir_translation WHERE name='"+name+"'"
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        SQL="""
+            INSERT INTO ir_translation (lang, src, name, res_id, module, state, comments, value, type)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT DO NOTHING
+        """
+        cr_dst.execute(SQL,[
+                row['lang'],
+                row['src'],
+                row['name'],
+                row['res_id'],
+                row['module'],
+                row['state'],
+                row['comments'],
+                row['value'],
+                row['type'],
+            ])
+    cnx_dst.commit()
+
+
 def Memoryview2File(data,path):
     """Converti un champ postgres memoryview contenant des images ou pieces jointes en fichier"""
     f = open(path,'wb')
@@ -540,4 +569,13 @@ def ImageField2IrAttachment(models,db_dst,uid,password,res_model,res_id,ImageFie
         id = models.execute(db_dst, uid, password, 'ir.attachment', 'create', [vals])
 
 
+def InvoiceId2MoveId(cr_src,invoice_id):
+    """Correspondance entre l'id des factures suite à la migration de account_invoice dans account_move"""
+    SQL="SELECT move_id from account_invoice WHERE id="+str(invoice_id)
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    move_id=0
+    for row in rows:
+        move_id = row['move_id']
+    return move_id
 
