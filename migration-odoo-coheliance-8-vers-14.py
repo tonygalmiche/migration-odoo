@@ -22,7 +22,6 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
-
 #sys.exit()
 
 
@@ -213,7 +212,7 @@ for table in tables:
     if table=='account_tax':
         rename={'type':'amount_type'}
         default={
-            'tax_group_id': 2,
+            'tax_group_id': 1,
         }
     if table=='product_attribute':
         rename={'type':'display_type'}
@@ -570,6 +569,95 @@ for row in rows:
             ON CONFLICT DO NOTHING
         """
         cr_dst.execute(SQL,[row2['id'],row['tax_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** Correspondance ente id et tax_code_id *************************************
+print("Correspondance ente id et tax_code_id")
+SQL="select id,tax_code_id from account_tax"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+Id2TaxCodeId={}
+for row in rows:
+    Id2TaxCodeId[row["tax_code_id"]]=row["id"]
+#******************************************************************************
+
+
+#** Migration account_invoice_tax *********************************************
+print("Migration account_invoice_tax")
+SQL="delete from account_move_line where tax_line_id is not null"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="""
+    SELECT 
+        t.id,
+        t.invoice_id,
+        t.account_id,
+        t.company_id,
+        t.invoice_id,
+        t.base_amount,
+        t.tax_code_id,
+        t.amount,base,
+        t.tax_amount,
+        t.base_code_id,
+        t.name,
+        ai.move_id,
+        ai.date_invoice,
+        ai.state
+    FROM account_invoice_tax t inner join account_invoice ai on t.invoice_id=ai.id
+    WHERE ai.move_id is not null
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        INSERT INTO account_move_line (
+            move_id,
+            move_name,
+            currency_id,
+            date,
+            parent_state,
+            journal_id,
+            company_id,
+            company_currency_id,
+            account_id,
+            quantity,
+            price_unit,
+            credit,
+            balance,
+            amount_currency,
+            price_subtotal,
+            price_total,
+            tax_line_id,
+            tax_group_id,
+            exclude_from_invoice_tab
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT DO NOTHING
+    """
+    tax_line_id = Id2TaxCodeId[row['tax_code_id']]
+    cr_dst.execute(SQL,[
+        row['move_id'],
+        row['name'],
+        1,
+        row['date_invoice'],
+        'posted',
+        1,
+        1,
+        1,
+        row['account_id'],
+        1,
+        row['tax_amount'],
+        row['tax_amount'],
+        -row['tax_amount'],
+        -row['tax_amount'],
+        row['tax_amount'],
+        row['tax_amount'],
+        tax_line_id,
+        1,
+        True,
+    ])
 cnx_dst.commit()
 #******************************************************************************
 
