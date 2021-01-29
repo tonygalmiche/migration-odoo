@@ -12,17 +12,151 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
 cde='echo "'+SQL+'" | psql postgres'
-lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
 
+#** TODO : Je n'arrviais pas à afficher ceraines factures, mais après avoir migré la table account_account, cela a fonctionné
+rename={}
+default={
+    'move_type'  : 'entry',
+    'currency_id': 1,
+}
+MigrationTable(db_src,db_dst,'account_move'     , table_dst='account_move'     , rename=rename,default=default)
+default={
+    'currency_id': 1,
+}
+rename={
+    'tax_amount': 'tax_base_amount',
+}
+MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
+
+
+#** account_invoice_line => account_move **************************************
+print("account_invoice => account_move")
+SQL="""
+    SELECT 
+        ai.id,
+        ai.move_id,
+        ai.number,
+        ai.date_invoice,
+        ai.type,
+        rp.name,
+        ai.date_due,
+        ai.order_id,
+        ai.is_affaire_id,
+        ai.is_refacturable,
+        ai.is_nom_fournisseur,
+        ai.is_personne_concernee_id,
+        ai.amount_untaxed,
+        ai.amount_tax,
+        ai.amount_total,
+        ai.residual
+    from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
+    order by ai.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=0
+for row in rows:
+    ct+=1
+    move_id = row['move_id']
+    if move_id:
+        SQL="""
+            UPDATE account_move 
+            set 
+                invoice_date=%s,
+                move_type=%s,
+                invoice_partner_display_name=%s,
+                invoice_date_due=%s,
+                order_id=%s,
+                is_affaire_id=%s,
+                is_refacturable=%s,
+                is_nom_fournisseur=%s,
+                is_personne_concernee_id=%s,
+                amount_untaxed=%s,
+                amount_tax=%s,
+                amount_total=%s,
+                amount_residual=%s,
+                amount_untaxed_signed=%s,
+                amount_tax_signed=%s,
+                amount_total_signed=%s,
+                amount_residual_signed=%s
+            where id=%s
+        """
+        cr_dst.execute(SQL,(
+            row['date_invoice'],
+            row['type'],
+            row['name'],
+            row['date_due'],
+                row['order_id'],
+            row['is_affaire_id'],
+            row['is_refacturable'],
+            row['is_nom_fournisseur'],
+            row['is_personne_concernee_id'],
+            row['amount_untaxed'],
+            row['amount_tax'],
+            row['amount_total'],
+            row['residual'],
+            row['amount_untaxed'],
+            row['amount_tax'],
+            row['amount_total'],
+            row['residual'],
+            move_id
+        )
+    )
+cnx_dst.commit()
+
+
+#** Enlever les écritures de TVA des lignes de factures ***********************
+SQL="""UPDATE account_move_line set exclude_from_invoice_tab='t' WHERE product_id is null"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+# odoo@buster:/media/sf_dev_odoo$ echo "
+# select aml.id,aml.name,aml.tax_code_id,aml.debit,aml.credit,at.id 
+# from account_move_line aml inner join account_tax at on aml.tax_code_id=at.tax_code_id 
+# where move_id=7191" | psql coheliance8
+#   id   |   name    | tax_code_id | debit | credit | id 
+# -------+-----------+-------------+-------+--------+----
+#  20535 | TVA 20,0% |          12 |  0.00 | 640.00 |  2
+
+
+# ** Migration tax_code_id ****************************************************
+SQL="""
+    select aml.id move_line_id,aml.name,aml.tax_code_id,aml.debit,aml.credit,at.id tax_line_id
+    from account_move_line aml inner join account_tax at on aml.tax_code_id=at.tax_code_id 
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    #print(row)
+    SQL="""
+        UPDATE account_move_line
+        SET 
+            tax_line_id=%s,
+            tax_group_id=1,
+            currency_id=1,
+            company_currency_id=1,
+            quantity=1
+        WHERE id=%s
+    """
 
 
 
-#sys.exit()
+
+    cr_dst.execute(SQL,[row["tax_line_id"],row["move_line_id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
 
 
 tables=[
