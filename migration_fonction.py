@@ -437,19 +437,19 @@ def MigrationChampTable(db_src,db_dst,table,champ,ids):
     cnx_dst.commit()
 
 
-def MigrationIrProperty(db_src,db_dst,model,field):
+def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
     """Migration des données de la table ir_property pour le model et le field indiqué"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
-    fields_id_src = GetFielsdId(cr_src,model,field)
-    fields_id_dst = GetFielsdId(cr_dst,model,field)
-
+    if not field_dst:
+        field_dst=field_src
+    fields_id_src = GetFielsdId(cr_src,model,field_src)
+    fields_id_dst = GetFielsdId(cr_dst,model,field_dst)
     SQL="""
         DELETE FROM ir_property
         WHERE fields_id="""+str(fields_id_dst)+"""
     """
     cr_dst.execute(SQL)
-
     SQL="""
         select *
         from ir_property
@@ -461,19 +461,20 @@ def MigrationIrProperty(db_src,db_dst,model,field):
     for r in rows:
         SQL="""
             INSERT INTO ir_property (name,res_id,company_id,fields_id,value_reference,type,create_uid,create_date,write_uid,write_date)
-            VALUES (
-                '"""+r['name']+"""',
-                '"""+str(r['res_id'])+"""',
-                """+str(r['company_id'])+""",
-                """+str(fields_id_dst)+""",
-                '"""+r['value_reference']+"""',
-                '"""+r['type']+"""',
-                """+str(r['create_uid'])+""",
-                '"""+str(r['create_date'])+"""',
-                """+str(r['write_uid'])+""",
-                '"""+str(r['write_date'])+"""'
-        )"""
-        cr_dst.execute(SQL)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """
+        cr_dst.execute(SQL, [
+            field_dst,
+            r['res_id'] or None,
+            r['company_id'],
+            fields_id_dst,
+            r['value_reference'],
+            r['type'],
+            r['create_uid'],
+            r['create_date'],
+            r['write_uid'],
+            r['write_date'],
+        ])
     cnx_dst.commit()
 
 
