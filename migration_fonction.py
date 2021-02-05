@@ -478,6 +478,24 @@ def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
     cnx_dst.commit()
 
 
+def GetFiscalPositionPartner(cr,partner_id):
+    SQL="""
+        select value_reference 
+        from ir_property 
+        where 
+            res_id='res.partner,%s' and
+            name='property_account_position_id'
+    """
+    cr.execute(SQL,[partner_id])
+    rows = cr.fetchall()
+    fiscal_position_id=False
+    for r in rows:
+        v=r['value_reference']
+        v=v.split(",")
+        fiscal_position_id=v[1]
+    return fiscal_position_id
+
+
 def MigrationNameTraduction(db_src,db_dst,name):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
@@ -579,4 +597,63 @@ def InvoiceId2MoveId(cr_src,invoice_id):
     for row in rows:
         move_id = row['move_id']
     return move_id
+
+
+
+
+
+def SqlSelectFormat(cr,SQL,exclude=[]):
+    """Affiche le résultat d'une resquete Select en enlevant les colonnes vides ou identiques"""
+    default_exclude=['write_date','write_uid','create_date','create_uid']
+    exclude+=default_exclude
+    cr.execute(SQL)
+    rows = cr.fetchall()
+    fields={}
+    values={}
+    if len(rows)>0:
+        row=rows[0]
+        for f in row:
+            fields[f]=False
+
+    for row in rows:
+        for f in row:
+            if f not in values:
+                values[f]=[]
+            if row[f] not in values[f]:
+                values[f].append(row[f])
+
+            if row[f] and f not in exclude:
+                l=len(str(row[f]))
+                if not fields[f] or fields[f]<l:
+                    fields[f]=l
+    if len(rows)>1:
+        for f in fields:
+            if len(values[f])==1:
+                fields[f]=False
+    res=[]
+    for row in rows:
+        line={}
+        for f in row:
+            if fields[f]:
+                line[f]=str(row[f])
+        res.append(line)
+    for f in fields:
+        if fields[f]:
+            if len(f)>fields[f]:
+                fields[f]=len(f)
+    line=''
+    for f in fields:
+        if fields[f]:
+            #line+=f+' '*(fields[f]-len(f))
+            line+=f+'\t'
+    print(line)
+    for row in res:
+        line=''
+        for f in row:
+            if fields[f]:
+                #line+=row[f]+' '*(fields[f]-len(row[f]))+'\t'
+                line+=row[f]+'\t'
+        print(line)
+    line=''
+
 

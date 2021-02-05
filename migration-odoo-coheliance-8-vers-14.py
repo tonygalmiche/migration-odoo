@@ -12,7 +12,7 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
 cde='echo "'+SQL+'" | psql postgres'
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
 cnx_src,cr_src=GetCR(db_src)
@@ -251,6 +251,7 @@ tables=[
     'mail_followers',
     'mail_followers_mail_message_subtype_rel',
     #'mail_mail',
+    
     'mail_message',
     #'mail_message_subtype',
     # 'message_attachment_rel',
