@@ -7,7 +7,6 @@ db_src = "nouvelle-trajectoire8"
 db_dst = "nouvelle-trajectoire14"
 #*******************************************************************************
 
-
 cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL='DROP DATABASE \"'+db_migre+'\";CREATE DATABASE \"'+db_migre+'\" WITH TEMPLATE \"'+db_dst+'\"'
@@ -40,7 +39,6 @@ tables=[
     'crm_phonecall',
 ]
 for table in tables:
-    print('Migration ',table)
     rename=default={}
     if table=="calendar_event":
         default={
@@ -59,7 +57,6 @@ for table in tables:
 
 # ** calendar_attendee ********************************************************
 table = 'calendar_attendee'
-print('Migration ',table)
 default={
     'partner_id': 1,
     'event_id': 1,
@@ -161,6 +158,16 @@ MigrationResGroups(db_src,db_dst)
 #******************************************************************************
 
 
+#** Problème installation module eCommerce ************************************
+cr_dst.execute("update res_users set active='f' where id=1")
+cr_dst.execute("delete  from res_groups_users_rel where uid=3")
+cr_dst.execute("update res_users set active='t' where id=3")
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+
 print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
 print("/opt/odoo-14/odoo-bin -c /etc/odoo/nouvelle-trajectoire.con")
 name = input("Appuyer sur Entrée pour continuer") 
@@ -171,7 +178,6 @@ table = 'ir_attachment'
 rename={
     'file_type': 'mimetype',
 }
-print('Migration ',table,db_src,db_dst)
 MigrationTable(db_src,db_dst,table,rename=rename)
 SQL="""
     update ir_attachment set res_field='image_128'  where res_field='image_small';
@@ -194,18 +200,4 @@ for row in rows:
     print(ct,"/",nb,row["name"])
     ct+=1
 #*******************************************************************************
-
-
-
-# #** ir_attachment *************************************************************
-# SQL="""
-#     update ir_attachment set res_field='image_128'  where res_field='image_small';
-#     update ir_attachment set res_field='image_1920' where res_field='image';
-# """
-# cnx_dst,cr_dst=GetCR(db_dst)
-# cr_dst.execute(SQL)
-# cnx_dst.commit()
-# #******************************************************************************
-
-
 
