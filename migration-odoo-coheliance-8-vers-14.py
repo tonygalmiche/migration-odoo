@@ -12,7 +12,7 @@ cnx,cr=GetCR(db_src)
 db_migre = db_dst+'_migre'
 SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
 cde='echo "'+SQL+'" | psql postgres'
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 db_dst = db_migre
 
 cnx_src,cr_src=GetCR(db_src)
@@ -21,29 +21,8 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
-# ** image dans res_partner dans ir_attachment ********************************
-print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
-print("/opt/odoo-14/odoo-bin -c /etc/odoo/coheliance14.conf")
-name = input("Appuyer sur Entrée pour continuer") 
-models,uid,password = XmlRpcConnection(db_dst)
-SQL="SELECT id,image_small,image,name  from res_partner where image is not null order by name"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-nb=len(rows)
-ct=1
-for row in rows:
-    ImageField2IrAttachment(models,db_dst,uid,password,"res.partner",row["id"],row["image"])
-    print(ct,"/",nb,row["name"])
-    ct+=1
-#*******************************************************************************
 
-
-
-
-
-
-
-sys.exit()
+#sys.exit()
 
 
 
@@ -216,28 +195,63 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-#** Création comptes pour journaux pour faire fonctionner les réglements ******
-#cr_dst.execute("DELETE FROM account_account where code in ('512001','512002','512003','512004')")
+# #** Création comptes pour journaux pour faire fonctionner les réglements ******
 SQL="""
     INSERT INTO account_account (name,code,deprecated,user_type_id,internal_type,internal_group,reconcile,company_id,group_id,root_id,is_off_balance)
     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING
 """
-cr_dst.execute(SQL,['Bank Suspense Account','512001',False,9,'other','asset',False,1,127,53049,False])
+cr_dst.execute(SQL,['Suspense Account','512112',False,9,'other','asset',False,1,127,53049,False])
 SQL="""
     INSERT INTO account_account (name,code,deprecated,user_type_id,internal_type,internal_group,reconcile,company_id,group_id,root_id,is_off_balance)
     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING
 """
-cr_dst.execute(SQL,['Banque','512002',False,3,'liquidity','asset',False,1,127,53049,False])
+cr_dst.execute(SQL,['Suspense Account','512113',False,9,'other','asset',False,1,127,53049,False])
+
 SQL="""
     INSERT INTO account_account (name,code,deprecated,user_type_id,internal_type,internal_group,reconcile,company_id,group_id,root_id,is_off_balance)
     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING
 """
-cr_dst.execute(SQL,['Outstanding Receipts','512003',False,5,'other','asset',True,1,127,53049,False])
+cr_dst.execute(SQL,['Outstanding Receipts Account','512122',False,5,'other','asset',True,1,127,53049,False])
 SQL="""
     INSERT INTO account_account (name,code,deprecated,user_type_id,internal_type,internal_group,reconcile,company_id,group_id,root_id,is_off_balance)
     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING
 """
-cr_dst.execute(SQL,['Outstanding Payments','512004',False,5,'other','asset',True,1,127,53049,False])
+cr_dst.execute(SQL,['Outstanding Receipts Account','512123',False,5,'other','asset',True,1,127,53049,False])
+
+
+SQL="""
+    INSERT INTO account_account (name,code,deprecated,user_type_id,internal_type,internal_group,reconcile,company_id,group_id,root_id,is_off_balance)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING
+"""
+cr_dst.execute(SQL,['Outstanding Payments Account','512132',False,5,'other','asset',True,1,127,53049,False])
+SQL="""
+    INSERT INTO account_account (name,code,deprecated,user_type_id,internal_type,internal_group,reconcile,company_id,group_id,root_id,is_off_balance)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING
+"""
+cr_dst.execute(SQL,['Outstanding Payments Account','512133',False,5,'other','asset',True,1,127,53049,False])
+cnx_dst.commit()
+
+SQL="""
+    update account_journal set type='general' where code='BNK1';
+
+    update account_journal set default_account_id=(select id        from account_account where code='512102') where code='BNK2';
+    update account_journal set suspense_account_id=(select id       from account_account where code='512112') where code='BNK2';
+    update account_journal set payment_debit_account_id=(select id  from account_account where code='512122') where code='BNK2';
+    update account_journal set payment_credit_account_id=(select id from account_account where code='512132') where code='BNK2';
+
+    update account_journal set default_account_id=(select id        from account_account where code='512103') where code='BNK3';
+    update account_journal set suspense_account_id=(select id       from account_account where code='512113') where code='BNK3';
+    update account_journal set payment_debit_account_id=(select id  from account_account where code='512123') where code='BNK3';
+    update account_journal set payment_credit_account_id=(select id from account_account where code='512133') where code='BNK3';
+
+    delete from account_journal_outbound_payment_method_rel;
+    delete from account_journal_inbound_payment_method_rel ;
+    insert into account_journal_inbound_payment_method_rel values(8,1);
+    insert into account_journal_inbound_payment_method_rel values(10,1);
+    insert into account_journal_outbound_payment_method_rel values(8,2);
+    insert into account_journal_outbound_payment_method_rel values(10,2);
+"""
+cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
@@ -714,6 +728,31 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** Factures fournisseurs => inverser les signes => pour réglements ***********
+SQL="""
+    update account_move set amount_untaxed_signed=-amount_untaxed where move_type='in_invoice';
+    update account_move set amount_tax_signed=-amount_tax where move_type='in_invoice';
+    update account_move set amount_total_signed=-amount_total where move_type='in_invoice';
+    update account_move set amount_residual_signed=-amount_residual where move_type='in_invoice';
+
+    update account_move set posted_before='t' where move_type='in_invoice';
+    update account_move set is_move_sent='f' where move_type='in_invoice';
+
+    update account_move_line set price_unit=-price_unit, price_subtotal=-price_subtotal, price_total=-price_total 
+    where 
+        move_id in (select id from account_move m where m.move_type='in_invoice') and 
+        account_id in (select id from account_account where code like '4%');
+
+    update account_move_line set amount_residual=price_total, amount_residual_currency=price_total 
+    where 
+        move_id in (select id from account_move m where m.move_type='in_invoice') and 
+        account_id in (select id from account_account where code like '401%');
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** Autres tables *************************************************************
 tables=[
     'crm_lead',
@@ -908,6 +947,30 @@ MigrationNameTraduction(db_src,db_dst,'product.template,name')
 # *****************************************************************************
 
 
+#** mail_message sur les factures (account_invoice_line => account_move) ******
+cr_dst.execute("update mail_message set model='account.move' where model='account.invoice'")
+cnx_dst.commit()
+SQL="SELECT id, move_id FROM account_invoice"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+ids={}
+for row in rows:
+    ids[row["id"]]=row["move_id"]
+
+SQL="SELECT id,res_id FROM mail_message where model='account.move'"
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    id=row["id"]
+    res_id=row["res_id"]
+    res_id=ids.get(res_id,False)
+    if res_id:
+        SQL="UPDATE mail_message set res_id=%s where id=%s"
+        cr_dst.execute(SQL,[res_id,id])
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** Factures sur les affaires *************************************************
 print("Factures sur les affaires")
 SQL="""
@@ -980,6 +1043,22 @@ for row in rows:
 cnx_dst.commit()
 # *****************************************************************************
 
+
+# ** image dans res_partner dans ir_attachment ********************************
+print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
+print("/opt/odoo-14/odoo-bin -c /etc/odoo/coheliance14.conf")
+name = input("Appuyer sur Entrée pour continuer") 
+models,uid,password = XmlRpcConnection(db_dst)
+SQL="SELECT id,image_small,image,name  from res_partner where image is not null order by name"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=1
+for row in rows:
+    ImageField2IrAttachment(models,db_dst,uid,password,"res.partner",row["id"],row["image"])
+    print(ct,"/",nb,row["name"])
+    ct+=1
+#*******************************************************************************
 
 
 
