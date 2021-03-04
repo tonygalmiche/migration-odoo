@@ -496,6 +496,29 @@ def GetFiscalPositionPartner(cr,partner_id):
     return fiscal_position_id
 
 
+
+
+# coheliance8=# select * from ir_translation where value ilike '%Intra Com%' ;
+#   id   | lang  |    src    |           name            | res_id | module | state | comments |   value   | type  
+# -------+-------+-----------+---------------------------+--------+--------+-------+----------+-----------+-------
+#  37634 | fr_FR | Intra Com | account.payment.term,name |      5 |        |       |          | Intra Com | model
+
+
+def GetTraduction(cr,model,field,res_id):
+    name=model+","+field
+    SQL="""
+        SELECT value 
+        FROM ir_translation 
+        WHERE lang='fr_FR' and name='"""+name+"""' and res_id="""+str(res_id)+""" and type='model'
+    """
+    cr.execute(SQL)
+    rows = cr.fetchall()
+    value=False
+    for row in rows:
+        value=row["value"]
+    return value
+
+
 def MigrationNameTraduction(db_src,db_dst,name):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)

@@ -26,6 +26,8 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+
+
 #** res_partner **********************************************************
 MigrationTable(db_src,db_dst,'res_partner_title')
 MigrationTable(db_src,db_dst,'res_partner')
@@ -66,12 +68,31 @@ cr_dst.execute(SQL)
 cnx_dst.commit()
 #*******************************************************************************
 
+# coheliance14_migre=# update res_users set password=  where id^C
+# coheliance14_migre=# update res_users set password=(select password from res_users where id=1) where id=2;
+# UPDATE 1
+# coheliance14_migre=# insert into res_company_users_rel values(1,2);
+# INSERT 0 1
 
-#** Réinitialisation du mot de passe *******************************************
-SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
+# #** Migration mot de passe **************************************************
+SQL="SELECT id,password_crypt FROM res_users"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE res_users SET password=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['password_crypt'],row['id']])
+cnx_dst.commit()
+SQL="update res_users set password=(select password from res_users where id=1) where id=2"
 cr_dst.execute(SQL)
 cnx_dst.commit()
-#*******************************************************************************
+# #****************************************************************************
+
+
+#** res_company_users_rel *****************************************************
+MigrationTable(db_src,db_dst,'res_company_users_rel')
+cr_dst.execute("insert into res_company_users_rel values(1,2)")
+cnx_dst.commit()
+# #****************************************************************************
 
 
 #** Migration des comptes *****************************************************
@@ -385,7 +406,9 @@ SQL="""
         ai.residual,
         ai.user_id,
         ai.fiscal_position,
-        ai.name move_name
+        ai.name move_name,
+        ai.origin,
+        ai.supplier_invoice_number
     from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
     order by ai.id
 """
@@ -418,7 +441,9 @@ for row in rows:
                 amount_total_signed=%s,
                 amount_residual_signed=%s,
                 invoice_user_id=%s,
-                fiscal_position_id=%s
+                fiscal_position_id=%s,
+                invoice_origin=%s,
+                supplier_invoice_number=%s
             where id=%s
         """
         cr_dst.execute(SQL,(
@@ -441,6 +466,8 @@ for row in rows:
             row['residual'],
             row['user_id'],
             row['fiscal_position'],
+            row['origin'],
+            row['supplier_invoice_number'],
             move_id
         ))
         SQL="""
@@ -857,6 +884,9 @@ SQL="""
     update stock_location set parent_path=name;
     update product_category set parent_path='/' where parent_path is null;
     update product_category set complete_name=name;
+    update stock_warehouse set active='t';
+    update product_template set invoice_policy='order';
+    update product_template set service_type='timesheet';
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -987,24 +1017,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-# #** Migration mot de passe **************************************************
-SQL="SELECT id,password_crypt FROM res_users"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    SQL="UPDATE res_users SET password=%s WHERE id=%s"
-    cr_dst.execute(SQL,[row['password_crypt'],row['id']])
-cnx_dst.commit()
-# #****************************************************************************
-
-
-# #** Réinitialisation du mot de passe *******************************************
-# SQL="update res_users set password='$pbkdf2-sha512$25000$5rzXmjOG0Lq3FqI0xjhnjA$x8X5biBuQQyzKksioIecQRg29ir6jY2dTd/wGhbE.wrUs/qJlrF1wV6SCQYLiKK1g.cwVCztAf3WfBxvFg6b7w'"
-# cr_dst.execute(SQL)
-# cnx_dst.commit()
-# #*******************************************************************************
-
-
 # ** Migration des pièces jointes *********************************************
 SQL="""
     select *
@@ -1042,6 +1054,94 @@ for row in rows:
     ])
 cnx_dst.commit()
 # *****************************************************************************
+
+
+#** ir_sequence ***************************************************************
+SQL="SELECT id,code,implementation,prefix,padding,number_next FROM ir_sequence WHERE code is not null"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    code=row["code"]
+    SQL="UPDATE ir_sequence SET prefix=%s,padding=%s,number_next=%s WHERE code=%s"
+    cr_dst.execute(SQL,[row["prefix"],row["padding"],row["number_next"],code])
+    if row["implementation"]=="standard":
+        SQL="SELECT id FROM ir_sequence WHERE code='"+code+"'"
+        cr_dst.execute(SQL)
+        rows2 = cr_dst.fetchall()
+        for row2 in rows2:
+            seq_id = "%03d" % row["id"]
+            ir_sequence = "ir_sequence_"+seq_id
+            SQL="SELECT last_value FROM "+ir_sequence
+            cr_src.execute(SQL)
+            rows3 = cr_src.fetchall()
+            for row3 in rows3:
+                seq_id = "%03d" % row2["id"]
+                ir_sequence = "ir_sequence_"+seq_id
+                last_value = row3["last_value"]+1
+                SQL="ALTER SEQUENCE "+ir_sequence+" RESTART WITH %s"
+                cr_dst.execute(SQL,[last_value])
+#******************************************************************************
+
+
+#** Création des sequences pour les factures et avoirs ************************
+SQL="SELECT * FROM ir_sequence WHERE implementation='no_gap' and id in (23,25,24,22) order by id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        INSERT INTO ir_sequence (code,name,number_next,implementation,company_id,padding,number_increment,prefix,active,suffix)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,[row["code"],row["name"],row["number_next"],row["implementation"],row["company_id"],row["padding"],row["number_increment"],row["prefix"],row["active"],row["suffix"]])
+    print(row["name"])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** init sequence_id dans account_journal *************************************
+SQL="UPDATE account_journal j set sequence_id=(SELECT id from ir_sequence s where s.name=j.name limit 1)"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** name account_tax **********************************************************
+SQL="""
+    update account_tax set name ='TVA 20%' where id=2;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_payment_term ******************************************************
+table="account_payment_term"
+default = {'sequence': 10}
+MigrationTable(db_src,db_dst,table,default=default)
+table="account_payment_term_line"
+default = {'option': "day_after_invoice_date"}
+MigrationTable(db_src,db_dst,table,default=default)
+#******************************************************************************
+
+
+#** Traductions account_payment_term ******************************************
+SQL="SELECT id,name FROM account_payment_term"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    res_id = row["id"]
+    value=GetTraduction(cr_src,'account.payment.term','name', res_id)
+    if value:
+        SQL="update account_payment_term set name=%s where id=%s"
+        cr_dst.execute(SQL,[value,res_id])
+    value=GetTraduction(cr_src,'account.payment.term','note', res_id)
+    if value:
+        SQL="update account_payment_term set note=%s where id=%s"
+        cr_dst.execute(SQL,[value,res_id])
+SQL="delete from ir_translation where name like 'account.payment.term,%'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
 
 
 # ** image dans res_partner dans ir_attachment ********************************
