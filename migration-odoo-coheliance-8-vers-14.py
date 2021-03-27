@@ -19,29 +19,23 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
 
-
-
-
 #sys.exit()
 
 
-
-
-
-#** res_partner **********************************************************
+#** res_partner ***************************************************************
 MigrationTable(db_src,db_dst,'res_partner_title')
 MigrationTable(db_src,db_dst,'res_partner')
 #******************************************************************************
 
 
-#** res_users **********************************************************
+#** res_users *****************************************************************
 table = 'res_users'
 default = {'notification_type': 'email'}
 MigrationTable(db_src,db_dst,table,default=default)
 #******************************************************************************
 
 
-#** res_users (id=2) *************************************************************
+#** res_users (id=2) **********************************************************
 champs = GetChamps(cr_dst,'res_partner')
 champs.remove('id')
 champs=','.join(champs)
@@ -361,8 +355,13 @@ MigrationTable(db_src,db_dst,'sale_order_line',default=default)
 # ** account_bank_statement ****************************************************
 MigrationTable(db_src,db_dst,'account_bank_statement')
 rename={'name':'payment_ref'}
-default={'move_id': 1}
+default={'move_id': 2}
 MigrationTable(db_src,db_dst,'account_bank_statement_line',rename=rename,default=default)
+SQL="""
+    update account_bank_statement set state='open';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -408,7 +407,8 @@ SQL="""
         ai.fiscal_position,
         ai.name move_name,
         ai.origin,
-        ai.supplier_invoice_number
+        ai.supplier_invoice_number,
+        ai.payment_term
     from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
     order by ai.id
 """
@@ -443,7 +443,8 @@ for row in rows:
                 invoice_user_id=%s,
                 fiscal_position_id=%s,
                 invoice_origin=%s,
-                supplier_invoice_number=%s
+                supplier_invoice_number=%s,
+                invoice_payment_term_id=%s
             where id=%s
         """
         cr_dst.execute(SQL,(
@@ -468,6 +469,7 @@ for row in rows:
             row['fiscal_position'],
             row['origin'],
             row['supplier_invoice_number'],
+            row['payment_term'],
             move_id
         ))
         SQL="""
@@ -1142,6 +1144,90 @@ SQL="delete from ir_translation where name like 'account.payment.term,%'"
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
+#** crm_phonecall *************************************************************
+table='crm_phonecall'
+default={
+    'direction': 'out',
+}
+MigrationTable(db_src,db_dst,table,default=default)
+#******************************************************************************
+
+
+#** Requetes diverses pour résoudre des anomalies *****************************
+SQL="""
+    update sale_order set procurement_group_id=Null where procurement_group_id is not null;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** account_bank_statement ****************************************************
+SQL="""
+    select *
+    from account_bank_statement_line 
+    order by id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        INSERT INTO account_move(
+            name,
+            ref,
+            date,
+            state,
+            move_type,
+            to_check,
+            journal_id,
+            company_id,
+            currency_id,
+            is_move_sent,
+            statement_line_id,
+            auto_post,
+            amount_total,
+            amount_total_signed,
+            create_date,
+            create_uid,
+            write_date,
+            write_uid
+        )        
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        RETURNING id
+    """
+    cr_dst.execute(SQL,[
+        row['name'],
+        row['ref'],
+        row['date'],
+        'draft',
+        'entry',
+        False,
+        8,
+        1,
+        1,
+        False,
+        row['id'],
+        False,
+        row['amount'],
+        row['amount'],
+        row['create_date'],
+        row['create_uid'],
+        row['write_date'],
+        row['write_uid'],
+    ])
+    cr_dst.execute('SELECT LASTVAL()')
+    lastid = cr_dst.fetchone()['lastval']
+    SQL="update account_bank_statement_line set move_id=%s where id=%s"
+    cr_dst.execute(SQL,[lastid,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+
+
 
 
 # ** image dans res_partner dans ir_attachment ********************************
