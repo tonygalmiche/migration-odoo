@@ -246,6 +246,9 @@ SQL="""
 cr_dst.execute(SQL,['Outstanding Payments Account','512133',False,5,'other','asset',True,1,127,53049,False])
 cnx_dst.commit()
 
+
+
+#TODO A Revoir (Lignes commentés => Ne fonctionne pas avec odoo-formation)
 SQL="""
     update account_journal set type='general' where code='BNK1';
 
@@ -262,9 +265,9 @@ SQL="""
     delete from account_journal_outbound_payment_method_rel;
     delete from account_journal_inbound_payment_method_rel ;
     insert into account_journal_inbound_payment_method_rel values(8,1);
-    insert into account_journal_inbound_payment_method_rel values(10,1);
+    -- insert into account_journal_inbound_payment_method_rel values(10,1);
     insert into account_journal_outbound_payment_method_rel values(8,2);
-    insert into account_journal_outbound_payment_method_rel values(10,2);
+    -- insert into account_journal_outbound_payment_method_rel values(10,2);
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -720,6 +723,19 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+# Recherche du compte 411200 pour le reglement ci-dessous *********************
+SQL="select id from account_account where code='411200'"
+destination_account_id=False
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    destination_account_id = row["id"]
+if not destination_account_id:
+    print("Compte 411200 non trouvé !")
+    sys.exit()
+ #******************************************************************************
+
+
 #** account_payment ***********************************************************
 cr_dst.execute("DELETE FROM account_payment")
 cnx_dst.commit()
@@ -737,7 +753,8 @@ for row in rows:
     INSERT INTO account_payment (move_id, is_reconciled, is_matched, is_internal_transfer, payment_method_id, amount, payment_type, partner_type, currency_id, partner_id, destination_account_id)
     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
     """
-    cr_dst.execute(SQL,[row['id'],True,False,False,1,debit,'inbound','customer',1,row["partner_id"],1026])
+    cr_dst.execute(SQL,[row['id'],True,False,False,1,debit,'inbound','customer',1,row["partner_id"],destination_account_id])
+    #cr_dst.execute(SQL,[row['id'],True,False,False,1,debit,'inbound','customer',1,row["partner_id"],1026]) 1026 = Ancienne valeur
 cnx_dst.commit()
 
 #******************************************************************************
@@ -917,9 +934,10 @@ SQL="SELECT siret FROM res_company WHERE id=1"
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
 for row in rows:
-    SQL="UPDATE res_partner SET siret='"+row['siret']+"' WHERE id=1"
-    cr_dst.execute(SQL)
-cnx_dst.commit()
+    if row['siret']:
+        SQL="UPDATE res_partner SET siret='"+row['siret']+"' WHERE id=1"
+        cr_dst.execute(SQL)
+        cnx_dst.commit()
 #*******************************************************************************
 
 
@@ -1158,6 +1176,7 @@ MigrationTable(db_src,db_dst,table,default=default)
 #** Requetes diverses pour résoudre des anomalies *****************************
 SQL="""
     update sale_order set procurement_group_id=Null where procurement_group_id is not null;
+    update account_move_line set exclude_from_invoice_tab='f' where exclude_from_invoice_tab is null;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
