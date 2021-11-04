@@ -6,8 +6,11 @@ from migration_fonction import *
 #db_src = "coheliance8"
 #db_dst = "coheliance14_migre"
 
-db_src = "nouvelle-trajectoire8"
-db_dst = "nouvelle-trajectoire14_migre"
+#db_src = "nouvelle-trajectoire8"
+#db_dst = "nouvelle-trajectoire14_migre"
+
+db_src = "france-filets10"
+db_dst = "france-filets15"
 #*******************************************************************************
 
 
