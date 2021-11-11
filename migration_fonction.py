@@ -79,7 +79,7 @@ def GetChamps(cursor,table):
 
 
 def GetDistinctVal(cursor,table,champ):
-    SQL="select distinct "+champ+" from "+table
+    SQL="select distinct t."+champ+" from "+table+" t"
     cursor.execute(SQL)
     rows = cursor.fetchall()
     return len(rows)
@@ -202,7 +202,7 @@ def NbChampsTable(cursor,table):
 
 
 def Table2CSV(cursor,table,champs='*',rename=False, default={},where=""):
-    SQL="SELECT "+champs+" FROM "+table
+    SQL="SELECT "+champs+" FROM "+table+" t"
     if where!="":
         SQL=SQL+" WHERE "+where
     path = "/tmp/"+table+".csv"
@@ -268,6 +268,14 @@ def SetSequence(cr_dst,cnx_dst,table):
         cnx_dst.commit()
     except:
         pass
+
+
+def DumpRestoreTable(db_src,db_dst,table):
+    """ Cela permet en particuler de résoudre le problème avec la table mail_message_subtype qui contient le champ default qui est un nom réservé"""
+    cde='pg_dump -Fc --data-only -d '+db_src+' -t "'+table+'" > "/tmp/'+table+'.dump" 2>/dev/null'
+    os.popen(cde).readlines()
+    cde='pg_restore --data-only -d '+db_dst+' -t "'+table+'" /tmp/'+table+'.dump'
+    os.popen(cde).readlines()
 
 
 def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where=""):
@@ -463,6 +471,7 @@ def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
             INSERT INTO ir_property (name,res_id,company_id,fields_id,value_reference,type,create_uid,create_date,write_uid,write_date)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """
+        #print(SQL,r)
         cr_dst.execute(SQL, [
             field_dst,
             r['res_id'] or None,
