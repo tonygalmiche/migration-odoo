@@ -21,11 +21,8 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
-# MigrationTable(db_src,db_dst,'mail_message_subtype')
 
-
-
-# sys.exit()
+#sys.exit()
 
 
 
@@ -369,7 +366,9 @@ cnx_dst.commit()
 
 #** account_move_line *********************************************************
 MigrationTable(db_src,db_dst,'account_full_reconcile')
-rename={}
+rename={
+    'amount': 'amount_total'
+}
 default={
     'move_type'  : 'entry',
     'currency_id': 1,
@@ -585,9 +584,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-
-
-
 # Recherche du compte 512001 pour le reglement ci-dessous *********************
 SQL="select id from account_account where code='512001'"
 destination_account_id=False
@@ -626,10 +622,7 @@ for row in rows:
     cr_dst.execute(SQL,[row['id'],True,False,False,1,debit,'inbound','customer',1,row["partner_id"],destination_account_id])
     cr_dst.execute("update account_payment set payment_method_line_id=3")
 cnx_dst.commit()
-
 #******************************************************************************
-
-
 
 
 #** Lien entre account_move et account_payment ********************************
@@ -669,16 +662,6 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
-
-
-
-
-
-
-
-
-
-
 
 
 #** account_move_line_check_amount_currency_balance_sign **********************
@@ -739,120 +722,85 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-
-
-# ** account_bank_statement ****************************************************
+#** Pour faire fonctionner les paiments ***************************************
 SQL="""
-    select *
-    from account_bank_statement_line 
-    order by id
+    update account_move_line set amount_residual_currency=amount_residual;
+    update account_move set amount_total_in_currency_signed=amount_total_signed;
 """
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    SQL="""
-        INSERT INTO account_move(
-            name,
-            ref,
-            date,
-            state,
-            move_type,
-            to_check,
-            journal_id,
-            company_id,
-            currency_id,
-            is_move_sent,
-            statement_line_id,
-            auto_post,
-            amount_total,
-            amount_total_signed,
-            create_date,
-            create_uid,
-            write_date,
-            write_uid
-        )        
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-        RETURNING id
-    """
-    cr_dst.execute(SQL,[
-        row['name'],
-        row['ref'],
-        row['date'],
-        'draft',
-        'entry',
-        False,
-        8,
-        1,
-        1,
-        False,
-        row['id'],
-        False,
-        row['amount'],
-        row['amount'],
-        row['create_date'],
-        row['create_uid'],
-        row['write_date'],
-        row['write_uid'],
-    ])
-    cr_dst.execute('SELECT LASTVAL()')
-    lastid = cr_dst.fetchone()['lastval']
-    SQL="update account_bank_statement_line set move_id=%s where id=%s"
-    cr_dst.execute(SQL,[lastid,row['id']])
+cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
 
 
 
-
-
-
-
-
-
-#** account_partial_reconcile (Lien entre les factures et les paiements) ******
-
-MigrationTable(db_src,db_dst,'account_partial_reconcile')
-
-
-# cr_dst.execute("DELETE FROM account_partial_reconcile")
-# cnx_dst.commit()
-# SQL="select full_reconcile_id,count(*) from account_move_line where full_reconcile_id is not null  group by full_reconcile_id having count(*)=2"
+# # ** account_bank_statement ****************************************************
+# TODO : A priori, cette migration n'est plus necessaire
+# SQL="""
+#     select *
+#     from account_bank_statement_line 
+#     order by id
+# """
 # cr_src.execute(SQL)
 # rows = cr_src.fetchall()
 # for row in rows:
 #     SQL="""
-#         select l1.reconcile_id, l1.id debit_move_id,l2.id credit_move_id,l1.debit,l2.credit 
-#         from account_move_line l1 join  account_move_line l2 on l1.reconcile_id=l2.reconcile_id and l1.debit>0 and l2.credit>0
-#         where l1.reconcile_id="""+str(row["reconcile_id"])
-#     cr_src.execute(SQL)
-#     rows2 = cr_src.fetchall()
-#     for row2 in rows2:
-#         full_reconcile_id = row2["full_reconcile_id"]
-#         debit_move_id     = row2["debit_move_id"]
-#         credit_move_id    = row2["credit_move_id"]
-#         credit = row2["credit"]
-#         debit  = row2["debit"]
-#         SQL="""
-#             INSERT INTO account_partial_reconcile (debit_move_id, credit_move_id, full_reconcile_id, debit_currency_id, credit_currency_id, amount, debit_amount_currency, credit_amount_currency,company_id,max_date)
-#             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-#         """
-#         cr_dst.execute(SQL,[debit_move_id,credit_move_id,full_reconcile_id,1,1,credit,debit,credit,1,"1990-01-01"])
+#         INSERT INTO account_move(
+#             name,
+#             ref,
+#             date,
+#             state,
+#             move_type,
+#             to_check,
+#             journal_id,
+#             company_id,
+#             currency_id,
+#             is_move_sent,
+#             statement_line_id,
+#             auto_post,
+#             amount_total,
+#             amount_total_signed,
+#             create_date,
+#             create_uid,
+#             write_date,
+#             write_uid
+#         )        
+#         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+#         RETURNING id
+#     """
+#     cr_dst.execute(SQL,[
+#         row['name'],
+#         row['ref'],
+#         row['date'],
+#         'draft',
+#         'entry',
+#         False,
+#         8,
+#         1,
+#         1,
+#         False,
+#         row['id'],
+#         False,
+#         row['amount'],
+#         row['amount'],
+#         row['create_date'],
+#         row['create_uid'],
+#         row['write_date'],
+#         row['write_uid'],
+#     ])
+#     cr_dst.execute('SELECT LASTVAL()')
+#     lastid = cr_dst.fetchone()['lastval']
+#     SQL="update account_bank_statement_line set move_id=%s where id=%s"
+#     cr_dst.execute(SQL,[lastid,row['id']])
 # cnx_dst.commit()
+# #******************************************************************************
+
+
+#** account_partial_reconcile (Lien entre les factures et les paiements) ******
+MigrationTable(db_src,db_dst,'account_partial_reconcile')
+cr_dst.execute("update account_partial_reconcile set credit_amount_currency=amount, debit_amount_currency=amount") 
+cnx_dst.commit()
 #******************************************************************************
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -889,5 +837,30 @@ for row in rows:
     if res_id:
         SQL="UPDATE mail_message set res_id=%s where id=%s"
         cr_dst.execute(SQL,[res_id,id])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+#** Pièces jointes ************************************************************
+MigrationTable(db_src,db_dst,'ir_attachment')
+MigrationTable(db_src,db_dst,'sale_order_piece_jointe_attachment_rel')
+MigrationTable(db_src,db_dst,'is_chantier_piece_jointe_attachment_rel')
+MigrationTable(db_src,db_dst,'is_chantier_fin_chantier_attachment_rel')
+#******************************************************************************
+
+
+#** Pièces jointes des factures ***********************************************
+SQL="""
+    SELECT 
+        id,
+        move_id
+     from account_invoice
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="update ir_attachment set res_model='account.move', res_id=%s where res_id=%s and res_model='account.invoice'"
+    cr_dst.execute(SQL,[row["move_id"], row["id"]])
 cnx_dst.commit()
 #******************************************************************************
