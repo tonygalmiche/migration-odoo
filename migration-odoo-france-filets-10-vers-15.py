@@ -10,20 +10,78 @@ db_dst = "france-filets15"
 #******************************************************************************
 
 cnx,cr=GetCR(db_src)
-# db_migre = db_dst+'_migre'
-# SQL="DROP DATABASE "+db_migre+";CREATE DATABASE "+db_migre+" WITH TEMPLATE "+db_dst
-# cde='echo "'+SQL+'" | psql postgres'
-# lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
-#db_dst = db_migre
+db_vierge = db_dst+'-vierge'
+SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
+cde="""echo '"""+SQL+"""' | psql postgres"""
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
+cnx_vierge,cr_vierge=GetCR(db_vierge)
+
+
+SQL="delete from ir_attachment where url is not null "
+cr_dst.execute(SQL)
+SQL="SELECT * FROM ir_attachment where url is not null and url is not null and name='res.company.scss';"
+cr_vierge.execute(SQL)
+rows = cr_vierge.fetchall()
+for row in rows:
+    print(row["name"])
+    SQL="""
+        INSERT INTO ir_attachment (
+            name,
+            description,
+            res_model,
+            res_field,
+            res_id,
+            company_id,
+            type,
+            url,
+            public,
+            access_token,
+            db_datas,
+            store_fname,
+            file_size,
+            checksum,
+            mimetype,
+            index_content,
+            create_uid,
+            create_date,
+            write_uid,
+            write_date,
+            original_id
+        )
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    cr_dst.execute(SQL,[
+        row["name"],
+        row["description"],
+        row["res_model"],
+        row["res_field"],
+        row["res_id"],
+        row["company_id"],
+        row["type"],
+        row["url"],
+        row["public"],
+        row["access_token"],
+        row["db_datas"],
+        row["store_fname"],
+        row["file_size"],
+        row["checksum"],
+        row["mimetype"],
+        row["index_content"],
+        row["create_uid"],
+        row["create_date"],
+        row["write_uid"],
+        row["write_date"],
+        row["original_id"],
+    ])
+cnx_dst.commit()
 
 
 
 
-#sys.exit()
-
+sys.exit()
 
 
 # ** purge des tests **********************************************************
@@ -864,3 +922,50 @@ for row in rows:
     cr_dst.execute(SQL,[row["move_id"], row["id"]])
 cnx_dst.commit()
 #******************************************************************************
+
+
+#** res_company_users_rel *****************************************************
+MigrationTable(db_src,db_dst,'res_company_users_rel')
+cr_dst.execute("insert into res_company_users_rel values(1,2)")
+cnx_dst.commit()
+# #****************************************************************************
+
+
+MigrationResGroups(db_src,db_dst)
+
+
+
+#** sale_order_line_invoice_rel *****************************************
+SQL="delete from sale_order_line_invoice_rel"
+cr_dst.execute(SQL)
+SQL="""
+    select distinct
+        aml.id move_line_id , 
+        (SELECT order_line_id from sale_order_line_invoice_rel where invoice_line_id=ail.id limit 1) order_line_id
+    from account_move_line aml join account_invoice_line ail on ail.invoice_id=aml.invoice_id   
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    if row["order_line_id"]:
+        SQL="""
+            INSERT INTO sale_order_line_invoice_rel (
+                invoice_line_id,
+                order_line_id
+            )
+            VALUES(%s,%s)
+        """
+        cr_dst.execute(SQL,[
+            row["move_line_id"],
+            row["order_line_id"],
+        ])
+cnx_dst.commit()
+
+
+MigrationTable(db_src,db_dst,'stock_location')
+MigrationDonneesTable(db_src,db_dst,'res_company')
+
+
+
+
+

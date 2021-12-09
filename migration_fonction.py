@@ -325,14 +325,9 @@ def MigrationDonneesTable(db_src,db_dst,table):
         rows = cr_src.fetchall()
         for row in rows:
             v = row[champ]
-            SQL=False
             if v:
-                if type(v) is int or type(v) is float:
-                    SQL="UPDATE "+table+" SET "+champ+"="+str(v)+" WHERE id="+str(row['id'])
-                if type(v) is str:
-                    SQL="UPDATE "+table+" SET "+champ+"='"+v+"' WHERE id="+str(row['id'])
-            if SQL:
-                cr_dst.execute(SQL)
+                SQL="UPDATE "+table+" SET "+champ+"=%s WHERE id=%s"
+                cr_dst.execute(SQL,[v,row['id']])
     cnx_dst.commit()
 
 
@@ -503,14 +498,6 @@ def GetFiscalPositionPartner(cr,partner_id):
         v=v.split(",")
         fiscal_position_id=v[1]
     return fiscal_position_id
-
-
-
-
-# coheliance8=# select * from ir_translation where value ilike '%Intra Com%' ;
-#   id   | lang  |    src    |           name            | res_id | module | state | comments |   value   | type  
-# -------+-------+-----------+---------------------------+--------+--------+-------+----------+-----------+-------
-#  37634 | fr_FR | Intra Com | account.payment.term,name |      5 |        |       |          | Intra Com | model
 
 
 def GetTraduction(cr,model,field,res_id):
