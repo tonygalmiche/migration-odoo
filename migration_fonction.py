@@ -466,7 +466,6 @@ def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
             INSERT INTO ir_property (name,res_id,company_id,fields_id,value_reference,type,create_uid,create_date,write_uid,write_date)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """
-        #print(SQL,r)
         cr_dst.execute(SQL, [
             field_dst,
             r['res_id'] or None,

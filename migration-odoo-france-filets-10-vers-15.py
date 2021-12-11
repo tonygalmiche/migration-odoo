@@ -20,68 +20,11 @@ cnx_dst,cr_dst=GetCR(db_dst)
 cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
-SQL="delete from ir_attachment where url is not null "
-cr_dst.execute(SQL)
-SQL="SELECT * FROM ir_attachment where url is not null and url is not null and name='res.company.scss';"
-cr_vierge.execute(SQL)
-rows = cr_vierge.fetchall()
-for row in rows:
-    print(row["name"])
-    SQL="""
-        INSERT INTO ir_attachment (
-            name,
-            description,
-            res_model,
-            res_field,
-            res_id,
-            company_id,
-            type,
-            url,
-            public,
-            access_token,
-            db_datas,
-            store_fname,
-            file_size,
-            checksum,
-            mimetype,
-            index_content,
-            create_uid,
-            create_date,
-            write_uid,
-            write_date,
-            original_id
-        )
-        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """
-    cr_dst.execute(SQL,[
-        row["name"],
-        row["description"],
-        row["res_model"],
-        row["res_field"],
-        row["res_id"],
-        row["company_id"],
-        row["type"],
-        row["url"],
-        row["public"],
-        row["access_token"],
-        row["db_datas"],
-        row["store_fname"],
-        row["file_size"],
-        row["checksum"],
-        row["mimetype"],
-        row["index_content"],
-        row["create_uid"],
-        row["create_date"],
-        row["write_uid"],
-        row["write_date"],
-        row["original_id"],
-    ])
-cnx_dst.commit()
 
 
+#sys.exit()
 
 
-sys.exit()
 
 
 # ** purge des tests **********************************************************
@@ -935,6 +878,11 @@ MigrationResGroups(db_src,db_dst)
 
 
 
+
+
+
+
+
 #** sale_order_line_invoice_rel *****************************************
 SQL="delete from sale_order_line_invoice_rel"
 cr_dst.execute(SQL)
@@ -962,8 +910,75 @@ for row in rows:
 cnx_dst.commit()
 
 
+
+#** res_company ***************************************************************
+cr_dst.execute("update res_company set account_purchase_tax_id=Null")
+cnx_dst.commit()
 MigrationTable(db_src,db_dst,'stock_location')
 MigrationDonneesTable(db_src,db_dst,'res_company')
+#******************************************************************************
+
+
+
+
+
+SQL="delete from ir_attachment where url is not null "
+cr_dst.execute(SQL)
+SQL="SELECT * FROM ir_attachment where url is not null and url is not null and name='res.company.scss';"
+cr_vierge.execute(SQL)
+rows = cr_vierge.fetchall()
+for row in rows:
+    print(row["name"])
+    SQL="""
+        INSERT INTO ir_attachment (
+            name,
+            description,
+            res_model,
+            res_field,
+            res_id,
+            company_id,
+            type,
+            url,
+            public,
+            access_token,
+            db_datas,
+            store_fname,
+            file_size,
+            checksum,
+            mimetype,
+            index_content,
+            create_uid,
+            create_date,
+            write_uid,
+            write_date,
+            original_id
+        )
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    cr_dst.execute(SQL,[
+        row["name"],
+        row["description"],
+        row["res_model"],
+        row["res_field"],
+        row["res_id"],
+        row["company_id"],
+        row["type"],
+        row["url"],
+        row["public"],
+        row["access_token"],
+        row["db_datas"],
+        row["store_fname"],
+        row["file_size"],
+        row["checksum"],
+        row["mimetype"],
+        row["index_content"],
+        row["create_uid"],
+        row["create_date"],
+        row["write_uid"],
+        row["write_date"],
+        row["original_id"],
+    ])
+cnx_dst.commit()
 
 
 
