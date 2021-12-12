@@ -100,7 +100,11 @@ cnx_dst.commit()
 # #****************************************************************************
 
 
+#** res_groups ****************************************************************
 MigrationResGroups(db_src,db_dst)
+cr_dst.execute("delete from res_groups_users_rel where gid=10;") # L'utilisateur ne peut pas avoir plus d'un type d'utilisateur.
+cnx_dst.commit()
+# #****************************************************************************
 
 
 # ** Tables diverses **********************************************************
@@ -112,17 +116,22 @@ for table in tables:
 #******************************************************************************
 
 
+
 #** product *******************************************************************
 default={
-    'purchase_line_warn': 'no-message',
     'sale_line_warn'    : 'no-message',
+    'purchase_line_warn': 'no-message',
     'tracking'          : 'none',
 }
 rename={
     'type':'detailed_type'
 }
-MigrationTable(db_src,db_dst,'product_template',rename=rename, default=default)
-MigrationTable(db_src,db_dst,'product_product')
+MigrationTable(db_src,db_dst,"product_template",default=default,rename=rename)
+MigrationTable(db_src,db_dst,"product_product")
+MigrationIrProperty(db_src,db_dst,'product.template', field_src='property_account_income' , field_dst='property_account_income_id')
+MigrationIrProperty(db_src,db_dst,'product.template', field_src='property_account_expense', field_dst='property_account_expense_id')
+MigrationTable(db_src,db_dst,'product_taxes_rel')
+MigrationTable(db_src,db_dst,'product_supplier_taxes_rel')
 #******************************************************************************
 
 
@@ -314,9 +323,42 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+# ** stock_location / stock_warehouse  ****************************************
+MigrationTable(db_src,db_dst,'stock_location')
+default={'manufacture_steps': 'mrp_one_step'}
+MigrationTable(db_src,db_dst,'stock_warehouse', default=default)
+SQL="""
+    update stock_location set parent_path=name;
+    update product_category set parent_path='/' where parent_path is null;
+    update product_category set complete_name=name;
+    update stock_warehouse set active='t';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_production')
+MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_inventory')
+# *****************************************************************************
+
+
 #** res_company ***************************************************************
 cr_dst.execute("update res_company set account_purchase_tax_id=Null")
 cnx_dst.commit()
-MigrationTable(db_src,db_dst,'stock_location')
 MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
+
+
+
+#** mrp_bom ***************************************************************
+rename={'product_uom':'product_uom_id'}
+default={
+    'ready_to_produce': 'all_available',
+    'consumption'     : 'warning',
+}
+MigrationTable(db_src,db_dst,'mrp_bom', rename=rename, default=default)
+rename={'product_uom':'product_uom_id'}
+MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
+#******************************************************************************
+
+#  id | message_main_attachment_id | code | active |  type  | product_tmpl_id | product_id | product_qty | product_uom_id | sequence | ready_to_produce | picking_type_id | company_id | consumption | create_uid |        create_date        | write_uid |        write_date         
+# ----+----------------------------+------+--------+--------+-----------------+------------+-------------+----------------+----------+------------------+-----------------+------------+-------------+------------+---------------------------+-----------+---------------------------
+#   1 |                            |      | t      | normal |               1 |            |        1.00 |              1 |          | all_available    |                 |          1 | warning     |          2 | 2021-12-11 10:18:16.58228 |         2 | 2021-12-11 10:18:16.58228
