@@ -90,7 +90,8 @@ def GetChampsTable(cursor,table,champ=False):
         SELECT
             a.attname,
             pg_catalog.format_type(a.atttypid, a.atttypmod) as type,
-            a.attnotnull, a.atthasdef, adef.adsrc,
+            a.attnotnull, a.atthasdef,
+            -- adef.adsrc,
             pg_catalog.col_description(a.attrelid, a.attnum) AS comment
         FROM
             pg_catalog.pg_attribute a
@@ -179,7 +180,8 @@ def NbChampsTable(cursor,table):
         SELECT
             a.attname,
             pg_catalog.format_type(a.atttypid, a.atttypmod) as type,
-            a.attnotnull, a.atthasdef, adef.adsrc,
+            a.attnotnull, a.atthasdef,
+            -- adef.adsrc,
             pg_catalog.col_description(a.attrelid, a.attnum) AS comment
         FROM
             pg_catalog.pg_attribute a

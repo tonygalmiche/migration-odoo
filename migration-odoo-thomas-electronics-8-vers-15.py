@@ -20,6 +20,14 @@ cnx_dst,cr_dst=GetCR(db_dst)
 cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
+
+#sys.exit()
+
+
+
+
+
+
 # ** purge des tests **********************************************************
 SQL="""
     delete from crm_team;
@@ -31,6 +39,7 @@ SQL="""
     delete from mail_message;
     -- delete from mail_message_subtype;
     delete from mail_followers;
+    -- delete from sale_order;
     
 """
 cr_dst.execute(SQL)
@@ -102,7 +111,7 @@ cnx_dst.commit()
 
 #** res_groups ****************************************************************
 MigrationResGroups(db_src,db_dst)
-cr_dst.execute("delete from res_groups_users_rel where gid=10;") # L'utilisateur ne peut pas avoir plus d'un type d'utilisateur.
+cr_dst.execute("delete from res_groups_users_rel where gid in (9,10);") # L'utilisateur ne peut pas avoir plus d'un type d'utilisateur.
 cnx_dst.commit()
 # #****************************************************************************
 
@@ -116,15 +125,88 @@ for table in tables:
 #******************************************************************************
 
 
+#** product_pricelist *********************************************************
+default={
+    'discount_policy': 'with_discount',
+}
+MigrationTable(db_src,db_dst,"product_pricelist", default=default, where="type='sale'")
+default={
+    'applied_on'   : '3_global',
+    'pricelist_id' : 1,
+    'compute_price': 'fixed',
+}
+MigrationTable(db_src,db_dst,"product_pricelist_item",default=default)
+SQL="update product_pricelist set currency_id=2 where currency_id=3"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** uom  **********************************************************************
+MigrationTable(db_src,db_dst, table_src="product_uom_categ", table_dst="uom_category")
+MigrationTable(db_src,db_dst, table_src="product_uom"      , table_dst="uom_uom")
+#******************************************************************************
+
+
+#** Traductions uom_uom *******************************************************
+SQL="SELECT id,name FROM product_uom"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    res_id = row["id"]
+    value=GetTraduction(cr_src,'product.uom','name', res_id)
+    if value:
+        SQL="update uom_uom set name=%s where id=%s"
+        cr_dst.execute(SQL,[value,res_id])
+SQL="delete from ir_translation where name like 'uom.uom,%'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** Traductions uom_category *******************************************************
+SQL="SELECT id,name FROM product_uom_categ"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    res_id = row["id"]
+    value=GetTraduction(cr_src,'product.uom.categ','name', res_id)
+    if value:
+        SQL="update uom_category set name=%s where id=%s"
+        cr_dst.execute(SQL,[value,res_id])
+SQL="delete from ir_translation where name like 'uom.category,%'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** product_category **********************************************************
+MigrationTable(db_src,db_dst,'product_category')
+SQL="""
+    update product_category set parent_path='/' where parent_path is null;
+    update product_category set complete_name=name;
+    update product_category set complete_name='Tous'   ,  name='Tous'     where id=1;
+    update product_category set complete_name='En Vente', name='En Vente' where id=2;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+MigrationIrProperty(db_src,db_dst,'product.category', field_src='property_account_income_categ' , field_dst='property_account_income_categ_id')
+MigrationIrProperty(db_src,db_dst,'product.category', field_src='property_account_expense_categ', field_dst='property_account_expense_categ_id')
+#******************************************************************************
+
+
+
 
 #** product *******************************************************************
 default={
     'sale_line_warn'    : 'no-message',
     'purchase_line_warn': 'no-message',
     'tracking'          : 'none',
+    'invoice_policy'    : 'delivery',
+    'purchase_method'   : 'receive',
 }
 rename={
-    'type':'detailed_type'
+   'type':'detailed_type'
 }
 MigrationTable(db_src,db_dst,"product_template",default=default,rename=rename)
 MigrationTable(db_src,db_dst,"product_product")
@@ -132,6 +214,12 @@ MigrationIrProperty(db_src,db_dst,'product.template', field_src='property_accoun
 MigrationIrProperty(db_src,db_dst,'product.template', field_src='property_account_expense', field_dst='property_account_expense_id')
 MigrationTable(db_src,db_dst,'product_taxes_rel')
 MigrationTable(db_src,db_dst,'product_supplier_taxes_rel')
+SQL="""
+    update product_template set type=detailed_type;
+    update product_template pt set default_code=(select pp.default_code from product_product pp where pp.product_tmpl_id=pt.id);
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -190,14 +278,10 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-
-
 #** product_template **************************************************************
 MigrationIrProperty(db_src,db_dst,'product.template', 'property_account_income_id')
 MigrationIrProperty(db_src,db_dst,'product.template', 'property_account_expense_id')
 #******************************************************************************
-
-
 
 
 #** account_tax **************************************************************
@@ -220,6 +304,8 @@ default={
 MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 MigrationTable(db_src,db_dst,'product_taxes_rel')
 MigrationTable(db_src,db_dst,'product_supplier_taxes_rel')
+cr_dst.execute("update account_tax set amount=100*amount")
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -323,20 +409,38 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-# ** stock_location / stock_warehouse  ****************************************
-MigrationTable(db_src,db_dst,'stock_location')
-default={'manufacture_steps': 'mrp_one_step'}
-MigrationTable(db_src,db_dst,'stock_warehouse', default=default)
+# # ** stock_location / stock_warehouse  ****************************************
+# MigrationTable(db_src,db_dst,'stock_location')
+# default={'manufacture_steps': 'mrp_one_step'}
+# MigrationTable(db_src,db_dst,'stock_warehouse', default=default)
+# SQL="""
+#     update stock_location set parent_path=name;
+#     update product_category set parent_path='/' where parent_path is null;
+#     update product_category set complete_name=name;
+#     update stock_warehouse set active='t';
+# """
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_production')
+# MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_inventory')
+# MigrationTable(db_src,db_dst,'stock_rule')
+# MigrationTable(db_src,db_dst,'stock_location_route')
+# # *****************************************************************************
+
+
+# ** stock_quant **************************************************************
+# TODO : Je ne migre pas les emplacements, car c'est très complexe, car il y a la table stock_rule en plus
+# mais du coup, je dois changer le champ location_id dans stock_quant
+default={'reserved_quantity': 0}
+rename={'qty': 'quantity'}
+MigrationTable(db_src,db_dst,'stock_quant', default=default, rename=rename, where="location_id=12")
 SQL="""
-    update stock_location set parent_path=name;
-    update product_category set parent_path='/' where parent_path is null;
-    update product_category set complete_name=name;
-    update stock_warehouse set active='t';
+    update stock_quant set location_id=8;
+    update stock_quant set inventory_date=in_date;
+    update stock_quant set inventory_quantity_set='f';
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
-MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_production')
-MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_inventory')
 # *****************************************************************************
 
 
@@ -359,6 +463,38 @@ rename={'product_uom':'product_uom_id'}
 MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
 #******************************************************************************
 
-#  id | message_main_attachment_id | code | active |  type  | product_tmpl_id | product_id | product_qty | product_uom_id | sequence | ready_to_produce | picking_type_id | company_id | consumption | create_uid |        create_date        | write_uid |        write_date         
-# ----+----------------------------+------+--------+--------+-----------------+------------+-------------+----------------+----------+------------------+-----------------+------------+-------------+------------+---------------------------+-----------+---------------------------
-#   1 |                            |      | t      | normal |               1 |            |        1.00 |              1 |          | all_available    |                 |          1 | warning     |          2 | 2021-12-11 10:18:16.58228 |         2 | 2021-12-11 10:18:16.58228
+
+#** ir_sequence ***************************************************************
+SQL="SELECT id,code,implementation,prefix,padding,number_next FROM ir_sequence WHERE code is not null"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    code=row["code"]
+    SQL="UPDATE ir_sequence SET prefix=%s,padding=%s,number_next=%s WHERE code=%s"
+    cr_dst.execute(SQL,[row["prefix"],row["padding"],row["number_next"],code])
+    if row["implementation"]=="standard":
+        SQL="SELECT id FROM ir_sequence WHERE code='"+code+"'"
+        cr_dst.execute(SQL)
+        rows2 = cr_dst.fetchall()
+        for row2 in rows2:
+            seq_id = "%03d" % row["id"]
+            ir_sequence = "ir_sequence_"+seq_id
+            SQL="SELECT last_value FROM "+ir_sequence
+            cr_src.execute(SQL)
+            rows3 = cr_src.fetchall()
+            for row3 in rows3:
+                seq_id = "%03d" % row2["id"]
+                ir_sequence = "ir_sequence_"+seq_id
+                last_value = row3["last_value"]+1
+                SQL="ALTER SEQUENCE "+ir_sequence+" RESTART WITH %s"
+                cr_dst.execute(SQL,[last_value])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** res_country ***************************************************************
+CountrySrc2Dst = GetCountrySrc2Dst(cr_src,cr_dst)
+MigrationChampTable(db_src,db_dst,'res_partner', 'country_id', CountrySrc2Dst)
+#******************************************************************************
+
+
