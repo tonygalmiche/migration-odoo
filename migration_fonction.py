@@ -384,6 +384,18 @@ def MigrationResGroups(db_src,db_dst):
     cnx_dst.commit()
 
 
+def AddUserInGroup(db_dst, gid, uid):
+    """Ajout d'un utilisateur dans un groupe"""
+    cnx_dst,cr_dst=GetCR(db_dst)
+    SQL="""
+        INSERT INTO res_groups_users_rel (gid, uid)
+        VALUES (%s, %s)
+        ON CONFLICT DO NOTHING
+    """
+    cr_dst.execute(SQL, [gid,uid])
+    cnx_dst.commit()
+
+
 def GetFielsdId(cr,model,field):
     SQL="""
         select  id,name,model

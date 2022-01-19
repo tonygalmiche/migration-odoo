@@ -13,7 +13,7 @@ cnx,cr=GetCR(db_src)
 db_vierge = db_dst+'-vierge'
 SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
 cde="""echo '"""+SQL+"""' | psql postgres"""
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
@@ -22,10 +22,6 @@ cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
 #sys.exit()
-
-
-
-
 
 
 # ** purge des tests **********************************************************
@@ -39,8 +35,8 @@ SQL="""
     delete from mail_message;
     -- delete from mail_message_subtype;
     delete from mail_followers;
-    -- delete from sale_order;
-    
+    delete from sale_order;
+    delete from purchase_order;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -223,6 +219,41 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** Migration standard_price **************************************************
+SQL=" delete from ir_property where name='standard_price';"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT * FROM  ir_property where name='standard_price'"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    product_tmpl_id = row["res_id"].split(",")[1]
+    SQL="SELECT id FROM product_product where product_tmpl_id=%s"
+    cr_src.execute(SQL,[product_tmpl_id])
+    rows2 = cr_src.fetchall()
+    for row2 in rows2:
+        res_id = "product.product,%s"%(row2["id"])
+        SQL="""
+            INSERT INTO ir_property (value_float, name, type, company_id, fields_id, res_id, create_uid, write_uid, create_date, write_date)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);
+        """
+        fields_id = 3024
+        cr_dst.execute(SQL,[
+            row["value_float"],
+            row["name"],
+            row["type"],
+            row["company_id"],
+            fields_id,
+            res_id,
+            row["create_uid"],
+            row["write_uid"],
+            row["create_date"],
+            row["write_date"]
+        ])
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** Traductions account_payment_term ******************************************
 SQL="SELECT id,name FROM product_template"
 cr_src.execute(SQL)
@@ -337,8 +368,6 @@ for row in rows:
     cr_dst.execute(SQL,[100,'tax',id,1,1,True])
 cnx_dst.commit()
 #******************************************************************************
-
-
 
 
 #** account_journal ***********************************************************
@@ -497,4 +526,22 @@ CountrySrc2Dst = GetCountrySrc2Dst(cr_src,cr_dst)
 MigrationChampTable(db_src,db_dst,'res_partner', 'country_id', CountrySrc2Dst)
 #******************************************************************************
 
+
+# ** Afficher la comptabilité *************************************************
+gid  = 26    # Groupe "Show Accounting Features - Readonly"
+uids = [2,6] # admin + sandra.pernoux@thomaselectronics.fr
+for uid in uids:
+    AddUserInGroup(db_dst, gid, uid)
+#******************************************************************************
+
+
+#** Requètes diverses *********************************************************
+SQL="""
+    update mrp_bom_line set company_id=1;
+    update product_template set detailed_type='product';
+    update product_template set type='product';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
 
