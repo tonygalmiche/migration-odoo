@@ -919,9 +919,15 @@ MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
 
 
+#** ir_attachment css et js ***************************************************
+#TODO : Il faut supprimer les js et css si prolbème avec interface 
+cr_dst.execute("delete from ir_attachment where url like '%js'")
+cr_dst.execute("delete from ir_attachment where url like '%css'")
+cnx_dst.commit()
+#******************************************************************************
 
 
-
+#** ir_attachment *************************************************************
 SQL="delete from ir_attachment where url is not null "
 cr_dst.execute(SQL)
 SQL="SELECT * FROM ir_attachment where url is not null and url is not null and name='res.company.scss';"
