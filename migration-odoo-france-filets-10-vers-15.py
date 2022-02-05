@@ -20,11 +20,7 @@ cnx_dst,cr_dst=GetCR(db_dst)
 cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
-
-
 #sys.exit()
-
-
 
 
 # ** purge des tests **********************************************************
@@ -172,13 +168,6 @@ SQL="delete from ir_translation where name like 'product.template,%'"
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
-
-
-
-
-
-
-
 
 
 #** sale_order ***************************************************************
@@ -585,6 +574,11 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** Migration des taxes sur les commandes *************************************
+MigrationTable(db_src,db_dst,'account_tax_sale_order_line_rel')
+#******************************************************************************
+
+
 # Recherche du compte 512001 pour le reglement ci-dessous *********************
 SQL="select id from account_account where code='512001'"
 destination_account_id=False
@@ -717,6 +711,7 @@ cnx_dst.commit()
 SQL="""
     update sale_order set procurement_group_id=Null where procurement_group_id is not null;
     update account_move_line set exclude_from_invoice_tab='f' where exclude_from_invoice_tab is null;
+    update account_move_line set balance=(debit-credit) where balance=0;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -877,10 +872,12 @@ cnx_dst.commit()
 MigrationResGroups(db_src,db_dst)
 
 
-
-
-
-
+# ** Afficher la comptabilité *************************************************
+gid  = 26    # Groupe "Show Accounting Features - Readonly"
+uids = [2,6] # admin + sandra.pernoux@thomaselectronics.fr
+for uid in uids:
+    AddUserInGroup(db_dst, gid, uid)
+#******************************************************************************
 
 
 #** sale_order_line_invoice_rel *****************************************
@@ -910,12 +907,49 @@ for row in rows:
 cnx_dst.commit()
 
 
-
 #** res_company ***************************************************************
 cr_dst.execute("update res_company set account_purchase_tax_id=Null")
 cnx_dst.commit()
 MigrationTable(db_src,db_dst,'stock_location')
 MigrationDonneesTable(db_src,db_dst,'res_company')
+#******************************************************************************
+
+
+# ** Migration du siret de res_company dans res_partner **********************
+SQL="SELECT id,siret,partner_id from res_company"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    cr_dst.execute("update res_partner set siret=%s where id=%s",[row["siret"],row["id"]])
+    cnx_dst.commit()
+#******************************************************************************
+
+
+#** ir_sequence ***************************************************************
+SQL="SELECT id,code,implementation,prefix,padding,number_next FROM ir_sequence WHERE code is not null"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    code=row["code"]
+    SQL="UPDATE ir_sequence SET prefix=%s,padding=%s,number_next=%s WHERE code=%s"
+    cr_dst.execute(SQL,[row["prefix"],row["padding"],row["number_next"],code])
+    if row["implementation"]=="standard":
+        SQL="SELECT id FROM ir_sequence WHERE code='"+code+"'"
+        cr_dst.execute(SQL)
+        rows2 = cr_dst.fetchall()
+        for row2 in rows2:
+            seq_id = "%03d" % row["id"]
+            ir_sequence = "ir_sequence_"+seq_id
+            SQL="SELECT last_value FROM "+ir_sequence
+            cr_src.execute(SQL)
+            rows3 = cr_src.fetchall()
+            for row3 in rows3:
+                seq_id = "%03d" % row2["id"]
+                ir_sequence = "ir_sequence_"+seq_id
+                last_value = row3["last_value"]+1
+                SQL="ALTER SEQUENCE "+ir_sequence+" RESTART WITH %s"
+                cr_dst.execute(SQL,[last_value])
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -928,13 +962,17 @@ cnx_dst.commit()
 
 
 #** ir_attachment *************************************************************
+# Pour résoudre ce problème : 
+# Could not get content for /web/static/src/legacy/scss/asset_styles_company_report.scss defined in bundle 'web.report_assets_common'.
+# En fait le fichier indiqué n’existe pas physiquement dans le module web. Une pièce jointe est ajoutée dans ir_attachment 
+# contenant le contenu directement en base de données et le champ URL indique l’url fictive de ces données
+#Il faut donc remettre ces données dans ir_attachment après la migration de la base en repartant de la base vierge : 
 SQL="delete from ir_attachment where url is not null "
 cr_dst.execute(SQL)
 SQL="SELECT * FROM ir_attachment where url is not null and url is not null and name='res.company.scss';"
 cr_vierge.execute(SQL)
 rows = cr_vierge.fetchall()
 for row in rows:
-    print(row["name"])
     SQL="""
         INSERT INTO ir_attachment (
             name,
@@ -985,8 +1023,4 @@ for row in rows:
         row["original_id"],
     ])
 cnx_dst.commit()
-
-
-
-
 
