@@ -6,6 +6,7 @@ import csv
 import base64
 import magic
 import os
+import json
 from xmlrpc import client as xmlrpclib
 
 
@@ -203,14 +204,17 @@ def NbChampsTable(cursor,table):
     return nb
 
 
-def Table2CSV(cursor,table,champs='*',rename=False, default={},where=""):
+
+#            type_src = GetChampsTable(cr_src,table_src,champ)[0][1]
+
+def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False):
     SQL="SELECT "+champs+" FROM "+table+" t"
     if where!="":
         SQL=SQL+" WHERE "+where
     path = "/tmp/"+table+".csv"
-    if rename or default:
-        cursor.execute(SQL)
-        rows = cursor.fetchall()
+    if rename or default or text2jsonb:
+        cr_src.execute(SQL)
+        rows = cr_src.fetchall()
         keys1 = []
         keys2 = []
         for row in rows:
@@ -229,15 +233,38 @@ def Table2CSV(cursor,table,champs='*',rename=False, default={},where=""):
         f = open(path, 'w', newline ='')
         writer = csv.DictWriter(f, fieldnames=keys1)
         f.write(','.join(keys2)+'\r\n')
+        jsons=[]
+        if text2jsonb and cr_dst:
+            for key in keys2:
+                type_champ = GetChampsTable(cr_dst,(table_dst or table),key)
+                if type_champ:
+                    if type_champ[0][1]=="jsonb":
+                        jsons.append(key)
         for row in rows:
+            #if "name" in row:
+            #    print(row["name"])
             for x in default:
-                row[x] = default[x]
+                v = default[x]
+                if x in row:
+                    if row[x]:
+                        v = row[x]
+                row[x] = v
+            for x in jsons:
+                v=row[x]
+                if v:
+                    model=table.replace("_",".")
+                    v=GetTraduction(cr_src, model, x, row["id"]) or v
+                    val={
+                        "en_US": v,
+                        "fr_FR": v,
+                    }
+                    row[x]=json.dumps(val)
             writer.writerow(row)
-    if not rename and not default:
+    else:
         #Source : https://kb.objectrocket.com/postgresql/from-postgres-to-csv-with-python-910
         SQL_for_file_output = "COPY ({0}) TO STDOUT WITH CSV HEADER".format(SQL)
         with open(path, 'w') as f_output:
-            cursor.copy_expert(SQL_for_file_output, f_output)
+            cr_src.copy_expert(SQL_for_file_output, f_output)
 
 
 def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False):
@@ -280,7 +307,7 @@ def DumpRestoreTable(db_src,db_dst,table):
     os.popen(cde).readlines()
 
 
-def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where=""):
+def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where="",text2jsonb=False):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     if not table_dst:
@@ -298,7 +325,7 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
         if champ in champs_src and champ in champs_dst:
             communs.append(champ)
     champs=','.join(communs)
-    Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where)
+    Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst)
     CSV2Table(cnx_dst,cr_dst,table_src,table_dst)
     SetSequence(cr_dst,cnx_dst,table_dst)
 
@@ -688,4 +715,37 @@ def SqlSelectFormat(cr,SQL,exclude=[]):
         print(line)
     line=''
 
+
+def parent_store_compute(cr,cnx,table,parent):
+    """ Compute parent_path field from scratch. """
+    # Each record is associated to a string 'parent_path', that represents
+    # the path from the record's root node to the record. The path is made
+    # of the node ids suffixed with a slash (see example below). The nodes
+    # in the subtree of record are the ones where 'parent_path' starts with
+    # the 'parent_path' of record.
+    #
+    #               a                 node | id | parent_path
+    #              / \                  a  | 42 | 42/
+    #            ...  b                 b  | 63 | 42/63/
+    #                / \                c  | 84 | 42/63/84/
+    #               c   d               d  | 85 | 42/63/85/
+    #
+    # Note: the final '/' is necessary to match subtrees correctly: '42/63'
+    # is a prefix of '42/630', but '42/63/' is not a prefix of '42/630/'.
+    query = """
+        WITH RECURSIVE __parent_store_compute(id, parent_path) AS (
+            SELECT row.id, concat(row.id, '/')
+            FROM {table} row
+            WHERE row.{parent} IS NULL
+        UNION
+            SELECT row.id, concat(comp.parent_path, row.id, '/')
+            FROM {table} row, __parent_store_compute comp
+            WHERE row.{parent} = comp.id
+        )
+        UPDATE {table} row SET parent_path = comp.parent_path
+        FROM __parent_store_compute comp
+        WHERE row.id = comp.id
+    """.format(table=table, parent=parent)
+    cr.execute(query)
+    cnx.commit()
 
