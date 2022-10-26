@@ -20,6 +20,54 @@ cnx_dst,cr_dst=GetCR(db_dst)
 #cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
+
+# ** product_packaging et product_ul ******************************************
+MigrationTable(db_src,db_dst, table_src="product_ul", table_dst="is_product_ul") # Cette table n'existe plus dans Odoo 16
+SQL="delete from product_packaging where qty<>qty::integer"
+cr_src.execute(SQL)
+cnx_src.commit()
+MigrationTable(db_src,db_dst,"product_packaging")
+SQL="""
+    SELECT pack.id,pp.id product_id
+    FROM product_packaging pack join product_product pp on pack.product_tmpl_id=pp.product_tmpl_id 
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE product_packaging SET product_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['product_id'],row['id']])
+cnx_dst.commit()
+# *****************************************************************************
+
+
+                                         
+
+
+tables=[
+    "is_liste_servir",
+    "is_liste_servir_message",
+    "is_liste_servir_client",
+    "is_liste_servir_line",
+    "is_liste_servir_um",
+    "is_liste_servir_uc",
+    "is_bon_transfert",
+    "is_bon_transfert",
+    "is_bon_transfert_line",
+    "is_bl_manuel",
+    "is_bl_manuel_line",
+    "is_demande_transport",
+    "is_galia_base_um",
+    "is_galia_base_uc",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+
+
+
+
+
+
 #** stock_lot  ****************************************************************
 default={
     "company_id": 1,
@@ -27,18 +75,6 @@ default={
 }
 MigrationTable(db_src,db_dst, table_src="stock_production_lot", table_dst="stock_lot", default=default)
 #******************************************************************************
-
-sys.exit()
-
-
-#** uom  **********************************************************************
-MigrationTable(db_src,db_dst, table_src="product_uom_categ", table_dst="uom_category", text2jsonb=True)
-MigrationTable(db_src,db_dst, table_src="product_uom"      , table_dst="uom_uom"     , text2jsonb=True)
-#******************************************************************************
-
-
-sys.exit()
-
 
 #** stock_location ***********************************************************
 default={
@@ -50,50 +86,8 @@ parent_store_compute(cr_dst,cnx_dst,'stock_location','location_id')
 
 
 
-#** stock_quant ****************************************************************
-default={
-    "reserved_quantity": 0,
-}
-rename={
-   'qty':'quantity'
-}
-MigrationTable(db_src,db_dst,'stock_quant', default=default, rename=rename)
-#******************************************************************************
-
-
-
-#  id | product_id | company_id | location_id | storage_category_id | lot_id | package_id | owner_id | user_id | create_uid | write_uid | inventory_date | quantity | reserved_quantity | inventory_quantity | inventory_diff_quantity | inventory_quantity_set |       in_date       |        create_date         |         write_date         | accounting_date 
-# ----+------------+------------+-------------+---------------------+--------+------------+----------+---------+------------+-----------+----------------+----------+-------------------+--------------------+-------------------------+------------------------+---------------------+----------------------------+----------------------------+-----------------
-#   2 |       3101 |          1 |          14 |                     |        |            |          |         |          2 |         2 | 2022-12-31     |  -100.00 |              0.00 |                    |                  100.00 | f                      | 2022-09-26 13:50:04 | 2022-09-26 13:50:04.567489 | 2022-09-26 13:50:04.567489 | 
-#   1 |       3101 |          1 |          12 |                     |        |            |          |         |          2 |         2 | 2022-12-31     |   100.00 |              0.00 |               0.00 |                    0.00 | f                      | 2022-09-26 13:50:04 | 2022-09-26 13:50:01.935546 | 2022-09-26 13:50:04.567489 | 
-
-
 
 sys.exit()
-
-
-
-#** stock_move ****************************************************************
-MigrationTable(db_src,db_dst,'stock_move')
-#******************************************************************************
-
-
-
-
-
-#** stock_picking *************************************************************
-default={
-    "location_id"     : 7,  #TODO A Revoir => Mettre les données de stock_picking_type
-    "location_dest_id": 7,  #TODO A Revoir
-}
-MigrationTable(db_src,db_dst,'stock_picking', default=default)
-#******************************************************************************
-
-
-
-sys.exit()
-
-
 
 
 #** res_country ***************************************************************
@@ -191,13 +185,6 @@ MigrationTable(db_src,db_dst,'ir_sequence')
 #******************************************************************************
 
 
-
-
-
-
-
-
-
 #** hr_department ***************************************************************
 default={
     "active": True,
@@ -264,6 +251,7 @@ cnx_dst.commit()
 
 
 
+
 #** product *******************************************************************
 default={
     "detailed_type": "consu",
@@ -277,50 +265,121 @@ MigrationTable(db_src,db_dst,'product_product')
 #******************************************************************************
 
 
-#** sale_order ****************************************************************
-MigrationTable(db_src,db_dst,'sale_order')
-default={
-    "customer_lead": 7,
-}
-MigrationTable(db_src,db_dst,'sale_order_line', default=default)
+
+
+#** uom  **********************************************************************
+MigrationTable(db_src,db_dst, table_src="product_uom_categ", table_dst="uom_category", text2jsonb=True)
+MigrationTable(db_src,db_dst, table_src="product_uom"      , table_dst="uom_uom"     , text2jsonb=True)
 #******************************************************************************
 
 
-#** purchase_order ****************************************************************
-MigrationTable(db_src,db_dst,'purchase_order')
-cr_src.execute("DELETE FROM purchase_order_line where product_id is null") # TODO : A revoir
-cnx_src.commit()
-default={
-}
-MigrationTable(db_src,db_dst,'purchase_order_line', default=default)
-#******************************************************************************
+# #** stock_quant ****************************************************************
+# default={
+#     "reserved_quantity": 0,
+# }
+# rename={
+#    'qty':'quantity'
+# }
+# MigrationTable(db_src,db_dst,'stock_quant', default=default, rename=rename)
+# #******************************************************************************
 
 
-#** account_payment_term ******************************************************
-table="account_payment_term"
-default = {'sequence': 10}
-MigrationTable(db_src,db_dst,table,default=default,text2jsonb=True)
-table="account_payment_term_line"
-default = {'months': 0}
-MigrationTable(db_src,db_dst,table,default=default)
-#******************************************************************************
 
 
-# ** Property res_parter ******************************************************
-MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_payment_term'         , field_dst='property_payment_term_id') 
-MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_supplier_payment_term', field_dst='property_supplier_payment_term_id') 
-#MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_receivable', field_dst='property_account_receivable_id')
-#MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_payable'   , field_dst='property_account_payable_id')
-#******************************************************************************
+# #** sale_order ****************************************************************
+# MigrationTable(db_src,db_dst,'sale_order')
+# default={
+#     "customer_lead": 7,
+# }
+# MigrationTable(db_src,db_dst,'sale_order_line', default=default)
+# #******************************************************************************
 
 
-#** stock_picking_type ********************************************************
-default={
-    "company_id"        : 1,
-    "sequence_code"     : "x",
-    "reservation_method": "at_confirm",
-    "create_backorder"  : "ask",
-}
-MigrationTable(db_src,db_dst,'stock_picking_type', default=default, text2jsonb=True)
-#******************************************************************************
+# #** purchase_order ****************************************************************
+# MigrationTable(db_src,db_dst,'purchase_order')
+# cr_src.execute("DELETE FROM purchase_order_line where product_id is null") # TODO : A revoir
+# cnx_src.commit()
+# default={
+# }
+# MigrationTable(db_src,db_dst,'purchase_order_line', default=default)
+# #******************************************************************************
+
+
+# #** account_payment_term ******************************************************
+# table="account_payment_term"
+# default = {'sequence': 10}
+# MigrationTable(db_src,db_dst,table,default=default,text2jsonb=True)
+# table="account_payment_term_line"
+# default = {'months': 0}
+# MigrationTable(db_src,db_dst,table,default=default)
+# #******************************************************************************
+
+
+# # ** Property res_parter ******************************************************
+# MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_payment_term'         , field_dst='property_payment_term_id') 
+# MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_supplier_payment_term', field_dst='property_supplier_payment_term_id') 
+# #MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_receivable', field_dst='property_account_receivable_id')
+# #MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_payable'   , field_dst='property_account_payable_id')
+# #******************************************************************************
+
+
+# #** stock_picking_type ********************************************************
+# default={
+#     "company_id"        : 1,
+#     "sequence_code"     : "x",
+#     "reservation_method": "at_confirm",
+#     "create_backorder"  : "ask",
+# }
+# MigrationTable(db_src,db_dst,'stock_picking_type', default=default, text2jsonb=True)
+# #******************************************************************************
+
+
+
+
+
+# #** stock_move ****************************************************************
+# MigrationTable(db_src,db_dst,'stock_move')
+# #******************************************************************************
+
+
+
+
+
+# #** stock_picking *************************************************************
+# default={
+#     "location_id"     : 7,  #TODO A Revoir => Mettre les données de stock_picking_type
+#     "location_dest_id": 7,  #TODO A Revoir
+# }
+# MigrationTable(db_src,db_dst,'stock_picking', default=default)
+# #******************************************************************************
+
+
+
+
+tables=[
+    "is_mold",
+    "is_dossierf",
+    "is_mold_project",
+    "is_mold_dateur",
+    "is_section_analytique",
+    "is_config_champ",
+    "is_config_champ_line",
+    "is_category",
+    "is_gestionnaire",
+    "is_budget_responsable",
+    "is_budget_nature",
+    "is_product_segment",
+    "is_product_famille",
+    "is_product_sous_famille",
+    "is_emb_emplacement",
+    "is_emb_norme",
+    "is_product_client",
+    "is_type_etiquette",
+    "is_code_cas",
+    "is_product_code_cas",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+
 
