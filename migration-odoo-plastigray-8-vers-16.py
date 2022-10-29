@@ -20,6 +20,31 @@ cnx_dst,cr_dst=GetCR(db_dst)
 #cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
+tables=[
+    "is_tarif_cial",
+    "is_etuve",
+    "is_etuve_rsp",
+    "is_etuve_commentaire",
+    "is_etuve_saisie",
+    "is_etuve_of",
+    "is_gabarit_controle",
+    "is_emplacement_outillage",
+    "is_type_controle_gabarit",
+    "is_historique_controle",
+    "is_operation_controle",
+    "is_instrument_mesure",
+    "is_famille_instrument",
+    "is_piece_montabilite",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+
+
+sys.exit()
+
+
+
 
 # ** product_packaging et product_ul ******************************************
 MigrationTable(db_src,db_dst, table_src="product_ul", table_dst="is_product_ul") # Cette table n'existe plus dans Odoo 16
@@ -39,8 +64,6 @@ for row in rows:
 cnx_dst.commit()
 # *****************************************************************************
 
-
-                                         
 
 
 tables=[
