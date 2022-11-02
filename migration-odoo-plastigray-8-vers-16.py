@@ -21,20 +21,16 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 tables=[
-    "is_tarif_cial",
-    "is_etuve",
-    "is_etuve_rsp",
-    "is_etuve_commentaire",
-    "is_etuve_saisie",
-    "is_etuve_of",
-    "is_gabarit_controle",
-    "is_emplacement_outillage",
-    "is_type_controle_gabarit",
-    "is_historique_controle",
-    "is_operation_controle",
-    "is_instrument_mesure",
-    "is_famille_instrument",
-    "is_piece_montabilite",
+    "is_commande_externe",
+    "is_demande_achat_serie",
+    "is_demande_achat_serie_line",
+    "is_demande_achat_fg",
+    "is_demande_achat_fg_line",
+    "is_demande_achat_invest",
+    "is_demande_achat_invest_line",
+    "is_demande_achat_moule",
+    "is_demande_achat_moule_line",
+
 ]
 for table in tables:
     print(table)
@@ -81,36 +77,56 @@ tables=[
     "is_demande_transport",
     "is_galia_base_um",
     "is_galia_base_uc",
+
+    "is_tarif_cial",
+    "is_etuve",
+    "is_etuve_rsp",
+    "is_etuve_commentaire",
+    "is_etuve_saisie",
+    "is_etuve_of",
+    "is_gabarit_controle",
+    "is_emplacement_outillage",
+    "is_type_controle_gabarit",
+    "is_historique_controle",
+    "is_operation_controle",
+    "is_instrument_mesure",
+    "is_famille_instrument",
+    "is_piece_montabilite",
+    "is_presse_classe",
+    "is_presse_puissance",
+    "is_outillage_constructeur",
+    "is_presse",
 ]
 for table in tables:
     print(table)
     MigrationTable(db_src,db_dst,table)
 
 
-
-
-
-
-#** stock_lot  ****************************************************************
-default={
-    "company_id": 1,
-    "name"      : "??",
-}
-MigrationTable(db_src,db_dst, table_src="stock_production_lot", table_dst="stock_lot", default=default)
-#******************************************************************************
-
-#** stock_location ***********************************************************
-default={
-    "warehouse_id": 1,
-}
-MigrationTable(db_src,db_dst,'stock_location', default=default, text2jsonb=True)
-parent_store_compute(cr_dst,cnx_dst,'stock_location','location_id')
-#******************************************************************************
-
-
-
-
 sys.exit()
+
+
+
+
+# #** stock_lot  ****************************************************************
+# default={
+#     "company_id": 1,
+#     "name"      : "??",
+# }
+# MigrationTable(db_src,db_dst, table_src="stock_production_lot", table_dst="stock_lot", default=default)
+# #******************************************************************************
+
+# #** stock_location ***********************************************************
+# default={
+#     "warehouse_id": 1,
+# }
+# MigrationTable(db_src,db_dst,'stock_location', default=default, text2jsonb=True)
+# parent_store_compute(cr_dst,cnx_dst,'stock_location','location_id')
+# #******************************************************************************
+
+
+
+
+# sys.exit()
 
 
 #** res_country ***************************************************************
@@ -204,7 +220,7 @@ if category_id:
 
 
 #** ir_sequence ***************************************************************
-MigrationTable(db_src,db_dst,'ir_sequence')
+#MigrationTable(db_src,db_dst,'ir_sequence') # TODO  la relation « ir_sequence_071 » n'existe pas
 #******************************************************************************
 
 
