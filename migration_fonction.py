@@ -75,7 +75,10 @@ def GetChamps(cursor,table):
     rows = cursor.fetchall()
     res=[]
     for row in rows:
-        res.append(row['attname'])
+        v = row['attname']
+        if v=="order":
+            v='"order"'
+        res.append(v)
     return res
 
 
@@ -241,8 +244,6 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
                     if type_champ[0][1]=="jsonb":
                         jsons.append(key)
         for row in rows:
-            #if "name" in row:
-            #    print(row["name"])
             for x in default:
                 v = default[x]
                 if x in row:
@@ -262,6 +263,8 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
             writer.writerow(row)
     else:
         #Source : https://kb.objectrocket.com/postgresql/from-postgres-to-csv-with-python-910
+
+
         SQL_for_file_output = "COPY ({0}) TO STDOUT WITH CSV HEADER".format(SQL)
         with open(path, 'w') as f_output:
             cr_src.copy_expert(SQL_for_file_output, f_output)
@@ -274,6 +277,7 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False):
     path = "/tmp/"+table_src+".csv"
     f = open(path, "r")
     champs = f.readline()
+    champs=champs.replace('order,','"order",') # order est un nom de champ réservé dans une table postgresql
     SQL="""
         ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
         DELETE FROM """+table_dst+""";
@@ -705,14 +709,12 @@ def SqlSelectFormat(cr,SQL,exclude=[]):
         if fields[f]:
             #line+=f+' '*(fields[f]-len(f))
             line+=f+'\t'
-    print(line)
     for row in res:
         line=''
         for f in row:
             if fields[f]:
                 #line+=row[f]+' '*(fields[f]-len(row[f]))+'\t'
                 line+=row[f]+'\t'
-        print(line)
     line=''
 
 
