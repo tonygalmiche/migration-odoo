@@ -5,8 +5,8 @@ import os
 
 
 #** Paramètres ****************************************************************
-db_src = "pg-odoo8-1"
-db_dst = "pg-odoo16-1"
+db_src = "pg-odoo8-0"
+db_dst = "pg-odoo16-0"
 #******************************************************************************
 
 cnx,cr=GetCR(db_src)
@@ -20,20 +20,35 @@ cnx_dst,cr_dst=GetCR(db_dst)
 #cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
+#** is_equipement_champ_line **************************************************
+MigrationTable(db_src,db_dst,"is_equipement_champ_line")
+SQL="""
+    SELECT l.id,f.name
+    FROM is_equipement_champ_line l join ir_model_fields f on l.name=f.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        SELECT id 
+        from ir_model_fields 
+        where name=%s and model='is.equipement' and ttype<>'boolean' limit 1
+    """
+    cr_dst.execute(SQL,[row["name"]])
+    rows_dst = cr_dst.fetchall()
+    for row_dst in rows_dst:
+        SQL="update is_equipement_champ_line set name=%s where id=%s"
+        cr_dst.execute(SQL,[row_dst["id"],row["id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+sys.exit()
+
 
 tables=[
-    "is_invest_global",
-    "is_invest_detail",
-    "is_invest_cde",
-    "is_invest_compta",
-    "is_demande_conges",
-    "is_demande_conges_autre",
-    "is_demande_absence_type",
-    "is_demande_absence",
-    "is_droit_conges",
-    "is_demande_conges_export_cegid",
-    "is_proforma_chine",
-    "is_proforma_chine_line",
+    "is_equipement_champ_line"
 ]
 for table in tables:
     print(table)
@@ -41,97 +56,6 @@ for table in tables:
 
 
 sys.exit()
-
-
-
-
-
-tables=[
-    "is_ctrl_budget_tdb_famille",
-    "is_ctrl_budget_tdb_famille_rel",
-    "is_ctrl_budget_tdb_intitule",
-    "is_ctrl_budget_tdb_saisie",
-    "is_ctrl_budget_tdb",
-    "is_ctrl_budget_ana_annee",
-    "is_ctrl_budget_ana_product",
-    "is_donnee_machine",
-    "is_donnee_machine_line",
-
-    "is_ctrl100_operation_standard",
-    "is_mold_cycle",
-    "is_preventif_moule",
-    "is_mold_operation_systematique",
-    "is_mold_operation_specifique",
-    "is_mold_specification_particuliere",
-    "is_mold_frequence_preventif",
-    "is_mold_systematique_array",
-    "is_mold_specifique_array",
-    "is_mold_specification_array",
-    "is_mold_piece_specifique",
-    "is_mold_surface_aspect",
-    "is_dossier_appel_offre",
-    "is_ot_affectation",
-    "is_ot_temps_passe",
-    "is_ot",
-    "is_ot_indicateur",
-    "is_ctrl100_gamme_standard",
-    "is_ctrl100_operation_specifique",
-    "is_ctrl100_typologie_produit",
-    "is_ctrl100_gamme_mur_qualite_formation",
-    "is_ctrl100_gamme_mur_qualite",
-    "is_ctrl100_gamme_defautheque_line",
-    "is_ctrl100_defautheque",
-    "is_ctrl100_defaut",
-    "is_ctrl100_defaut_line",
-    "is_ctrl100_rapport_controle",
-    "is_ctrl100_pareto",
-
-
-    "is_capteur",
-    "is_fiche_tampographie_constituant",
-    "is_fiche_tampographie_recette",
-    "is_fiche_tampographie_type_reglage",
-    "is_fiche_tampographie_reglage",
-    "is_fiche_tampographie",
-    "is_equipement_champ_line",
-    "is_equipement_type",
-    "is_equipement",
-    "is_theia_validation_action",
-    "is_theia_habilitation_operateur",
-    #"is_theia_habilitation_operateur_etat",
-    "is_theia_lecture_ip",
-    "is_theia_alerte_type",
-    "is_theia_alerte",
-    "is_etat_presse_regroupement",
-    "is_raspberry_entree_sortie",
-    "is_raspberry_zebra",
-    "is_raspberry",
-    "is_of",
-    "is_of_tps",
-    "is_of_declaration",
-    "is_presse_cycle",
-    "is_presse_arret",
-    "is_type_defaut",
-    "is_theia_trs",
-    "is_theia_validation_groupe",
-    "is_preventif_equipement_zone",
-    "is_preventif_equipement_heure",
-    "is_preventif_equipement",
-    "is_preventif_equipement_saisie",
-    "is_equipement",
-    "is_ilot",
-    "is_etat_presse",
-]
-for table in tables:
-    print(table)
-    MigrationTable(db_src,db_dst,table)
-
-
-sys.exit()
-
-
-
-
 
 
 #** res_country ***************************************************************
@@ -545,11 +469,114 @@ tables=[
     "is_bon_achat_ville",
     "is_bon_achat_ville_line",
 
+    "is_indicateur_revue_jalon",
+    "is_import_budget_pk",
+    "is_dossier_article",
+    "is_dossier_article_gamme_commerciale",
+    "is_dossier_article_producteur",
+    "is_dossier_article_traitement",
+    "is_dossier_article_utilisation",
+    "is_dossier_article_durete",
+    "is_dossier_article_type_article",
+    "is_dossier_article_combustion",
+    "is_dossier_article_code_recyclage",
+
+    "is_mode_operatoire_menu",
+    "is_mode_operatoire",
+    "is_facture_proforma",
+    "is_facture_proforma_line",
+    "is_facture_proforma_outillage",
+    "is_facture_proforma_outillage_line",
+
+    "is_invest_global",
+    "is_invest_detail",
+    "is_invest_cde",
+    "is_invest_compta",
+    "is_demande_conges",
+    "is_demande_conges_autre",
+    "is_demande_absence_type",
+    "is_demande_absence",
+    "is_droit_conges",
+    "is_demande_conges_export_cegid",
+    "is_proforma_chine",
+    "is_proforma_chine_line",
+
+
+    "is_ctrl_budget_tdb_famille",
+    "is_ctrl_budget_tdb_famille_rel",
+    "is_ctrl_budget_tdb_intitule",
+    "is_ctrl_budget_tdb_saisie",
+    "is_ctrl_budget_tdb",
+    "is_ctrl_budget_ana_annee",
+    "is_ctrl_budget_ana_product",
+    "is_donnee_machine",
+    "is_donnee_machine_line",
+
+    "is_ctrl100_operation_standard",
+    "is_mold_cycle",
+    "is_preventif_moule",
+    "is_mold_operation_systematique",
+    "is_mold_operation_specifique",
+    "is_mold_specification_particuliere",
+    "is_mold_frequence_preventif",
+    "is_mold_systematique_array",
+    "is_mold_specifique_array",
+    "is_mold_specification_array",
+    "is_mold_piece_specifique",
+    "is_mold_surface_aspect",
+    "is_dossier_appel_offre",
+    "is_ot_affectation",
+    "is_ot_temps_passe",
+    "is_ot",
+    "is_ot_indicateur",
+    "is_ctrl100_gamme_standard",
+    "is_ctrl100_operation_specifique",
+    "is_ctrl100_typologie_produit",
+    "is_ctrl100_gamme_mur_qualite_formation",
+    "is_ctrl100_gamme_mur_qualite",
+    "is_ctrl100_gamme_defautheque_line",
+    "is_ctrl100_defautheque",
+    "is_ctrl100_defaut",
+    "is_ctrl100_defaut_line",
+    "is_ctrl100_rapport_controle",
+    "is_ctrl100_pareto",
+
+    "is_capteur",
+    "is_fiche_tampographie_constituant",
+    "is_fiche_tampographie_recette",
+    "is_fiche_tampographie_type_reglage",
+    "is_fiche_tampographie_reglage",
+    "is_fiche_tampographie",
+    "is_equipement_champ_line",
+    "is_equipement_type",
+    "is_equipement",
+    "is_theia_validation_action",
+    "is_theia_habilitation_operateur",
+    #"is_theia_habilitation_operateur_etat",
+    "is_theia_lecture_ip",
+    "is_theia_alerte_type",
+    "is_theia_alerte",
+    "is_etat_presse_regroupement",
+    "is_raspberry_entree_sortie",
+    "is_raspberry_zebra",
+    "is_raspberry",
+    "is_of",
+    "is_of_tps",
+    "is_of_declaration",
+    "is_presse_cycle",
+    "is_presse_arret",
+    "is_type_defaut",
+    "is_theia_trs",
+    "is_theia_validation_groupe",
+    "is_preventif_equipement_zone",
+    "is_preventif_equipement_heure",
+    "is_preventif_equipement",
+    "is_preventif_equipement_saisie",
+    "is_equipement",
+    "is_ilot",
+    "is_etat_presse",
+    "is_site",
 ]
 for table in tables:
     print(table)
     MigrationTable(db_src,db_dst,table)
-
-
-sys.exit()
-
