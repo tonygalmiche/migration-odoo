@@ -5,8 +5,8 @@ import os
 
 
 #** Paramètres ****************************************************************
-db_src = "pg-odoo8-0"
-db_dst = "pg-odoo16-0"
+db_src = "pg-odoo8-1"
+db_dst = "pg-odoo16-1"
 #******************************************************************************
 
 cnx,cr=GetCR(db_src)
@@ -20,25 +20,66 @@ cnx_dst,cr_dst=GetCR(db_dst)
 #cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
-#** is_equipement_champ_line **************************************************
-MigrationTable(db_src,db_dst,"is_equipement_champ_line")
+
+
+
+tables=[
+   "is_instruction_particuliere",
+   "is_atelier",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+
+
+
+sys.exit()
+
+
+
+#** product_pricelist ****************************************************************
+default={
+    'discount_policy': 'with_discount',
+}
+MigrationTable(db_src,db_dst,'product_pricelist',default=default,text2jsonb=True)
+#******************************************************************************
+
+
+
+sys.exit()
+
+
+#** sale_order ****************************************************************
+MigrationTable(db_src,db_dst,'sale_order')
+default={
+    "customer_lead": 7,
+}
+#MigrationTable(db_src,db_dst,'sale_order_line', default=default)
+#******************************************************************************
+
+
+
+
+sys.exit()
+
+
+
+#** procurement_group *********************************************************
+rename={}
+default={}
+MigrationTable(db_src,db_dst,'procurement_group', rename=rename, default=default)
+#******************************************************************************
+
+sys.exit()
+
+
+
+
+#** stock_rule TODO : A Revoir avec stock_picking *****************************
 SQL="""
-    SELECT l.id,f.name
-    FROM is_equipement_champ_line l join ir_model_fields f on l.name=f.id
+    update stock_rule set picking_type_id=3 where picking_type_id not in (select id from stock_picking_type);
 """
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    SQL="""
-        SELECT id 
-        from ir_model_fields 
-        where name=%s and model='is.equipement' and ttype<>'boolean' limit 1
-    """
-    cr_dst.execute(SQL,[row["name"]])
-    rows_dst = cr_dst.fetchall()
-    for row_dst in rows_dst:
-        SQL="update is_equipement_champ_line set name=%s where id=%s"
-        cr_dst.execute(SQL,[row_dst["id"],row["id"]])
+cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
@@ -47,8 +88,80 @@ cnx_dst.commit()
 sys.exit()
 
 
+
+#** mrp_bom ***************************************************************
+rename={'product_uom':'product_uom_id'}
+default={
+    'ready_to_produce': 'all_available',
+    'consumption'     : 'warning',
+}
+MigrationTable(db_src,db_dst,'mrp_bom', rename=rename, default=default)
+#rename={'product_uom':'product_uom_id'}
+#MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
+#******************************************************************************
+
+
+
+
+
+sys.exit()
+
+
+
+#** mrp_production ************************************************************
+default = {
+    "picking_type_id"   : 1,
+    "consumption"       : 0,
+    "date_planned_start": "1990-01-01",
+}
+rename={
+    'product_uom': 'product_uom_id',
+}
+MigrationTable(db_src,db_dst,"mrp_production",default=default,rename=rename)
+#******************************************************************************
+sys.exit()
+
+
+
+#** mrp_workcenter ************************************************************
+default = {'sequence': 10}
+MigrationTable(db_src,db_dst,"mrp_workcenter",default=default)
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+
+#** account_payment_term ******************************************************
+table="account_payment_term"
+default = {'sequence': 10}
+MigrationTable(db_src,db_dst,table,default=default,text2jsonb=True)
+table="account_payment_term_line"
+default = {'months': 0}
+MigrationTable(db_src,db_dst,table,default=default)
+#******************************************************************************
+
+
+sys.exit()
+
+
+#** purchase_order ************************************************************
+MigrationTable(db_src,db_dst,'purchase_order')
+cr_src.execute("DELETE FROM purchase_order_line where product_id is null") # TODO : A revoir
+cnx_src.commit()
+default={
+}
+MigrationTable(db_src,db_dst,'purchase_order_line', default=default)
+#******************************************************************************
+
+sys.exit()
+
+
+#** is_escompte ***************************************************************
 tables=[
-    "is_equipement_champ_line"
+    "is_escompte",
 ]
 for table in tables:
     print(table)
@@ -58,10 +171,35 @@ for table in tables:
 sys.exit()
 
 
+#** res_groups_users_rel ******************************************************
+
+SQL="""
+    delete from res_groups_users_rel where uid not in (select id from res_users);
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+#** res_partner_title *********************************************************
+MigrationTable(db_src,db_dst,'res_partner_title',text2jsonb=True)
+#******************************************************************************
+
+sys.exit()
+
+
+
 #** res_country ***************************************************************
 MigrationTable(db_src,db_dst,'res_country',text2jsonb=True)
 #******************************************************************************
 
+#** res_currency ***************************************************************
+default = {
+    'symbol': '???'
+}
+MigrationTable(db_src,db_dst,'res_currency',default=default)
+#******************************************************************************
 
 #** res_partner ****************************************************************
 MigrationTable(db_src,db_dst,'res_partner')
@@ -256,6 +394,141 @@ cnx_dst.commit()
 # *****************************************************************************
 
 
+# ** res_partner_bank *********************************************************
+default={
+    'partner_id': 1,
+    'active'    : True,
+    }
+MigrationTable(db_src,db_dst,"res_partner_bank",default=default)
+# *****************************************************************************
+
+
+#** account_journal ***********************************************************
+table="account_journal"
+rename={
+    'currency'   : 'currency_id',
+    'sequence_id': 'sequence',
+}
+default={
+    'active'                 : True,
+    'invoice_reference_type' :'invoice',
+    'invoice_reference_model': 'odoo',
+}
+MigrationTable(db_src,db_dst,table,rename=rename,default=default)
+#******************************************************************************
+
+
+#** account_account ***********************************************************
+table='account_account'
+rename={
+   #"user_type": "user_type_id",
+    "type"     : "account_type",
+}
+MigrationTable(db_src,db_dst,table,rename=rename)
+#******************************************************************************
+
+
+#** account_root **************************************************************
+SQL="SELECT id,code FROM account_account"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    id=row["id"]
+    code=row["code"]
+    root_id = (ord(code[0]) * 1000 + ord(code[1:2] or '\x00'))
+    SQL="UPDATE account_account SET root_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[root_id,id])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_tax **************************************************************
+SQL="""
+    delete from account_tax_repartition_line;
+    delete from account_account_tag_account_tax_repartition_line_rel;
+    update res_company set account_purchase_tax_id=1;
+    update res_company set account_sale_tax_id=2;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+table='account_tax'
+rename={
+    'type':'amount_type'
+}
+default={
+    "tax_group_id": 1,
+    "country_id"  : 75,
+}
+MigrationTable(db_src,db_dst,table,rename=rename,default=default)
+cr_dst.execute("update account_tax set amount=100*amount")
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_incoterms  ********************************************************
+MigrationTable(db_src,db_dst, table_src="stock_incoterms", table_dst="account_incoterms", text2jsonb=True)
+#******************************************************************************
+
+
+#** Position fiscale **********************************************************
+default={
+    'company_id': 1,
+}
+MigrationTable(db_src,db_dst,'account_fiscal_position',default=default,text2jsonb=True)
+MigrationTable(db_src,db_dst,'account_fiscal_position_tax')
+MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_position', field_dst='property_account_position_id')
+#******************************************************************************
+
+
+
+
+#** stock_picking_type ********************************************************
+default={
+    "company_id"        : 1,
+    "sequence_code"     : "x",
+    "reservation_method": "at_confirm",
+    "create_backorder"  : "ask",
+}
+MigrationTable(db_src,db_dst,'stock_picking_type', default=default, text2jsonb=True)
+#******************************************************************************
+
+
+#** stock_move ****************************************************************
+MigrationTable(db_src,db_dst,'stock_move')
+#******************************************************************************
+
+
+#** stock_picking *************************************************************
+default={
+    "location_id"     : 7,  #TODO A Revoir => Mettre les données de stock_picking_type
+    "location_dest_id": 7,  #TODO A Revoir
+}
+MigrationTable(db_src,db_dst,'stock_picking', default=default)
+# #******************************************************************************
+
+
+
+
+# ** stock_location / stock_warehouse  ****************************************
+MigrationTable(db_src,db_dst,'stock_location')
+default={'manufacture_steps': 'mrp_one_step'}
+MigrationTable(db_src,db_dst,'stock_warehouse', default=default)
+SQL="""
+    update stock_location set parent_path=name;
+    update product_category set parent_path='/' where parent_path is null;
+    update product_category set complete_name=name;
+    update stock_warehouse set active='t';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_production')
+#MigrationIrProperty(db_src,db_dst,'product.template', 'property_stock_inventory')
+#MigrationTable(db_src,db_dst,'stock_rule')
+#MigrationTable(db_src,db_dst,'stock_location_route')
+# *****************************************************************************
+
+
+
 # #** stock_quant ****************************************************************
 # default={
 #     "reserved_quantity": 0,
@@ -285,25 +558,6 @@ cnx_dst.commit()
 # #******************************************************************************
 
 
-# #** sale_order ****************************************************************
-# MigrationTable(db_src,db_dst,'sale_order')
-# default={
-#     "customer_lead": 7,
-# }
-# MigrationTable(db_src,db_dst,'sale_order_line', default=default)
-# #******************************************************************************
-
-
-# #** purchase_order ****************************************************************
-# MigrationTable(db_src,db_dst,'purchase_order')
-# cr_src.execute("DELETE FROM purchase_order_line where product_id is null") # TODO : A revoir
-# cnx_src.commit()
-# default={
-# }
-# MigrationTable(db_src,db_dst,'purchase_order_line', default=default)
-# #******************************************************************************
-
-
 # #** account_payment_term ******************************************************
 # table="account_payment_term"
 # default = {'sequence': 10}
@@ -319,31 +573,6 @@ cnx_dst.commit()
 # MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_supplier_payment_term', field_dst='property_supplier_payment_term_id') 
 # #MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_receivable', field_dst='property_account_receivable_id')
 # #MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_payable'   , field_dst='property_account_payable_id')
-# #******************************************************************************
-
-
-# #** stock_picking_type ********************************************************
-# default={
-#     "company_id"        : 1,
-#     "sequence_code"     : "x",
-#     "reservation_method": "at_confirm",
-#     "create_backorder"  : "ask",
-# }
-# MigrationTable(db_src,db_dst,'stock_picking_type', default=default, text2jsonb=True)
-# #******************************************************************************
-
-
-# #** stock_move ****************************************************************
-# MigrationTable(db_src,db_dst,'stock_move')
-# #******************************************************************************
-
-
-# #** stock_picking *************************************************************
-# default={
-#     "location_id"     : 7,  #TODO A Revoir => Mettre les données de stock_picking_type
-#     "location_dest_id": 7,  #TODO A Revoir
-# }
-# MigrationTable(db_src,db_dst,'stock_picking', default=default)
 # #******************************************************************************
 
 
@@ -382,7 +611,6 @@ tables=[
     "is_presse_classe",
     "is_presse_puissance",
     "is_outillage_constructeur",
-    "is_presse",
 
 
     "is_mold",
@@ -427,7 +655,7 @@ tables=[
     "is_rgpd_donnee_personnelle",
 
     "is_deb",
-    "is_deb_line",
+    #"is_deb_line",  TODO a revoir après la migration des factures car il y a un lien avec
     "is_deb_synthese",
     "is_reach",
     "is_reach_product",
@@ -463,7 +691,7 @@ tables=[
     "is_pic_3ans_saisie",
     "is_pic_3ans",
     "is_facturation_fournisseur",
-    "is_facturation_fournisseur_line",
+    #"is_facturation_fournisseur_line", TODO A revoir après la migration des mouvements de stocks
     "is_facturation_fournisseur_justification",
     "mrp_prevision",
     "is_bon_achat_ville",
@@ -481,8 +709,8 @@ tables=[
     "is_dossier_article_combustion",
     "is_dossier_article_code_recyclage",
 
-    "is_mode_operatoire_menu",
-    "is_mode_operatoire",
+    #"is_mode_operatoire_menu", TODO : A revoir car les liens avec les menus sont à revoir
+    #"is_mode_operatoire",      TODO : A revoir car les liens avec les menus sont à revoir
     "is_facture_proforma",
     "is_facture_proforma_line",
     "is_facture_proforma_outillage",
@@ -576,7 +804,41 @@ tables=[
     "is_ilot",
     "is_etat_presse",
     "is_site",
+    "is_secteur_activite",
+    "is_type_contact",
+    "is_segment_achat",
+    "is_plaquette_etalon",
 ]
 for table in tables:
     print(table)
     MigrationTable(db_src,db_dst,table)
+
+#** is_equipement_champ_line **************************************************
+MigrationTable(db_src,db_dst,"is_equipement_champ_line")
+SQL="""
+    SELECT l.id,f.name
+    FROM is_equipement_champ_line l join ir_model_fields f on l.name=f.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        SELECT id 
+        from ir_model_fields 
+        where name=%s and model='is.equipement' and ttype<>'boolean' limit 1
+    """
+    cr_dst.execute(SQL,[row["name"]])
+    rows_dst = cr_dst.fetchall()
+    for row_dst in rows_dst:
+        SQL="update is_equipement_champ_line set name=%s where id=%s"
+        cr_dst.execute(SQL,[row_dst["id"],row["id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** barcode_rule => Nouvelle table pas utile à priori *************************
+SQL="update barcode_rule set associated_uom_id=Null"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+

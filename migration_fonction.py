@@ -277,7 +277,7 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False):
     path = "/tmp/"+table_src+".csv"
     f = open(path, "r")
     champs = f.readline()
-    champs=champs.replace('order,','"order",') # order est un nom de champ réservé dans une table postgresql
+    champs=champs.replace(',order,','",order",') # order est un nom de champ réservé dans une table postgresql
     SQL="""
         ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
         DELETE FROM """+table_dst+""";
