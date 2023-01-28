@@ -24,6 +24,36 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 tables=[
+   "is_mode_operatoire_menu",
+   "is_mode_operatoire",
+   "is_export_edi",
+   "is_export_edi_histo",
+   "is_famille_achat",
+   "is_norme_certificats",
+   "is_certifications_qualite",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+sys.exit()
+
+
+
+#** is_mem_var (uid admin est passé de 1 à 2) *********************************
+SQL="update is_mem_var set user_id=2 where user_id=1"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
+
+
+ 
+
+
+
+tables=[
    "is_instruction_particuliere",
    "is_atelier",
 ]
