@@ -23,6 +23,50 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+
+tables=[
+   "is_demande_conges",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+sys.exit()
+
+
+
+
+
+
+tables=[
+   "is_of_rebut",
+   "is_theia_validation_groupe_employee_rel",
+   "is_theia_validation_action_groupe_rel",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+sys.exit()
+
+
+
+
+tables=[
+   "is_inventaire",
+   "is_inventaire_ecart",
+   "is_inventaire_line_tmp",
+   "is_inventaire_anomalie",
+   "is_inventaire_line",
+   "is_inventaire_feuille",
+   "is_inventaire_inventory",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+sys.exit()
+
+
+
+
 tables=[
    "is_mode_operatoire_menu",
    "is_mode_operatoire",
