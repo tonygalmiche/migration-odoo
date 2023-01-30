@@ -22,14 +22,99 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+#** mrp_bom ***************************************************************
+rename={'product_uom':'product_uom_id'}
+default={
+    'ready_to_produce': 'all_available',
+    'consumption'     : 'warning',
+}
+MigrationTable(db_src,db_dst,'mrp_bom', rename=rename, default=default)
+rename={'product_uom':'product_uom_id'}
+MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
+#******************************************************************************
+
+
+
+
+
+sys.exit()
+
+
+
+
+
+
+
+#** ir_sequence ***************************************************************
+SQL="SELECT id,code,implementation,prefix,padding,number_next FROM ir_sequence WHERE code is not null"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    #print(row)
+    code=row["code"]
+    SQL="UPDATE ir_sequence SET prefix=%s,padding=%s,number_next=%s WHERE code=%s"
+    cr_dst.execute(SQL,[row["prefix"],row["padding"],row["number_next"],code])
+    if row["implementation"]=="standard":
+        SQL="SELECT id FROM ir_sequence WHERE code='"+code+"'"
+        cr_dst.execute(SQL)
+        rows2 = cr_dst.fetchall()
+        for row2 in rows2:
+            seq_id = "%03d" % row["id"]
+            ir_sequence = "ir_sequence_"+seq_id
+            SQL="SELECT last_value FROM "+ir_sequence
+            cr_src.execute(SQL)
+            rows3 = cr_src.fetchall()
+            for row3 in rows3:
+                seq_id = "%03d" % row2["id"]
+                ir_sequence = "ir_sequence_"+seq_id
+                last_value = row3["last_value"]+1
+                SQL="ALTER SEQUENCE "+ir_sequence+" RESTART WITH %s"
+                cr_dst.execute(SQL,[last_value])
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+
+#** hr_employee ***************************************************************
+default={
+    "company_id": 1,
+    "employee_type": "employee",
+    "active": 1,
+    "work_permit_scheduled_activity": False,
+    "parent_id": None,
+    'resource_calendar_id': 2,
+}
+MigrationTable(db_src,db_dst,'hr_employee', default=default)
+SQL="""
+    select rr.name, he.id
+    from resource_resource rr join hr_employee he on rr.id=he.resource_id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE hr_employee SET name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row["name"],row["id"]])
+cnx_dst.commit()
+
+
+
 
 
 tables=[
    "is_demande_conges",
+   "is_employe_absence",
+   "is_employe_horaire",
 ]
 for table in tables:
     print(table)
     MigrationTable(db_src,db_dst,table)
+
+
+
 sys.exit()
 
 
@@ -161,24 +246,6 @@ cnx_dst.commit()
 
 sys.exit()
 
-
-
-#** mrp_bom ***************************************************************
-rename={'product_uom':'product_uom_id'}
-default={
-    'ready_to_produce': 'all_available',
-    'consumption'     : 'warning',
-}
-MigrationTable(db_src,db_dst,'mrp_bom', rename=rename, default=default)
-#rename={'product_uom':'product_uom_id'}
-#MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
-#******************************************************************************
-
-
-
-
-
-sys.exit()
 
 
 
@@ -394,25 +461,6 @@ MigrationTable(db_src,db_dst,'resource_resource', default=default)
 #******************************************************************************
 
 
-#** hr_employee ***************************************************************
-default={
-    "company_id": 1,
-    "employee_type": "employee",
-    "active": 1,
-    "work_permit_scheduled_activity": False,
-    "parent_id": None,
-}
-MigrationTable(db_src,db_dst,'hr_employee', default=default)
-SQL="""
-    select rr.name, he.id
-    from resource_resource rr join hr_employee he on rr.id=he.resource_id
-"""
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    SQL="UPDATE hr_employee SET name=%s WHERE id=%s"
-    cr_dst.execute(SQL,[row["name"],row["id"]])
-cnx_dst.commit()
 
 
 #** hr_employee - user_id *****************************************************
