@@ -22,6 +22,39 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+
+#** mrp_workcenter ************************************************************
+default = {
+    'sequence': 10,
+    'company_id': 1,
+    'resource_calendar_id': 1,
+    'working_state': 'normal',
+    'resource_type': 'material',
+    'active': True,
+}
+MigrationTable(db_src,db_dst,"mrp_workcenter",default=default)
+#******************************************************************************
+
+
+SQL="""
+    select rr.name, rr.code, rr.resource_type,  mw.id
+    from resource_resource rr join mrp_workcenter mw on rr.id=mw.resource_id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE mrp_workcenter SET name=%s, code=%s, resource_type=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row["name"],row["code"],row["resource_type"],row["id"]])
+cnx_dst.commit()
+
+
+
+sys.exit()
+
+
+
+
+
 #** mrp_bom ***************************************************************
 rename={'product_uom':'product_uom_id'}
 default={
@@ -260,16 +293,6 @@ rename={
 }
 MigrationTable(db_src,db_dst,"mrp_production",default=default,rename=rename)
 #******************************************************************************
-sys.exit()
-
-
-
-#** mrp_workcenter ************************************************************
-default = {'sequence': 10}
-MigrationTable(db_src,db_dst,"mrp_workcenter",default=default)
-#******************************************************************************
-
-
 sys.exit()
 
 
