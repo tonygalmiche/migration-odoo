@@ -21,6 +21,63 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+#** product_pricelist ****************************************************************
+default={
+    'discount_policy': 'with_discount',
+}
+MigrationTable(db_src,db_dst,'product_pricelist',default=default,text2jsonb=True)
+MigrationTable(db_src,db_dst,'product_pricelist_version')
+
+default={
+    'compute_price': 'fixed',
+    'applied_on'   : '0_product_variant',
+    'company_id'   : 1,
+    'active'       : True,
+}
+MigrationTable(db_src,db_dst,'product_pricelist_item',default=default)
+#******************************************************************************
+
+
+
+sys.exit()
+
+
+
+
+
+#** mrp_bom ***************************************************************
+rename={'product_uom':'product_uom_id'}
+default={
+    'ready_to_produce': 'all_available',
+    'consumption'     : 'warning',
+}
+MigrationTable(db_src,db_dst,'mrp_bom', rename=rename, default=default)
+rename={'product_uom':'product_uom_id'}
+MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
+#******************************************************************************
+
+
+
+tables=[
+   "mrp_routing",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+
+
+default={
+    'active': True,
+}
+MigrationTable(db_src,db_dst,'mrp_routing_workcenter', default=default)
+
+
+
+sys.exit()
+
+
+
+
 
 
 #** mrp_workcenter ************************************************************
@@ -46,27 +103,6 @@ for row in rows:
     SQL="UPDATE mrp_workcenter SET name=%s, code=%s, resource_type=%s WHERE id=%s"
     cr_dst.execute(SQL,[row["name"],row["code"],row["resource_type"],row["id"]])
 cnx_dst.commit()
-
-
-
-sys.exit()
-
-
-
-
-
-#** mrp_bom ***************************************************************
-rename={'product_uom':'product_uom_id'}
-default={
-    'ready_to_produce': 'all_available',
-    'consumption'     : 'warning',
-}
-MigrationTable(db_src,db_dst,'mrp_bom', rename=rename, default=default)
-rename={'product_uom':'product_uom_id'}
-MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
-#******************************************************************************
-
-
 
 
 
@@ -228,17 +264,6 @@ for table in tables:
 sys.exit()
 
 
-
-#** product_pricelist ****************************************************************
-default={
-    'discount_policy': 'with_discount',
-}
-MigrationTable(db_src,db_dst,'product_pricelist',default=default,text2jsonb=True)
-#******************************************************************************
-
-
-
-sys.exit()
 
 
 #** sale_order ****************************************************************
