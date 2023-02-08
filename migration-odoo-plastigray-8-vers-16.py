@@ -21,6 +21,29 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+
+
+#** sale_order ****************************************************************
+MigrationTable(db_src,db_dst,'resource_calendar_leaves')
+default={
+    'currency_id': 1,
+}
+MigrationTable(db_src,db_dst,'sale_order', default=default)
+default={
+    "customer_lead": 7,
+}
+MigrationTable(db_src,db_dst,'sale_order_line', default=default)
+#******************************************************************************
+
+
+
+
+sys.exit()
+
+
+
+
+
 #** product_pricelist ****************************************************************
 default={
     'discount_policy': 'with_discount',
@@ -264,20 +287,6 @@ for table in tables:
 sys.exit()
 
 
-
-
-#** sale_order ****************************************************************
-MigrationTable(db_src,db_dst,'sale_order')
-default={
-    "customer_lead": 7,
-}
-#MigrationTable(db_src,db_dst,'sale_order_line', default=default)
-#******************************************************************************
-
-
-
-
-sys.exit()
 
 
 
