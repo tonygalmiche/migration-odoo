@@ -22,19 +22,157 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+#** stock_quant ****************************************************************
+default={
+    "reserved_quantity": 0,
+}
+rename={
+   'qty':'quantity'
+}
+MigrationTable(db_src,db_dst,'stock_quant', default=default, rename=rename)
+#******************************************************************************
+
+
+#** stock_lot  ****************************************************************
+default={
+    "company_id": 1,
+    "name"      : "??",
+}
+MigrationTable(db_src,db_dst, table_src="stock_production_lot", table_dst="stock_lot", default=default)
+#******************************************************************************
+
+
+#** stock_location ***********************************************************
+default={
+    "warehouse_id": 1,
+}
+MigrationTable(db_src,db_dst,'stock_location', default=default, text2jsonb=True)
+parent_store_compute(cr_dst,cnx_dst,'stock_location','location_id')
+#******************************************************************************
+
+sys.exit()
+
+
+
 
 #** sale_order ****************************************************************
 MigrationTable(db_src,db_dst,'resource_calendar_leaves')
+rename={
+    'fiscal_position':'fiscal_position_id'
+}
 default={
     'currency_id': 1,
 }
-MigrationTable(db_src,db_dst,'sale_order', default=default)
+MigrationTable(db_src,db_dst,'sale_order', default=default,rename=rename)
 default={
     "customer_lead": 7,
 }
 MigrationTable(db_src,db_dst,'sale_order_line', default=default)
 #******************************************************************************
 
+
+#** compute sale_order_line / price_subtotal ***********************************
+SQL="UPDATE sale_order_line SET price_subtotal=product_uom_qty*price_unit"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#*******************************************************************************
+
+
+sys.exit()
+
+
+
+
+
+sys.exit()
+
+
+
+
+
+
+MigrationTable(db_src,db_dst,'product_taxes_rel')
+MigrationTable(db_src,db_dst,'product_supplier_taxes_rel')
+
+sys.exit()
+
+
+
+#** account_tax **************************************************************
+SQL="""
+    delete from account_tax_repartition_line;
+    delete from account_account_tag_account_tax_repartition_line_rel;
+    update res_company set account_purchase_tax_id=1;
+    update res_company set account_sale_tax_id=2;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+table='account_tax'
+rename={
+    'type':'amount_type'
+}
+default={
+    "tax_group_id": 1,
+    "country_id"  : 75,
+}
+MigrationTable(db_src,db_dst,table,rename=rename,default=default)
+cr_dst.execute("update account_tax set amount=100*amount")
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+#** Traductions account_tax *******************************************************
+SQL="SELECT id,name FROM account_tax"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    res_id = row["id"]
+    value=GetTraduction(cr_src,'account.tax','name', res_id)
+    if value:
+        SQL="update account_tax set name=%s where id=%s"
+        cr_dst.execute(SQL,[value,res_id])
+#SQL="delete from ir_translation where name like 'account.tax,%'"
+#cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+
+
+# ** Migration sale_order_tax => account_tax_sale_order_line_rel **************
+print('Migration sale_order_tax => account_tax_sale_order_line_rel')
+rename={
+    'order_line_id': 'sale_order_line_id',
+    'tax_id'       : 'account_tax_id',
+}
+MigrationTable(db_src,db_dst,'sale_order_tax',table_dst='account_tax_sale_order_line_rel',rename=rename)
+# *****************************************************************************
+
+
+
+tables=[
+   "decimal_precision",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+
+
+
+sys.exit()
+
+
+
+
+tables=[
+   "is_edi_cde_cli",
+   "is_edi_cde_cli_line",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
 
 
 
@@ -47,6 +185,7 @@ sys.exit()
 #** product_pricelist ****************************************************************
 default={
     'discount_policy': 'with_discount',
+    'company_id'     : 1,
 }
 MigrationTable(db_src,db_dst,'product_pricelist',default=default,text2jsonb=True)
 MigrationTable(db_src,db_dst,'product_pricelist_version')
@@ -621,28 +760,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-#** account_tax **************************************************************
-SQL="""
-    delete from account_tax_repartition_line;
-    delete from account_account_tag_account_tax_repartition_line_rel;
-    update res_company set account_purchase_tax_id=1;
-    update res_company set account_sale_tax_id=2;
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-table='account_tax'
-rename={
-    'type':'amount_type'
-}
-default={
-    "tax_group_id": 1,
-    "country_id"  : 75,
-}
-MigrationTable(db_src,db_dst,table,rename=rename,default=default)
-cr_dst.execute("update account_tax set amount=100*amount")
-cnx_dst.commit()
-#******************************************************************************
-
 
 #** account_incoterms  ********************************************************
 MigrationTable(db_src,db_dst, table_src="stock_incoterms", table_dst="account_incoterms", text2jsonb=True)
@@ -706,35 +823,6 @@ cnx_dst.commit()
 #MigrationTable(db_src,db_dst,'stock_location_route')
 # *****************************************************************************
 
-
-
-# #** stock_quant ****************************************************************
-# default={
-#     "reserved_quantity": 0,
-# }
-# rename={
-#    'qty':'quantity'
-# }
-# MigrationTable(db_src,db_dst,'stock_quant', default=default, rename=rename)
-# #******************************************************************************
-
-
-# #** stock_lot  ****************************************************************
-# default={
-#     "company_id": 1,
-#     "name"      : "??",
-# }
-# MigrationTable(db_src,db_dst, table_src="stock_production_lot", table_dst="stock_lot", default=default)
-# #******************************************************************************
-
-
-# #** stock_location ***********************************************************
-# default={
-#     "warehouse_id": 1,
-# }
-# MigrationTable(db_src,db_dst,'stock_location', default=default, text2jsonb=True)
-# parent_store_compute(cr_dst,cnx_dst,'stock_location','location_id')
-# #******************************************************************************
 
 
 # #** account_payment_term ******************************************************
