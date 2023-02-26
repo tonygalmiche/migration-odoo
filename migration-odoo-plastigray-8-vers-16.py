@@ -21,6 +21,26 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+
+
+#** is_certificat_conformite ******************************************************
+tables=[
+   "is_certificat_conformite",
+   "is_certificat_conformite_autre",
+   "is_certificat_conformite_autre2",
+   "is_certificat_conformite_fabricant",
+   "is_certificat_conformite_reference",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
+
+
+sys.exit()
+
 #** stock_route ******************************************************
 MigrationTable(db_src,db_dst,'stock_location_route',table_dst='stock_route',text2jsonb=True)
 MigrationTable(db_src,db_dst,'stock_route_product')
