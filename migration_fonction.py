@@ -485,6 +485,35 @@ def MigrationChampTable(db_src,db_dst,table,champ,ids):
     cnx_dst.commit()
 
 
+def MigrationIrProperty2Field(db_src,db_dst,model,property_src,field_dst):
+    """Migration des données d'une property vers un champ"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    fields_id_src = GetFielsdId(cr_src,model,property_src)
+    SQL="""
+        select *
+        from ir_property
+        where fields_id="""+str(fields_id_src)+"""
+        order by name,res_id
+    """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    table=model.replace(".","_")
+    for r in rows:
+        if r["res_id"] and r["value_reference"]:
+            value  = r["value_reference"].split(",")[1]
+            res_id = r["res_id"].split(",")[1]
+            SQL="select id from product_pricelist where id=%s"
+            cr_dst.execute(SQL,[value])
+            pricelists = cr_dst.fetchall()
+            if len(pricelists)>0:
+                SQL="UPDATE "+table+" SET "+field_dst+"=%s WHERE id=%s"
+                cr_dst.execute(SQL,[value,res_id])
+            #else:
+            #    print("ERROR",SQL, value,res_id)
+    cnx_dst.commit()
+
+
 def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
     """Migration des données de la table ir_property pour le model et le field indiqué"""
     cnx_src,cr_src=GetCR(db_src)

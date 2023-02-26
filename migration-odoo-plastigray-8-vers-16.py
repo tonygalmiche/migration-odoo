@@ -21,6 +21,128 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+#** stock_route ******************************************************
+MigrationTable(db_src,db_dst,'stock_location_route',table_dst='stock_route',text2jsonb=True)
+MigrationTable(db_src,db_dst,'stock_route_product')
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+
+#** product_supplierinfo ******************************************************
+default={
+    'currency_id': 1,
+    'price'      : 0,
+}
+rename={
+    'name': ' partner_id',
+}
+MigrationTable(db_src,db_dst,'product_supplierinfo',rename=rename, default=default)
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+#** stock_move ****************************************************************
+MigrationTable(db_src,db_dst,'stock_move')
+#******************************************************************************
+
+sys.exit()
+
+
+rename={
+    'ord_id': 'purchase_order_line_id',
+    'tax_id': 'account_tax_id',
+}
+MigrationTable(db_src,db_dst,'purchase_order_taxe',table_dst='account_tax_purchase_order_line_rel',rename=rename)
+
+
+
+# pg-odoo8-1=# select * from purchase_order_taxe limit 5;
+#  ord_id | tax_id 
+# --------+--------
+#    1573 |      6
+#    1574 |      6
+  
+
+# pg-odoo16-1=# select * from account_tax_purchase_order_line_rel  limit 5;
+#  purchase_order_line_id | account_tax_id 
+# ------------------------+----------------
+# (0 ligne)
+
+
+sys.exit()
+
+
+#** purchase_order ************************************************************
+MigrationTable(db_src,db_dst,'purchase_order')
+SQL="""
+UPDATE purchase_order set state='purchase' where state='except_picking';
+UPDATE purchase_order set state='purchase' where state='approved';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+SQL="""
+DELETE FROM purchase_order_line where product_id is null;
+"""
+cr_src.execute(SQL) # TODO : A revoir
+cnx_src.commit()
+default={
+}
+MigrationTable(db_src,db_dst,'purchase_order_line', default=default)
+MigrationTable(db_src,db_dst,'account_tax_purchase_order_line_rel')
+#******************************************************************************
+
+sys.exit()
+
+
+
+
+
+
+MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_product_pricelist')
+MigrationIrProperty2Field(db_src,db_dst,'res.partner', property_src='property_product_pricelist_purchase', field_dst="pricelist_purchase_id")
+
+
+
+
+sys.exit()
+
+
+
+
+#** product_pricelist ****************************************************************
+default={
+    'discount_policy': 'with_discount',
+    'company_id'     : 1,
+}
+MigrationTable(db_src,db_dst,'product_pricelist',default=default,text2jsonb=True)
+MigrationTable(db_src,db_dst,'product_pricelist_version')
+
+default={
+    'compute_price': 'fixed',
+    'applied_on'   : '0_product_variant',
+    'company_id'   : 1,
+    'active'       : True,
+}
+MigrationTable(db_src,db_dst,'product_pricelist_item',default=default)
+#******************************************************************************
+
+
+
+sys.exit()
+
+
+
+
+
+
 
 #** stock_quant ****************************************************************
 default={
@@ -178,30 +300,6 @@ for table in tables:
 
 sys.exit()
 
-
-
-
-
-#** product_pricelist ****************************************************************
-default={
-    'discount_policy': 'with_discount',
-    'company_id'     : 1,
-}
-MigrationTable(db_src,db_dst,'product_pricelist',default=default,text2jsonb=True)
-MigrationTable(db_src,db_dst,'product_pricelist_version')
-
-default={
-    'compute_price': 'fixed',
-    'applied_on'   : '0_product_variant',
-    'company_id'   : 1,
-    'active'       : True,
-}
-MigrationTable(db_src,db_dst,'product_pricelist_item',default=default)
-#******************************************************************************
-
-
-
-sys.exit()
 
 
 
@@ -483,17 +581,6 @@ MigrationTable(db_src,db_dst,table,default=default)
 
 sys.exit()
 
-
-#** purchase_order ************************************************************
-MigrationTable(db_src,db_dst,'purchase_order')
-cr_src.execute("DELETE FROM purchase_order_line where product_id is null") # TODO : A revoir
-cnx_src.commit()
-default={
-}
-MigrationTable(db_src,db_dst,'purchase_order_line', default=default)
-#******************************************************************************
-
-sys.exit()
 
 
 #** is_escompte ***************************************************************
@@ -788,10 +875,6 @@ default={
 MigrationTable(db_src,db_dst,'stock_picking_type', default=default, text2jsonb=True)
 #******************************************************************************
 
-
-#** stock_move ****************************************************************
-MigrationTable(db_src,db_dst,'stock_move')
-#******************************************************************************
 
 
 #** stock_picking *************************************************************
