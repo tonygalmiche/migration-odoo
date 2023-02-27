@@ -21,6 +21,130 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+#** stock_move_line (32 mn de traitement pour odoo1) **************************
+cnx_src = psycopg2.connect("dbname='"+db_src+"'")
+cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
+cr_src.itersize = 10000 # Rows fetched at one time from the server
+SQL="""
+    delete from stock_move_line;
+    alter sequence stock_move_line_id_seq RESTART;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="""
+    SELECT 
+        spl.name            as lot_name,
+        sm.create_date      as sm_create_date,
+        sm.location_id      as sm_location_id,
+        sm.location_dest_id as sm_location_dest_id,
+        * 
+    from stock_move sm join stock_quant_move_rel rel on sm.id=rel.move_id  
+                       join stock_quant           sq on sq.id=rel.quant_id
+                       left join stock_production_lot spl on sq.lot_id=spl.id
+    order by sm.create_date
+"""
+cr_src.execute(SQL)
+ct=1
+for row in cr_src:
+    print(ct, row["sm_create_date"])
+    SQL="""
+        INSERT INTO stock_move_line (
+            company_id, 
+            create_date, 
+            create_uid, 
+            date, 
+            description_picking, 
+            location_dest_id, 
+            location_id, 
+            lot_id, 
+            lot_name, 
+            move_id, 
+            owner_id, 
+            package_id, 
+            package_level_id, 
+            picking_id, 
+            product_category_name, 
+            product_id, 
+            product_uom_id, 
+            production_id, 
+            qty_done, 
+            reference, 
+            reserved_qty, 
+            reserved_uom_qty, 
+            result_package_id, 
+            state, 
+            workorder_id, 
+            write_date, 
+            write_uid
+        )
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    company_id = 1
+    create_date = row["sm_create_date"]
+    create_uid = row["create_uid"]
+    date = row["date"]
+    description_picking =  None
+    location_dest_id = row["sm_location_dest_id"]
+    location_id = row["sm_location_id"]
+    lot_id = row["lot_id"]
+    lot_name =  row["lot_name"]
+    move_id = row["move_id"]
+    owner_id = row["owner_id"]
+    package_id =  row["package_id"]
+    package_level_id =  None
+    picking_id = row["picking_id"]
+    product_category_name =  None
+    product_id= row["product_id"]
+    product_uom_id =  row["product_uom"]
+    production_id = row["production_id"]
+    qty_done = row["product_uom_qty"]
+    reference = row["ref"]
+    reserved_qty = 0
+    reserved_uom_qty = 0
+    result_package_id = None
+    state = row["state"]
+    workorder_id =  None
+    write_date = row["write_date"]
+    write_uid = row["write_uid"]
+    vals=[
+        company_id, 
+        create_date, 
+        create_uid, 
+        date, 
+        description_picking, 
+        location_dest_id, 
+        location_id, 
+        lot_id, 
+        lot_name, 
+        move_id, 
+        owner_id, 
+        package_id, 
+        package_level_id, 
+        picking_id, 
+        product_category_name, 
+        product_id, 
+        product_uom_id, 
+        production_id, 
+        qty_done, 
+        reference, 
+        reserved_qty, 
+        reserved_uom_qty, 
+        result_package_id, 
+        state, 
+        workorder_id, 
+        write_date, 
+        write_uid
+    ]
+    cr_dst.execute(SQL,vals)
+    ct+=1
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
+
+cnx_src,cr_src=GetCR(db_src)
+cnx_dst,cr_dst=GetCR(db_dst)
 
 
 #** is_certificat_conformite ******************************************************
