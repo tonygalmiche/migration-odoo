@@ -9,7 +9,7 @@ db_src = "pg-odoo8-1"
 db_dst = "pg-odoo16-1"
 #******************************************************************************
 
-cnx,cr=GetCR(db_src)
+#cnx,cr=GetCR(db_src)
 #db_vierge = db_dst+'-vierge'
 #SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
 #cde="""echo '"""+SQL+"""' | psql postgres"""
@@ -19,6 +19,72 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 #cnx_vierge,cr_vierge=GetCR(db_vierge)
 
+
+
+
+#** stock_picking_type ********************************************************
+default={
+    "company_id"        : 1,
+    "sequence_code"     : "x",
+    "reservation_method": "at_confirm",
+    "create_backorder"  : "ask",
+}
+MigrationTable(db_src,db_dst,'stock_picking_type', default=default, text2jsonb=True)
+SQL="""
+    INSERT INTO stock_picking_type (
+        default_location_src_id, 
+        default_location_dest_id, 
+        warehouse_id, 
+        company_id, 
+        sequence_id,
+        sequence_code,
+        code,
+        reservation_method,
+        create_backorder,
+        name,
+        active
+    )
+    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+"""
+default_location_src_id  = 8
+default_location_dest_id = 8
+warehouse_id = 1
+company_id = 1
+sequence_id = 17
+sequence_code = 'MO'
+code = "mrp_operation"
+reservation_method = "at_confirm"
+create_backorder = "ask"
+name = '{"en_US": "Fabrication"}'
+active = True
+vals=[
+    default_location_src_id, 
+    default_location_dest_id, 
+    warehouse_id, 
+    company_id, 
+    sequence_id,
+    sequence_code,
+    code,
+    reservation_method,
+    create_backorder,
+    name,
+    active
+]
+cr_dst.execute(SQL,vals)
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+MigrationIrProperty(db_src,db_dst,'res.partner', 'property_stock_customer')
+MigrationIrProperty(db_src,db_dst,'res.partner', 'property_stock_supplier')
+
+
+
+sys.exit()
 
 
 #** stock_move_line (32 mn de traitement pour odoo1) **************************
@@ -1006,18 +1072,6 @@ MigrationTable(db_src,db_dst,'account_fiscal_position_tax')
 MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_position', field_dst='property_account_position_id')
 #******************************************************************************
 
-
-
-
-#** stock_picking_type ********************************************************
-default={
-    "company_id"        : 1,
-    "sequence_code"     : "x",
-    "reservation_method": "at_confirm",
-    "create_backorder"  : "ask",
-}
-MigrationTable(db_src,db_dst,'stock_picking_type', default=default, text2jsonb=True)
-#******************************************************************************
 
 
 
