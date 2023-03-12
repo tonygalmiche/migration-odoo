@@ -22,6 +22,75 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+
+#** mrp_production ************************************************************
+default = {
+    "picking_type_id"   : 1,
+    "consumption"       : 'flexible',
+    "date_planned_start": "1990-01-01",
+}
+rename={
+    'product_uom': 'product_uom_id',
+}
+MigrationTable(db_src,db_dst,"mrp_production",default=default,rename=rename)
+SQL="""
+    update mrp_production set state='progress' where state='in_production';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+sys.exit()
+
+
+
+
+#** mrp_workorder *************************************************************
+default={
+    "product_uom_id": 1,
+}
+rename={
+    'hour'        : 'duration_expected',
+    'date_planned': 'date_planned_start',
+}
+MigrationTable(db_src,db_dst,'mrp_production_workcenter_line',table_dst='mrp_workorder', default=default, rename=rename)
+
+SQL="""
+    update mrp_workorder set state='ready'    where state='draft';
+    update mrp_workorder set state='progress' where state='startworking';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# cancel
+# draft => ready
+# startworking => progress
+#ValueError: Wrong value for mrp.workorder.production_state: 'in_production'
+
+#******************************************************************************
+
+
+
+sys.exit()
+
+
+
+#** is_mold_bridage ******************************************************
+tables=[
+   "is_mold_bridage",
+   "is_mold_bridage_rel"
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+
+
 #** stock_picking_type ********************************************************
 default={
     "company_id"        : 1,
@@ -760,21 +829,6 @@ cnx_dst.commit()
 
 sys.exit()
 
-
-
-
-#** mrp_production ************************************************************
-default = {
-    "picking_type_id"   : 1,
-    "consumption"       : 0,
-    "date_planned_start": "1990-01-01",
-}
-rename={
-    'product_uom': 'product_uom_id',
-}
-MigrationTable(db_src,db_dst,"mrp_production",default=default,rename=rename)
-#******************************************************************************
-sys.exit()
 
 
 
