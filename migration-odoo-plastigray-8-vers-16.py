@@ -22,24 +22,26 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
-
 #** mrp_production ************************************************************
 default = {
     "picking_type_id"   : 1,
     "consumption"       : 'flexible',
-    "date_planned_start": "1990-01-01",
+    #"date_planned_start": "1990-01-01",
 }
 rename={
-    'product_uom': 'product_uom_id',
+    'product_uom' : 'product_uom_id',
+    'date_planned': 'date_planned_start',
 }
 MigrationTable(db_src,db_dst,"mrp_production",default=default,rename=rename)
 SQL="""
-    update mrp_production set state='progress' where state='in_production';
+    update mrp_production set state='draft' where state='in_production';
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 sys.exit()
+
+
 
 
 
@@ -53,24 +55,91 @@ rename={
     'date_planned': 'date_planned_start',
 }
 MigrationTable(db_src,db_dst,'mrp_production_workcenter_line',table_dst='mrp_workorder', default=default, rename=rename)
-
 SQL="""
     update mrp_workorder set state='ready'    where state='draft';
     update mrp_workorder set state='progress' where state='startworking';
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
+#******************************************************************************
 
-# cancel
-# draft => ready
-# startworking => progress
-#ValueError: Wrong value for mrp.workorder.production_state: 'in_production'
+sys.exit()
 
+
+
+
+
+#** is_consigne_journaliere ***************************************************
+tables=[
+   "is_consigne_journaliere",
+   "is_consigne_journaliere_ass",
+   "is_consigne_journaliere_inj",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+
+
+
+#** mrp_routing ***************************************************************
+tables=[
+   "mrp_routing",
+]
+for table in tables:
+    print(table)
+    MigrationTable(db_src,db_dst,table)
+default={
+    'active'   : True,
+    'time_mode': 'manual',
+}
+MigrationTable(db_src,db_dst,'mrp_routing_workcenter', default=default)
+SQL="UPDATE mrp_routing_workcenter SET time_cycle_manual=is_nb_secondes/60"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+#** mrp_workcenter ************************************************************
+default = {
+    'sequence': 10,
+    'company_id': 1,
+    'resource_calendar_id': 1,
+    'working_state': 'normal',
+    'resource_type': 'material',
+    'active': True,
+    'default_capacity': 1,
+    'time_efficiency': 100,
+}
+MigrationTable(db_src,db_dst,"mrp_workcenter",default=default)
+SQL="""
+    select rr.name, rr.code, rr.resource_type,  mw.id
+    from resource_resource rr join mrp_workcenter mw on rr.id=mw.resource_id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE mrp_workcenter SET name=%s, code=%s, resource_type=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row["name"],row["code"],row["resource_type"],row["id"]])
+cnx_dst.commit()
 #******************************************************************************
 
 
 
 sys.exit()
+
+
+
 
 
 
@@ -596,56 +665,9 @@ MigrationTable(db_src,db_dst,'mrp_bom_line', rename=rename)
 #******************************************************************************
 
 
-
-tables=[
-   "mrp_routing",
-]
-for table in tables:
-    print(table)
-    MigrationTable(db_src,db_dst,table)
-
-
-default={
-    'active': True,
-}
-MigrationTable(db_src,db_dst,'mrp_routing_workcenter', default=default)
-
-
-
 sys.exit()
 
 
-
-
-
-
-#** mrp_workcenter ************************************************************
-default = {
-    'sequence': 10,
-    'company_id': 1,
-    'resource_calendar_id': 1,
-    'working_state': 'normal',
-    'resource_type': 'material',
-    'active': True,
-}
-MigrationTable(db_src,db_dst,"mrp_workcenter",default=default)
-#******************************************************************************
-
-
-SQL="""
-    select rr.name, rr.code, rr.resource_type,  mw.id
-    from resource_resource rr join mrp_workcenter mw on rr.id=mw.resource_id
-"""
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    SQL="UPDATE mrp_workcenter SET name=%s, code=%s, resource_type=%s WHERE id=%s"
-    cr_dst.execute(SQL,[row["name"],row["code"],row["resource_type"],row["id"]])
-cnx_dst.commit()
-
-
-
-sys.exit()
 
 
 
