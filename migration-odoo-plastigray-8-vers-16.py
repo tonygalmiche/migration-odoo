@@ -6,6 +6,7 @@ import os
 
 #** Paramètres ****************************************************************
 db_src = "pg-odoo8-1"
+#db_src = "odoo16"
 db_dst = "pg-odoo16-1"
 #******************************************************************************
 
@@ -19,6 +20,530 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 #cnx_vierge,cr_vierge=GetCR(db_vierge)
 
+
+
+
+
+
+
+
+# #** account_move_line *********************************************************
+# MigrationTable(db_src,db_dst,'account_move_reconcile', table_dst='account_full_reconcile')
+# rename={
+#     'amount': 'amount_total'
+# }
+# default={
+#     'move_type'  : 'entry',
+#     'currency_id': 1,
+#     'auto_post': 'no',
+# }
+# MigrationTable(db_src,db_dst,'account_move'     , table_dst='account_move'     , rename=rename,default=default)
+# default={
+#     'currency_id': 1,
+#     'debit': 0,
+#     'credit': 0,
+#     'amount_currency': 0,
+#     'display_type': 'product',
+# }
+# #rename={
+# #    'tax_amount': 'tax_base_amount',
+# #    'reconcile_partial_id': 'full_reconcile_id',
+# #}
+# rename={}
+# MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
+# #******************************************************************************
+
+
+
+
+
+
+
+# #** account_invoice_line => account_move **************************************
+# SQL="""
+#     SELECT 
+#         ai.id,
+#         ai.move_id,
+#         ai.number,
+#         ai.date_invoice,
+#         ai.type,
+#         rp.name,
+#         ai.date_due,
+#         -- ai.order_id,
+#         -- ai.is_affaire_id,
+#         -- ai.is_refacturable,
+#         -- ai.is_nom_fournisseur,
+#         -- ai.is_personne_concernee_id,
+#         ai.amount_untaxed,
+#         ai.amount_tax,
+#         ai.amount_total,
+#         ai.residual,
+#         ai.user_id,
+#         ai.fiscal_position,
+#         ai.name move_name,
+#         ai.origin,
+#         ai.supplier_invoice_number,
+#         ai.payment_term
+#     from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
+#     order by ai.id
+# """
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# nb=len(rows)
+# ct=0
+# for row in rows:
+#     ct+=1
+#     move_id = row['move_id']
+#     if move_id:
+#         SQL="""
+#             UPDATE account_move 
+#             set 
+#                 invoice_date=%s,
+#                 move_type=%s,
+#                 invoice_partner_display_name=%s,
+#                 invoice_date_due=%s,
+#                 amount_untaxed=%s,
+#                 amount_tax=%s,
+#                 amount_total=%s,
+#                 amount_residual=%s,
+#                 amount_untaxed_signed=%s,
+#                 amount_tax_signed=%s,
+#                 amount_total_signed=%s,
+#                 amount_residual_signed=%s,
+#                 invoice_user_id=%s,
+#                 fiscal_position_id=%s,
+#                 invoice_origin=%s,
+#                 invoice_payment_term_id=%s
+#             where id=%s
+#         """
+
+#                 # order_id=%s,
+#                 # is_affaire_id=%s,
+#                 # is_refacturable=%s,
+#                 # is_nom_fournisseur=%s,
+#                 # is_personne_concernee_id=%s,
+#                 # supplier_invoice_number=%s,
+
+
+
+#         cr_dst.execute(SQL,(
+#             row['date_invoice'],
+#             row['type'],
+#             row['name'],
+#             row['date_due'],
+#             #row['order_id'],
+#             #row['is_affaire_id'],
+#             #row['is_refacturable'],
+#             #row['is_nom_fournisseur'],
+#             #row['is_personne_concernee_id'],
+#             row['amount_untaxed'],
+#             row['amount_tax'],
+#             row['amount_total'],
+#             row['residual'],
+#             row['amount_untaxed'],
+#             row['amount_tax'],
+#             row['amount_total'],
+#             row['residual'],
+#             row['user_id'],
+#             row['fiscal_position'],
+#             row['origin'],
+#             #row['supplier_invoice_number'],
+#             row['payment_term'],
+#             move_id
+#         ))
+#         SQL="""
+#             SELECT 
+#                 ail.id,
+#                 ail.product_id,
+#                 ail.name,
+#                 ail.price_unit,
+#                 ail.price_subtotal,
+#                 ail.sequence
+#             from account_invoice_line ail inner join account_invoice ai on ail.invoice_id=ai.id
+#             WHERE ai.id="""+str(row['id'])+"""
+#             order by ail.id
+#         """
+#         cr_src.execute(SQL)
+#         rows2 = cr_src.fetchall()
+#         nb2=len(rows2)
+#         ct2=0
+#         #Comme il n'y a pas de lien entre account_invoice_line et account_move_line, je considère que les id sont dans le même ordre
+#         for row2 in rows2:
+#             SQL="""
+#                 UPDATE account_move_line 
+#                 set 
+#                     name=%s, 
+#                     price_unit=%s,
+#                     price_subtotal=%s,
+#                     price_total=%s,
+#                     balance=(debit-credit),
+#                     amount_currency=(debit-credit),
+#                     sequence=%s
+#                 WHERE id IN (
+#                     SELECT id
+#                     FROM account_move_line
+#                     WHERE move_id=%s and product_id is not null
+#                     ORDER BY id
+#                     LIMIT 1 OFFSET %s
+#                 ) 
+#             """
+
+# #                    is_account_invoice_line_id=%s,
+
+
+#             cr_dst.execute(SQL,(
+#                 row2['name'],
+#                 #row2['id'],
+#                 row2['price_unit'],
+#                 row2['price_subtotal'],
+#                 row2['price_subtotal'],
+#                 row2['sequence'],
+#                 move_id,
+#                 ct2
+#             ))
+#             ct2+=1
+# cnx_dst.commit()
+# SQL="""
+#     update account_move_line set price_unit=(credit-debit) where price_unit is null;
+#     update account_move_line set balance=(debit-credit) where balance is null;
+#     update account_move_line set amount_currency=balance where amount_currency=0;
+#     update account_move_line set price_subtotal=(credit-debit) where price_subtotal is null;
+#     update account_move_line set price_total=(credit-debit) where price_total is null;
+# """
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# #******************************************************************************
+
+
+
+#TODO : A Revoir
+
+#** Enlever les écritures de TVA des lignes de factures ***********************
+# TODO : Ne plus faire => SQL="""UPDATE account_move_line set exclude_from_invoice_tab='t' WHERE product_id is null"""
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+#******************************************************************************
+
+
+# # ** Migration tax_code_id ****************************************************
+# cr_dst.execute("update account_move_line set amount_currency=(debit-credit)")
+# cr_dst.execute("update account_move_line set company_currency_id=currency_id")
+# cnx_dst.commit()
+# SQL="""
+#     select aml.id move_line_id,aml.name,aml.tax_code_id,aml.debit,aml.credit,at.id tax_line_id
+#     from account_move_line aml inner join account_tax at on aml.tax_code_id=at.tax_code_id 
+# """
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     SQL="""
+#         UPDATE account_move_line
+#         SET 
+#             tax_line_id=%s,
+#             tax_group_id=1,
+#             currency_id=1,
+#             company_currency_id=1,
+#             quantity=1
+#         WHERE id=%s
+#     """
+#     cr_dst.execute(SQL,[row["tax_line_id"],row["move_line_id"]])
+# cnx_dst.commit()
+# #******************************************************************************
+
+
+
+
+# TODO Partie à revoir 
+
+# #** Migration des taxes sur les factures **************************************
+# SQL="DELETE FROM account_move_line_account_tax_rel"
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# SQL="SELECT invoice_line_id, tax_id  FROM account_invoice_line_tax"
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     SQL="SELECT id FROM account_move_line WHERE is_account_invoice_line_id="+str(row['invoice_line_id'])
+#     cr_dst.execute(SQL)
+#     rows2 = cr_dst.fetchall()
+#     for row2 in rows2:
+#         SQL="""
+#             INSERT INTO account_move_line_account_tax_rel (account_move_line_id, account_tax_id)
+#             VALUES (%s,%s)
+#             ON CONFLICT DO NOTHING
+#         """
+#         cr_dst.execute(SQL,[row2['id'],row['tax_id']])
+# cnx_dst.commit()
+# #******************************************************************************
+
+
+
+
+
+
+
+
+
+
+
+sys.exit()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#** Ajouter les comptes sur les taxes *****************************************    
+cr_dst.execute("delete from account_tax_repartition_line")
+SQL="SELECT id, account_collected_id,account_paid_id FROM account_tax"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    id = row["id"]
+    SQL="""
+        INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, invoice_tax_id, company_id, sequence, use_in_tax_closing)
+        VALUES (%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,[0,'base',id,1,1,False])
+    SQL="""
+        INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, refund_tax_id, company_id, sequence, use_in_tax_closing)
+        VALUES (%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,[0,'base',id,1,1,False])
+    SQL="""
+       INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, invoice_tax_id, company_id, sequence, use_in_tax_closing, account_id)
+       VALUES (%s,%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,[100,'tax',id,1,1,True,row["account_collected_id"]])
+    SQL="""
+       INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, refund_tax_id, company_id, sequence, use_in_tax_closing, account_id)
+       VALUES (%s,%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,[100,'tax',id,1,1,True,row["account_paid_id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
+
+
+
+#** account_account ***********************************************************
+table='account_account'
+rename={
+   #"user_type": "user_type_id",
+    "type"     : "account_type",
+}
+MigrationTable(db_src,db_dst,table,rename=rename)
+#******************************************************************************
+
+#** account_type **************************************************************
+cr_dst.execute("update account_account set account_type='equity'           , internal_group='equity'") 
+cr_dst.execute("update account_account set account_type='asset_fixed'      , internal_group='asset'     where code like '2%'") 
+cr_dst.execute("update account_account set account_type='asset_current'    , internal_group='asset'     where code like '44%'") 
+cr_dst.execute("update account_account set account_type='liability_payable', internal_group='liability' where code like '401%'") 
+cr_dst.execute("update account_account set account_type='asset_receivable' , internal_group='asset'     where code like '411%'") 
+cr_dst.execute("update account_account set account_type='expense'          , internal_group='expense'   where code like '6%'") 
+cr_dst.execute("update account_account set account_type='income'           , internal_group='income'    where code like '7%'") 
+cnx_dst.commit()
+#******************************************************************************
+
+#** account_root **************************************************************
+SQL="SELECT id,code FROM account_account"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    id=row["id"]
+    code=row["code"]
+    root_id = (ord(code[0]) * 1000 + ord(code[1:2] or '\x00'))
+    SQL="UPDATE account_account SET root_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[root_id,id])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+# # ** MigrationIrProperty ******************************************************
+MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_receivable', field_dst='property_account_receivable_id')
+MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_payable'   , field_dst='property_account_payable_id')
+
+MigrationIrProperty(db_src,db_dst,'product.template', field_src='property_account_income' , field_dst='property_account_income_id')
+MigrationIrProperty(db_src,db_dst,'product.template', field_src='property_account_expense', field_dst='property_account_expense_id')
+
+MigrationIrProperty(db_src,db_dst,'product.category', field_src='property_account_income_categ' , field_dst='property_account_income_categ_id')
+MigrationIrProperty(db_src,db_dst,'product.category', field_src='property_account_expense_categ', field_dst='property_account_expense_categ_id')
+# #******************************************************************************
+
+
+
+
+
+
+
+sys.exit()
+
+# odoo16-sample=# select code, account_type,internal_group from account_account where code like '401%';
+#   code  |   account_type    | internal_group 
+# --------+-------------------+----------------
+#  401100 | liability_payable | liability
+#  401700 | liability_payable | liability
+# (2 lignes)
+
+# odoo16-sample=# select code, account_type,internal_group from account_account where code like '411%';
+#   code  |   account_type   | internal_group 
+# --------+------------------+----------------
+#  411100 | asset_receivable | asset
+#  411101 | asset_receivable | asset
+#  411700 | asset_receivable | asset
+
+
+
+
+
+sys.exit()
+
+
+
+
+#** stock_move ****************************************************************
+MigrationTable(db_src,db_dst,'stock_move')
+#******************************************************************************
+
+sys.exit()
+
+
+
+
+#** stock_move_line (32 mn de traitement pour odoo1) **************************
+cnx_src = psycopg2.connect("dbname='"+db_src+"'")
+cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
+cr_src.itersize = 10000 # Rows fetched at one time from the server
+SQL="""
+    delete from stock_move_line;
+    alter sequence stock_move_line_id_seq RESTART;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="""
+    SELECT 
+        spl.name            as lot_name,
+        sm.create_date      as sm_create_date,
+        sm.location_id      as sm_location_id,
+        sm.location_dest_id as sm_location_dest_id,
+        * 
+    from stock_move sm join stock_quant_move_rel rel on sm.id=rel.move_id  
+                       join stock_quant           sq on sq.id=rel.quant_id
+                       left join stock_production_lot spl on sq.lot_id=spl.id
+    order by sm.create_date
+"""
+cr_src.execute(SQL)
+ct=1
+for row in cr_src:
+    print(ct, row["sm_create_date"])
+    SQL="""
+        INSERT INTO stock_move_line (
+            company_id, 
+            create_date, 
+            create_uid, 
+            date, 
+            description_picking, 
+            location_dest_id, 
+            location_id, 
+            lot_id, 
+            lot_name, 
+            move_id, 
+            owner_id, 
+            package_id, 
+            package_level_id, 
+            picking_id, 
+            product_category_name, 
+            product_id, 
+            product_uom_id, 
+            production_id, 
+            qty_done, 
+            reference, 
+            reserved_qty, 
+            reserved_uom_qty, 
+            result_package_id, 
+            state, 
+            workorder_id, 
+            write_date, 
+            write_uid
+        )
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    company_id = 1
+    create_date = row["sm_create_date"]
+    create_uid = row["create_uid"]
+    date = row["date"]
+    description_picking =  None
+    location_dest_id = row["sm_location_dest_id"]
+    location_id = row["sm_location_id"]
+    lot_id = row["lot_id"]
+    lot_name =  row["lot_name"]
+    move_id = row["move_id"]
+    owner_id = row["owner_id"]
+    package_id =  row["package_id"]
+    package_level_id =  None
+    picking_id = row["picking_id"]
+    product_category_name =  None
+    product_id= row["product_id"]
+    product_uom_id =  row["product_uom"]
+    production_id = row["production_id"]
+    qty_done = row["product_uom_qty"]
+    reference = row["ref"]
+    reserved_qty = 0
+    reserved_uom_qty = 0
+    result_package_id = None
+    state = row["state"]
+    workorder_id =  None
+    write_date = row["write_date"]
+    write_uid = row["write_uid"]
+    vals=[
+        company_id, 
+        create_date, 
+        create_uid, 
+        date, 
+        description_picking, 
+        location_dest_id, 
+        location_id, 
+        lot_id, 
+        lot_name, 
+        move_id, 
+        owner_id, 
+        package_id, 
+        package_level_id, 
+        picking_id, 
+        product_category_name, 
+        product_id, 
+        product_uom_id, 
+        production_id, 
+        qty_done, 
+        reference, 
+        reserved_qty, 
+        reserved_uom_qty, 
+        result_package_id, 
+        state, 
+        workorder_id, 
+        write_date, 
+        write_uid
+    ]
+    cr_dst.execute(SQL,vals)
+    ct+=1
+cnx_dst.commit()
+#******************************************************************************
+
+
+sys.exit()
 
 
 
@@ -225,127 +750,6 @@ MigrationIrProperty(db_src,db_dst,'res.partner', 'property_stock_supplier')
 sys.exit()
 
 
-#** stock_move_line (32 mn de traitement pour odoo1) **************************
-cnx_src = psycopg2.connect("dbname='"+db_src+"'")
-cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
-cr_src.itersize = 10000 # Rows fetched at one time from the server
-SQL="""
-    delete from stock_move_line;
-    alter sequence stock_move_line_id_seq RESTART;
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-SQL="""
-    SELECT 
-        spl.name            as lot_name,
-        sm.create_date      as sm_create_date,
-        sm.location_id      as sm_location_id,
-        sm.location_dest_id as sm_location_dest_id,
-        * 
-    from stock_move sm join stock_quant_move_rel rel on sm.id=rel.move_id  
-                       join stock_quant           sq on sq.id=rel.quant_id
-                       left join stock_production_lot spl on sq.lot_id=spl.id
-    order by sm.create_date
-"""
-cr_src.execute(SQL)
-ct=1
-for row in cr_src:
-    print(ct, row["sm_create_date"])
-    SQL="""
-        INSERT INTO stock_move_line (
-            company_id, 
-            create_date, 
-            create_uid, 
-            date, 
-            description_picking, 
-            location_dest_id, 
-            location_id, 
-            lot_id, 
-            lot_name, 
-            move_id, 
-            owner_id, 
-            package_id, 
-            package_level_id, 
-            picking_id, 
-            product_category_name, 
-            product_id, 
-            product_uom_id, 
-            production_id, 
-            qty_done, 
-            reference, 
-            reserved_qty, 
-            reserved_uom_qty, 
-            result_package_id, 
-            state, 
-            workorder_id, 
-            write_date, 
-            write_uid
-        )
-        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """
-    company_id = 1
-    create_date = row["sm_create_date"]
-    create_uid = row["create_uid"]
-    date = row["date"]
-    description_picking =  None
-    location_dest_id = row["sm_location_dest_id"]
-    location_id = row["sm_location_id"]
-    lot_id = row["lot_id"]
-    lot_name =  row["lot_name"]
-    move_id = row["move_id"]
-    owner_id = row["owner_id"]
-    package_id =  row["package_id"]
-    package_level_id =  None
-    picking_id = row["picking_id"]
-    product_category_name =  None
-    product_id= row["product_id"]
-    product_uom_id =  row["product_uom"]
-    production_id = row["production_id"]
-    qty_done = row["product_uom_qty"]
-    reference = row["ref"]
-    reserved_qty = 0
-    reserved_uom_qty = 0
-    result_package_id = None
-    state = row["state"]
-    workorder_id =  None
-    write_date = row["write_date"]
-    write_uid = row["write_uid"]
-    vals=[
-        company_id, 
-        create_date, 
-        create_uid, 
-        date, 
-        description_picking, 
-        location_dest_id, 
-        location_id, 
-        lot_id, 
-        lot_name, 
-        move_id, 
-        owner_id, 
-        package_id, 
-        package_level_id, 
-        picking_id, 
-        product_category_name, 
-        product_id, 
-        product_uom_id, 
-        production_id, 
-        qty_done, 
-        reference, 
-        reserved_qty, 
-        reserved_uom_qty, 
-        result_package_id, 
-        state, 
-        workorder_id, 
-        write_date, 
-        write_uid
-    ]
-    cr_dst.execute(SQL,vals)
-    ct+=1
-cnx_dst.commit()
-#******************************************************************************
-
-
-sys.exit()
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
@@ -394,11 +798,6 @@ MigrationTable(db_src,db_dst,'product_supplierinfo',rename=rename, default=defau
 
 sys.exit()
 
-
-
-#** stock_move ****************************************************************
-MigrationTable(db_src,db_dst,'stock_move')
-#******************************************************************************
 
 sys.exit()
 
