@@ -8,6 +8,14 @@ import magic
 import os
 import json
 from xmlrpc import client as xmlrpclib
+from datetime import datetime
+
+
+
+def Log(debut,msg):
+    now = datetime.now()
+    print("%s : %06.2fs : %s"%(now.strftime('%H:%M:%S') , (now-debut).total_seconds(), msg))
+    return now
 
 
 def s(txt,lg=0):
@@ -314,24 +322,37 @@ def DumpRestoreTable(db_src,db_dst,table):
 def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where="",text2jsonb=False):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
-    if not table_dst:
-        table_dst=table_src
-    champs_src = GetChamps(cr_src,table_src)
-    champs_dst = GetChamps(cr_dst,table_dst)
-    champs = champs_src + champs_dst # Concatener les 2 listes
-    for k in rename:
-        champs_src.append(k)
-        champs_dst.append(k)
-    champs = list(set(champs))       # Supprimer les doublons
-    champs.sort()                    # Trier
-    communs=[]
-    for champ in champs:
-        if champ in champs_src and champ in champs_dst:
-            communs.append(champ)
-    champs=','.join(communs)
-    Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst)
-    CSV2Table(cnx_dst,cr_dst,table_src,table_dst)
-    SetSequence(cr_dst,cnx_dst,table_dst)
+
+    SQL="select * from %s limit 1"%table_src
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    #print("%s : len=%s"%(table_src,len(rows)))
+    if len(rows)>0:
+        if not table_dst:
+            table_dst=table_src
+        champs_src = GetChamps(cr_src,table_src)
+
+
+
+        champs_dst = GetChamps(cr_dst,table_dst)
+        champs = champs_src + champs_dst # Concatener les 2 listes
+        for k in rename:
+            champs_src.append(k)
+            champs_dst.append(k)
+        champs = list(set(champs))       # Supprimer les doublons
+        champs.sort()                    # Trier
+        communs=[]
+        for champ in champs:
+            if champ in champs_src and champ in champs_dst:
+                communs.append(champ)
+        champs=','.join(communs)
+
+        #print("champs=",champs, champs_src, champs_dst)
+
+
+        Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst)
+        CSV2Table(cnx_dst,cr_dst,table_src,table_dst)
+        SetSequence(cr_dst,cnx_dst,table_dst)
 
 
 def GetChampsCommuns(cr_src,cr_dst,table):
