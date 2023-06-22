@@ -638,6 +638,36 @@ def MigrationNameTraduction(db_src,db_dst,name):
     cnx_dst.commit()
 
 
+def MigrationIrSequence(db_src,db_dst,id_src=False,id_dst=False):
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    if id_src and id_dst:
+        SQL="SELECT id,code,implementation,prefix,padding,number_next,name FROM ir_sequence WHERE id=%s"
+        cr_src.execute(SQL,[id_src])
+        rows = cr_src.fetchall()
+        for row in rows:
+            code=row["code"]
+            SQL="UPDATE ir_sequence SET name=%s, prefix=%s,padding=%s,number_next=%s WHERE id=%s"
+            cr_dst.execute(SQL,[row["name"], row["prefix"],row["padding"],row["number_next"],id_dst])
+            if row["implementation"]=="standard":
+                SQL="SELECT id FROM ir_sequence WHERE id=%s"
+                cr_dst.execute(SQL,[id_dst])
+                rows2 = cr_dst.fetchall()
+                for row2 in rows2:
+                    seq_id = "%03d" % row["id"]
+                    ir_sequence = "ir_sequence_%s"%seq_id
+                    SQL="SELECT last_value FROM %s"%ir_sequence
+                    cr_src.execute(SQL)
+                    rows3 = cr_src.fetchall()
+                    for row3 in rows3:
+                        seq_id = "%03d" % row2["id"]
+                        ir_sequence = "ir_sequence_"+seq_id
+                        last_value = row3["last_value"]+1
+                        SQL="ALTER SEQUENCE "+ir_sequence+" RESTART WITH %s"
+                        cr_dst.execute(SQL,[last_value])
+        cnx_dst.commit()
+
+
 def Memoryview2File(data,path):
     """Converti un champ postgres memoryview contenant des images ou pieces jointes en fichier"""
     f = open(path,'wb')

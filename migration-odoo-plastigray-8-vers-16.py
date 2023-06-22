@@ -4,6 +4,19 @@ from migration_fonction import *
 from datetime import datetime
 import os
 
+# TODO : 
+# - Mettre 4 coeurs sur la VM + 8 Go + ajout index sur is_account_invoice_line_id  => Je suis passé de 3H à 5mn pour migrer les facutres (surtout account_move_line_account_tax_rel)
+# - Installer base Postres 15
+# - Recalculer les qt livrées et facturées sur les commandes achats et ventes
+# - Relancer l'anlyse des contraintes
+# - Refaire une migration complète depuis une base Odoo 8 récente
+# - Faire un script python pour tester les contraintes, car la requete acutelle s'arrete sur chaque anomalie et il faut la relancer
+
+# TODO : A revoir : 
+# pg-odoo16-0=# alter table stock_rule validate constraint stock_rule_route_id_fkey;
+# ERREUR:  une instruction insert ou update sur la table « stock_rule » viole la contrainte de clé
+# étrangère « stock_rule_route_id_fkey »
+# DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
 
 # TODO : Permet de récupérer les tables d'origine d'une base vierge
 #db_src = "pg-odoo16"
@@ -13,9 +26,73 @@ import os
 # sys.exit()
 
 
+# pg-odoo16-0=# select * from  ;
+#  partner_id | site_id 
+# ------------+---------
+# (0 ligne)
+
+# pg-odoo16-0=# select * from  ;
+
+
+
 #socs=[0,1,3,4]
 socs=[1]
 
+
+for soc in socs:
+
+
+    #** Paramètres ************************************************************
+    db_src = "pg-odoo8-%s"%soc
+    db_dst = "pg-odoo16-%s"%soc
+    #**************************************************************************
+
+    #cnx,cr=GetCR(db_src)
+    #db_vierge = db_dst+'-vierge'
+    #SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
+    #cde="""echo '"""+SQL+"""' | psql postgres"""
+    #lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    #cnx_vierge,cr_vierge=GetCR(db_vierge)
+
+
+
+
+
+
+# pg-odoo16-1=# select id,name,scheduled_date, date_deadline, date, date_done from stock_picking where id=105818;
+#    id   |   name   | scheduled_date | date_deadline |        date         | date_done 
+# --------+----------+----------------+---------------+---------------------+-----------
+#  105818 | R-185511 |                |               | 2023-05-12 14:03:08 | 
+# (1 ligne)
+
+# pg-odoo8-1=# select id,name,max_date,date from stock_picking where id=105818;
+#    id   |   name   |      max_date       |        date         
+# --------+----------+---------------------+---------------------
+#  105818 | R-185511 | 2023-06-01 10:00:00 | 2023-05-12 14:03:08
+# (1 ligne)
+
+
+
+    #** scheduled_date et date_deadline de stock_picking **********************
+    SQL="SELECT id,max_date FROM stock_picking"
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        SQL="UPDATE stock_picking SET scheduled_date=%s,date_deadline=%s WHERE id=%s"
+        cr_dst.execute(SQL,[row["max_date"],row["max_date"],row["id"]])
+    cnx_dst.commit()
+    #******************************************************************************
+
+
+
+
+
+
+
+sys.exit()
 
 for soc in socs:
 
@@ -36,22 +113,6 @@ for soc in socs:
     #cnx_vierge,cr_vierge=GetCR(db_vierge)
 
 
-    # TODO : 
-    # - Mettre 4 coeurs sur la VM + 8 Go + ajout index sur is_account_invoice_line_id  => Je suis passé de 3H à 5mn pour migrer les facutres (surtout account_move_line_account_tax_rel)
-    # - Installer base Postres 15
-    # - Recalculer les qt livrées et facturées sur les commandes achats et ventes
-    # - Relancer l'anlyse des contraintes
-    # - Refaire une migration complète depuis une base Odoo 8 récente
-    # - Faire un script python pour tester les contraintes, car la requete acutelle s'arrete sur chaque anomalie et il faut la relancer
-
-
-    # TODO : A revoir : 
-# pg-odoo16-0=# alter table stock_rule validate constraint stock_rule_route_id_fkey;
-# ERREUR:  une instruction insert ou update sur la table « stock_rule » viole la contrainte de clé
-# étrangère « stock_rule_route_id_fkey »
-# DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
-
-
 
 
     debut=datetime.now()
@@ -61,7 +122,6 @@ for soc in socs:
     #** ir_sequence ***************************************************************
     #MigrationTable(db_src,db_dst,'ir_sequence') # TODO  la relation « ir_sequence_071 » n'existe pas
     #******************************************************************************
-
 
     #** ir_sequence ***************************************************************
     SQL="SELECT id,code,implementation,prefix,padding,number_next FROM ir_sequence WHERE code is not null"
@@ -90,6 +150,17 @@ for soc in socs:
     cnx_dst.commit()
     #******************************************************************************
 
+    #** ir_sequence************************************************************
+    #TODO pour les réceptions et livraisons des 3 sites, les id des sequences sont les même
+    MigrationIrSequence(db_src,db_dst,id_src=30,id_dst=11) # Séquence d'entrée (Réception)
+    MigrationIrSequence(db_src,db_dst,id_src=31,id_dst=12) # Séquence de sortie (livraison)
+    #**************************************************************************
+
+    #** Affecter les bonnes séquences dans stock_picking_type *****************
+    cr_dst.execute("update stock_picking_type set sequence_id=11 where code='incoming'")
+    cr_dst.execute("update stock_picking_type set sequence_id=12 where code='outgoing'")
+    cnx_dst.commit()
+    #**************************************************************************
 
     debut = Log(debut, "ir_sequence")
 
@@ -126,15 +197,6 @@ for soc in socs:
     #** res_partner ****************************************************************
     MigrationTable(db_src,db_dst,'res_partner')
     #*******************************************************************************
-
-
-    # ** res_partner_bank *********************************************************
-    default={
-        'partner_id': 1,
-        'active'    : True,
-        }
-    MigrationTable(db_src,db_dst,"res_partner_bank",default=default)
-    # *****************************************************************************
 
 
     debut = Log(debut, "res_partner")
@@ -254,10 +316,6 @@ for soc in socs:
     MigrationIrProperty(db_src,db_dst,'res.partner', field_src='property_account_position', field_dst='property_account_position_id')
     debut = Log(debut, "res_users")
     #******************************************************************************
-
-
-
-
 
 
     #** product *******************************************************************
@@ -564,7 +622,10 @@ for soc in socs:
         'time_mode': 'manual',
     }
     MigrationTable(db_src,db_dst,'mrp_routing_workcenter', default=default)
-    SQL="UPDATE mrp_routing_workcenter SET time_cycle_manual=is_nb_secondes/60"
+    SQL="""
+      UPDATE mrp_routing_workcenter SET time_cycle_manual=is_nb_secondes/60;
+      UPDATE mrp_routing_workcenter set active=True;
+    """
     cr_dst.execute(SQL)
     cnx_dst.commit()
     #******************************************************************************
@@ -1301,27 +1362,6 @@ for soc in socs:
     #******************************************************************************
 
 
-    #** hr_employee ***************************************************************
-    default={
-        "company_id": 1,
-        "employee_type": "employee",
-        "active": 1,
-        "work_permit_scheduled_activity": False,
-        "parent_id": None,
-        'resource_calendar_id': 2,
-    }
-    MigrationTable(db_src,db_dst,'hr_employee', default=default)
-    SQL="""
-        select rr.name, he.id
-        from resource_resource rr join hr_employee he on rr.id=he.resource_id
-    """
-    cr_src.execute(SQL)
-    rows = cr_src.fetchall()
-    for row in rows:
-        SQL="UPDATE hr_employee SET name=%s WHERE id=%s"
-        cr_dst.execute(SQL,[row["name"],row["id"]])
-    cnx_dst.commit()
-    #******************************************************************************
 
 
     #** resource_resource *********************************************************
@@ -1666,6 +1706,154 @@ for soc in socs:
     cr_dst.execute(SQL)
     cnx_dst.commit()
     #******************************************************************************
+
+
+
+
+
+
+
+
+
+    #** hr_employee ***************************************************************
+    default={
+        "company_id": 1,
+        "employee_type": "employee",
+        "active": 1,
+        "work_permit_scheduled_activity": False,
+        "parent_id": None,
+        'resource_calendar_id': 2,
+    }
+    MigrationTable(db_src,db_dst,'hr_employee', default=default)
+    SQL="""
+        select rr.name, rr.active, he.id
+        from resource_resource rr join hr_employee he on rr.id=he.resource_id
+    """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        SQL="UPDATE hr_employee SET name=%s, active=%s WHERE id=%s"
+        cr_dst.execute(SQL,[row["name"],row["active"],row["id"]])
+    SQL="""
+        select rr.user_id, he.id
+        from resource_resource rr join hr_employee he on rr.id=he.resource_id
+        where active=True
+    """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        SQL="UPDATE hr_employee SET  user_id=%s WHERE id=%s"
+        cr_dst.execute(SQL,[row["user_id"],row["id"]])
+    cnx_dst.commit()
+    #******************************************************************************
+
+
+
+
+
+    # ** res_partner_bank et res_bank *****************************************
+    MigrationTable(db_src,db_dst,'res_bank')
+    default={
+        'partner_id': 1,
+        'active'    : True,
+        }
+    rename={
+        'bank': 'bank_id',
+    }
+    MigrationTable(db_src,db_dst,"res_partner_bank",default=default,rename=rename)
+    SQL="update res_bank rb set bic=(select is_bank_swift from res_partner_bank where bank_id=rb.id)"
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    # *************************************************************************
+
+
+
+
+    #** init weight product_product (nouveau champ) ***************************
+    SQL="update product_product set weight=(select weight from product_template pt where pt.id=product_tmpl_id)"
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    #**************************************************************************
+
+
+    #** stock_route ***********************************************************
+    MigrationTable(db_src,db_dst,'stock_location_route',table_dst='stock_route',text2jsonb=True)
+    MigrationTable(db_src,db_dst,'stock_route_product')
+    #**************************************************************************
+
+
+    #** product_template : detailed_type **************************************
+    SQL="UPDATE product_template SET detailed_type=type"
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    #**************************************************************************
+
+
+    #** is_config_champ_line **************************************************
+    SQL="""
+        SELECT 
+            line.id,
+            f.id field_id, 
+            f.name fied_name,
+            f.model
+        from is_config_champ_line line join ir_model_fields f on line.name=f.id
+    """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        print(row["id"], row["field_id"], row["fied_name"], row["model"])
+        SQL="SELECT id from ir_model_fields where model='product.template' and name=%s"
+        cr_dst.execute(SQL,[row["fied_name"]])
+        rows_dst = cr_dst.fetchall()
+        for row_dst in rows_dst:
+            SQL="UPDATE is_config_champ_line SET name=%s WHERE id=%s"
+            cr_dst.execute(SQL,[row_dst["id"],row["id"]])
+    cnx_dst.commit()
+    #**************************************************************************
+
+
+
+    MigrationTable(db_src,db_dst,'res_partner_category',text2jsonb=True)
+    tables=[
+        "is_site_res_partner_rel",
+        "partner_database_rel",
+        "res_partner_res_partner_category_rel",
+        "is_gabarit_dossierf_rel",
+        "is_gabarit_mold_rel",
+        "is_piece_montabilite_id",
+        "equipement_dossierf_rel",
+        "equipement_mold_rel",
+
+    ]
+    for table in tables:
+        MigrationTable(db_src,db_dst,table)
+
+
+
+
+    #** purchase_order_stock_picking_rel **************************************
+    cr_dst.execute("delete from purchase_order_stock_picking_rel")
+    cnx_dst.commit()
+    SQL="""
+        select distinct pol.order_id,sm.picking_id 
+        from stock_move sm join purchase_order_line pol on sm.purchase_line_id=pol.id 
+    """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        #print(row)
+
+        SQL="""
+            INSERT INTO purchase_order_stock_picking_rel (purchase_order_id,stock_picking_id)
+            VALUES (%s,%s);
+        """
+        cr_dst.execute(SQL,[row["order_id"],row["picking_id"]])
+    cnx_dst.commit()
+    #**************************************************************************
+
+
+
+
 
 
     debut = Log(debut, "** Fin migration %s ***********************************************"%(db_dst))
