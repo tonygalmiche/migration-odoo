@@ -62,36 +62,6 @@ for soc in socs:
 
 
 
-# pg-odoo16-1=# select id,name,scheduled_date, date_deadline, date, date_done from stock_picking where id=105818;
-#    id   |   name   | scheduled_date | date_deadline |        date         | date_done 
-# --------+----------+----------------+---------------+---------------------+-----------
-#  105818 | R-185511 |                |               | 2023-05-12 14:03:08 | 
-# (1 ligne)
-
-# pg-odoo8-1=# select id,name,max_date,date from stock_picking where id=105818;
-#    id   |   name   |      max_date       |        date         
-# --------+----------+---------------------+---------------------
-#  105818 | R-185511 | 2023-06-01 10:00:00 | 2023-05-12 14:03:08
-# (1 ligne)
-
-
-
-    #** scheduled_date et date_deadline de stock_picking **********************
-    SQL="SELECT id,max_date FROM stock_picking"
-    cr_src.execute(SQL)
-    rows = cr_src.fetchall()
-    for row in rows:
-        SQL="UPDATE stock_picking SET scheduled_date=%s,date_deadline=%s WHERE id=%s"
-        cr_dst.execute(SQL,[row["max_date"],row["max_date"],row["id"]])
-    cnx_dst.commit()
-    #******************************************************************************
-
-
-
-
-
-
-
 sys.exit()
 
 for soc in socs:
@@ -154,11 +124,13 @@ for soc in socs:
     #TODO pour les réceptions et livraisons des 3 sites, les id des sequences sont les même
     MigrationIrSequence(db_src,db_dst,id_src=30,id_dst=11) # Séquence d'entrée (Réception)
     MigrationIrSequence(db_src,db_dst,id_src=31,id_dst=12) # Séquence de sortie (livraison)
+    MigrationIrSequence(db_src,db_dst,id_src=43,id_dst=26) # Séquence pour les ordres de fabrication
     #**************************************************************************
 
     #** Affecter les bonnes séquences dans stock_picking_type *****************
     cr_dst.execute("update stock_picking_type set sequence_id=11 where code='incoming'")
     cr_dst.execute("update stock_picking_type set sequence_id=12 where code='outgoing'")
+    cr_dst.execute("update stock_picking_type set sequence_id=26 where code='mrp_operation'")
     cnx_dst.commit()
     #**************************************************************************
 
@@ -667,19 +639,13 @@ for soc in socs:
     #******************************************************************************
 
 
-
-
-
-
-
-
-
     # ** stock_location / stock_warehouse  ****************************************
     MigrationTable(db_src,db_dst,'stock_location')
     default={'manufacture_steps': 'mrp_one_step'}
     MigrationTable(db_src,db_dst,'stock_warehouse', default=default)
     SQL="""
         update stock_location set parent_path=name;
+        update stock_location set company_id=1;
         update product_category set parent_path='/' where parent_path is null;
         update product_category set complete_name=name;
         update stock_warehouse set active='t';
@@ -687,12 +653,6 @@ for soc in socs:
     cr_dst.execute(SQL)
     cnx_dst.commit()
     # *****************************************************************************
-
-
-
-
-
-
 
 
     #** stock_picking_type ********************************************************
@@ -719,8 +679,12 @@ for soc in socs:
         )
         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """
-    default_location_src_id  = 8
-    default_location_dest_id = 8
+
+    #TODO : Revoir sequence_id
+
+
+    default_location_src_id  = 12 # WH / 01 pour les 3 sites
+    default_location_dest_id = 12 # WH / 01 pour les 3 sites
     warehouse_id = 1
     company_id = 1
     sequence_id = 17
@@ -754,9 +718,19 @@ for soc in socs:
         "location_dest_id": 7,  #TODO A Revoir
     }
     MigrationTable(db_src,db_dst,'stock_picking', default=default)
-    debut = Log(debut, "stock_picking")
     # #******************************************************************************
 
+
+    #** scheduled_date et date_deadline de stock_picking **********************
+    SQL="SELECT id,max_date FROM stock_picking"
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        SQL="UPDATE stock_picking SET scheduled_date=%s,date_deadline=%s WHERE id=%s"
+        cr_dst.execute(SQL,[row["max_date"],row["max_date"],row["id"]])
+    cnx_dst.commit()
+    debut = Log(debut, "stock_picking")
+    #******************************************************************************
 
 
     #** stock_quant ****************************************************************
@@ -857,12 +831,6 @@ for soc in socs:
     #******************************************************************************
 
 
-
-
-
-
-
-
     #** mrp_production ************************************************************
     default = {
         "picking_type_id"   : 1,
@@ -876,6 +844,9 @@ for soc in socs:
     MigrationTable(db_src,db_dst,"mrp_production",default=default,rename=rename)
     SQL="""
         update mrp_production set state='draft' where state='in_production';
+        update mrp_production set priority=False;
+        update mrp_production set picking_type_id=(select id from stock_picking_type where code='mrp_operation' limit 1);
+        update mrp_production set production_location_id=(select id from stock_location where usage='production' limit 1);
     """
     cr_dst.execute(SQL)
     cnx_dst.commit()
@@ -902,14 +873,14 @@ for soc in socs:
     #******************************************************************************
 
 
-
-
-
-
-
-
     #** stock_move ****************************************************************
     MigrationTable(db_src,db_dst,'stock_move')
+    SQL="""
+        update stock_move set state='draft' where raw_material_production_id is not null and state in ('confirmed','assigned');
+        update stock_move set state='draft' where production_id is not null and state='confirmed';
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
     debut = Log(debut, "stock_move")
     #******************************************************************************
 
