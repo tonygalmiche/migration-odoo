@@ -6,98 +6,15 @@ import os
 
 
 #TODO : Durée de la migration complète de odoo8 sur vm-postgres à odoo16 su vm-postgres-bullseye (le 24/06/2023)
-#- odoo0 : 2mn
-#- odoo1 : 
+#- odoo0 : 1mn
+#- odoo1 : 105mn (90mn tout seul)
 #- odoo3 : 90mn
 #- odoo4 : 47mn
-
-
-
-# TODO : 
-# - Mettre 4 coeurs sur la VM + 8 Go + ajout index sur is_account_invoice_line_id  => Je suis passé de 3H à 5mn pour migrer les facutres (surtout account_move_line_account_tax_rel)
-# - Installer base Postres 15
-# - Recalculer les qt livrées et facturées sur les commandes achats et ventes
-# - Relancer l'anlyse des contraintes
-# - Refaire une migration complète depuis une base Odoo 8 récente
-# - Faire un script python pour tester les contraintes, car la requete acutelle s'arrete sur chaque anomalie et il faut la relancer
-
-# TODO : A revoir : 
-# pg-odoo16-0=# alter table stock_rule validate constraint stock_rule_route_id_fkey;
-# ERREUR:  une instruction insert ou update sur la table « stock_rule » viole la contrainte de clé
-# étrangère « stock_rule_route_id_fkey »
-# DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
-
-# TODO : Permet de récupérer les tables d'origine d'une base vierge
-#db_src = "pg-odoo16"
-#db_dst = "pg-odoo16-1"
-#MigrationTable(db_src,db_dst,'stock_route')
-#MigrationTable(db_src,db_dst,'stock_rule')
-# sys.exit()
-
-
-# pg-odoo16-0=# select * from  ;
-#  partner_id | site_id 
-# ------------+---------
-# (0 ligne)
-
-# pg-odoo16-0=# select * from  ;
-
-
-#socs=[0,1,3,4]
-#socs=[0]
-
-
-# for soc in socs:
-#     #** Paramètres ************************************************************
-#     db_src = "pg-odoo8-%s"%soc
-#     db_dst = "pg-odoo16-%s"%soc
-#     #**************************************************************************
-
-#     #cnx,cr=GetCR(db_src)
-#     #db_vierge = db_dst+'-vierge'
-#     #SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
-#     #cde="""echo '"""+SQL+"""' | psql postgres"""
-#     #lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
-
-#     cnx_src,cr_src=GetCR(db_src)
-#     cnx_dst,cr_dst=GetCR(db_dst)
-#     #cnx_vierge,cr_vierge=GetCR(db_vierge)
-
-
-#** Traitements des arguments pour indique le site à traiter ******************
-if len(sys.argv)!=2:
-    print("Indiquez en argument le site à traiter (0, 1, 3 ou 4)")
-    sys.exit()
-soc = sys.argv[1]
-if soc not in ["0","1","3","4"]:
-    print("Le site à traiter doit-être 0, 1, 3 ou 4")
-    sys.exit()
-#******************************************************************************
-
-
-#** Paramètres ****************************************************************
-db_src = "pg-odoo8-%s"%soc
-db_dst = "pg-odoo16-%s"%soc
-#******************************************************************************
-
-#cnx,cr=GetCR(db_src)
-#db_vierge = db_dst+'-vierge'
-#SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
-#cde="""echo '"""+SQL+"""' | psql postgres"""
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
-
-cnx_src,cr_src=GetCR(db_src)
-cnx_dst,cr_dst=GetCR(db_dst)
-#cnx_vierge,cr_vierge=GetCR(db_vierge)
-
-
-debut=datetime.now()
-
-debut = Log(debut, "** Début migration %s ***********************************************"%(db_dst))
+#- Total en paralelle => 2H
 
 
 #TODO : 
-#- Ajouter les addons fix headrer et postion chatter dans in_plastigray
+#- Sequences des ordres de fabrictions à revoir
 #- Voir le problème dans les OT dans odoo 0 (Imposible de créer ou de voir la liste)
 #- Impossible de créer un ordre de fabrication dans odoo4
 #- Faire une vérfication de l'intégrite des bases 
@@ -110,11 +27,15 @@ debut = Log(debut, "** Début migration %s *************************************
 #- DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
 #- ERREUR:  la relation « product_packaging » n'existe pas
 
+# ERREUR:  une instruction insert ou update sur la table « is_ctrl100_gamme_standard » viole la contrainte de clé
+# étrangère « is_ctrl100_gamme_standard_operation_standard_id_fkey »
+# DÉTAIL : La clé (operation_standard_id)=(2) n'est pas présente dans la table « is_ctrl100_operation_standard ».
+# => La table is_ctrl100_operation_standard est vide dans odoo16-3
+# => En attendant => update is_ctrl100_gamme_standard set operation_standard_id=Null;
+
 
 #TODO : A revoir
-
 # Migration  odoo3
-
 # Traceback (most recent call last):
 #   File "/media/sf_dev_odoo/migration-odoo/migration-odoo-plastigray-8-vers-16.py", line 687, in <module>
 #     MigrationIrSequence(db_src,db_dst,id_src=43,id_dst=26) # Séquence pour les ordres de fabrication
@@ -205,6 +126,105 @@ debut = Log(debut, "** Début migration %s *************************************
 
 
 
+
+
+
+
+# TODO : 
+# - Mettre 4 coeurs sur la VM + 8 Go + ajout index sur is_account_invoice_line_id  => Je suis passé de 3H à 5mn pour migrer les facutres (surtout account_move_line_account_tax_rel)
+# - Installer base Postres 15
+# - Recalculer les qt livrées et facturées sur les commandes achats et ventes
+# - Relancer l'anlyse des contraintes
+# - Refaire une migration complète depuis une base Odoo 8 récente
+# - Faire un script python pour tester les contraintes, car la requete acutelle s'arrete sur chaque anomalie et il faut la relancer
+
+# TODO : A revoir : 
+# pg-odoo16-0=# alter table stock_rule validate constraint stock_rule_route_id_fkey;
+# ERREUR:  une instruction insert ou update sur la table « stock_rule » viole la contrainte de clé
+# étrangère « stock_rule_route_id_fkey »
+# DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
+
+
+
+
+
+
+# TODO : Permet de récupérer les tables d'origine d'une base vierge
+#db_src = "pg-odoo16"
+#db_dst = "pg-odoo16-1"
+#MigrationTable(db_src,db_dst,'stock_route')
+#MigrationTable(db_src,db_dst,'stock_rule')
+# sys.exit()
+
+
+# pg-odoo16-0=# select * from  ;
+#  partner_id | site_id 
+# ------------+---------
+# (0 ligne)
+
+# pg-odoo16-0=# select * from  ;
+
+
+#socs=[0,1,3,4]
+#socs=[0]
+
+
+# for soc in socs:
+#     #** Paramètres ************************************************************
+#     db_src = "pg-odoo8-%s"%soc
+#     db_dst = "pg-odoo16-%s"%soc
+#     #**************************************************************************
+
+#     #cnx,cr=GetCR(db_src)
+#     #db_vierge = db_dst+'-vierge'
+#     #SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
+#     #cde="""echo '"""+SQL+"""' | psql postgres"""
+#     #lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+
+#     cnx_src,cr_src=GetCR(db_src)
+#     cnx_dst,cr_dst=GetCR(db_dst)
+#     #cnx_vierge,cr_vierge=GetCR(db_vierge)
+
+
+
+
+#** Traitements des arguments pour indique le site à traiter ******************
+if len(sys.argv)!=2:
+    print("Indiquez en argument le site à traiter (0, 1, 3 ou 4)")
+    sys.exit()
+soc = sys.argv[1]
+if soc not in ["0","1","3","4"]:
+    print("Le site à traiter doit-être 0, 1, 3 ou 4")
+    sys.exit()
+#******************************************************************************
+
+
+#** Paramètres ****************************************************************
+db_src = "pg-odoo8-%s"%soc
+db_dst = "pg-odoo16-%s"%soc
+#******************************************************************************
+
+#cnx,cr=GetCR(db_src)
+#db_vierge = db_dst+'-vierge'
+#SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
+#cde="""echo '"""+SQL+"""' | psql postgres"""
+#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+
+cnx_src,cr_src=GetCR(db_src)
+cnx_dst,cr_dst=GetCR(db_dst)
+#cnx_vierge,cr_vierge=GetCR(db_vierge)
+debut=datetime.now()
+
+
+#sys.exit()
+
+
+
+
+
+debut=datetime.now()
+
+debut = Log(debut, "** Début migration %s ***********************************************"%(db_dst))
 
 
 
@@ -693,7 +713,10 @@ debut = Log(debut, "mrp")
 
 
 #** purchase_order ************************************************************
-MigrationTable(db_src,db_dst,'purchase_order')
+rename={
+    'validator': 'user_id',
+}
+MigrationTable(db_src,db_dst,'purchase_order', rename=rename)
 SQL="""
     UPDATE purchase_order set state='purchase' where state='except_picking';
     UPDATE purchase_order set state='purchase' where state='approved';
@@ -1204,7 +1227,24 @@ debut = Log(debut, "sale_order")
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 #** account_move_line *********************************************************
+debut = Log(debut, "Début account_move_line")
+MigrationTable(db_src,db_dst,'is_export_cegid')
+MigrationTable(db_src,db_dst,'is_export_cegid_ligne')
+MigrationTable(db_src,db_dst,'is_account_folio')
 MigrationTable(db_src,db_dst,'account_move_reconcile', table_dst='account_full_reconcile')
 rename={
     'amount': 'amount_total'
@@ -1224,11 +1264,12 @@ default={
 }
 rename={}
 MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
-debut = Log(debut, "account_move_line")
+debut = Log(debut, "Fin account_move_line")
 #******************************************************************************
 
 
 #** account_invoice_line => account_move **************************************
+debut = Log(debut, "Début account_invoice_line => account_move")
 cnx_src,cr_src=GetCR(db_src)
 SQL="""
     SELECT 
@@ -1253,7 +1294,19 @@ SQL="""
         ai.name move_name,
         ai.origin,
         ai.supplier_invoice_number,
-        ai.payment_term
+        ai.payment_term,
+
+        ai.is_bon_a_payer,
+        ai.is_date_envoi_mail,
+        ai.is_document,
+        ai.is_export_cegid_id,
+        ai.is_folio_id,
+        ai.is_masse_nette,
+        ai.is_mode_envoi_facture,
+        ai.is_num_bl_manuel,
+        ai.is_num_cde_client,
+        ai.is_origine_id,
+        ai.is_type_facture
     from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
     order by ai.id
 """
@@ -1283,11 +1336,21 @@ for row in rows:
                 invoice_user_id=%s,
                 fiscal_position_id=%s,
                 invoice_origin=%s,
-                invoice_payment_term_id=%s
+                invoice_payment_term_id=%s,
+
+                is_bon_a_payer=%s,
+                is_date_envoi_mail=%s,
+                is_document=%s,
+                is_export_cegid_id=%s,
+                is_folio_id=%s,
+                is_masse_nette=%s,
+                is_mode_envoi_facture=%s,
+                is_num_bl_manuel=%s,
+                is_num_cde_client=%s,
+                is_origine_id=%s,
+                is_type_facture=%s
             where id=%s
         """
-        # order_id=%s,
-
         cr_dst.execute(SQL,(
             row['date_invoice'],
             row['type'],
@@ -1305,6 +1368,19 @@ for row in rows:
             row['fiscal_position'],
             row['origin'],
             row['payment_term'],
+
+            row['is_bon_a_payer'],
+            row['is_date_envoi_mail'],
+            row['is_document'],
+            row['is_export_cegid_id'],
+            row['is_folio_id'],
+            row['is_masse_nette'],
+            row['is_mode_envoi_facture'],
+            row['is_num_bl_manuel'],
+            row['is_num_cde_client'],
+            row['is_origine_id'],
+            row['is_type_facture'],
+
             move_id
         ))
         SQL="""
@@ -1314,7 +1390,18 @@ for row in rows:
                 ail.name,
                 ail.price_unit,
                 ail.price_subtotal,
-                ail.sequence
+                ail.sequence,
+
+                ail.is_amortissement_moule,
+                ail.is_amt_interne,
+                ail.is_cagnotage,
+                ail.is_document,
+                ail.is_montant_amt_interne,
+                ail.is_montant_amt_moule,
+                ail.is_montant_cagnotage,
+                ail.is_montant_matiere,
+                ail.is_move_id,
+                ail.is_section_analytique_id
             from account_invoice_line ail inner join account_invoice ai on ail.invoice_id=ai.id
             WHERE ai.id="""+str(row['id'])+"""
             order by ail.id
@@ -1335,7 +1422,18 @@ for row in rows:
                     price_total=%s,
                     balance=(debit-credit),
                     amount_currency=(debit-credit),
-                    sequence=%s
+                    sequence=%s,
+
+                    is_amortissement_moule=%s,
+                    is_amt_interne=%s,
+                    is_cagnotage=%s,
+                    is_document=%s,
+                    is_montant_amt_interne=%s,
+                    is_montant_amt_moule=%s,
+                    is_montant_cagnotage=%s,
+                    is_montant_matiere=%s,
+                    is_move_id=%s,
+                    is_section_analytique_id=%s
                 WHERE id IN (
                     SELECT id
                     FROM account_move_line
@@ -1351,6 +1449,18 @@ for row in rows:
                 row2['price_subtotal'],
                 row2['price_subtotal'],
                 row2['sequence'],
+
+                row2['is_amortissement_moule'],
+                row2['is_amt_interne'],
+                row2['is_cagnotage'],
+                row2['is_document'],
+                row2['is_montant_amt_interne'],
+                row2['is_montant_amt_moule'],
+                row2['is_montant_cagnotage'],
+                row2['is_montant_matiere'],
+                row2['is_move_id'],
+                row2['is_section_analytique_id'],
+
                 move_id,
                 ct2
             ))
@@ -1365,8 +1475,10 @@ SQL="""
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
-debut = Log(debut, "account_invoice_line => account_move")
+debut = Log(debut, "Fin account_invoice_line => account_move")
 #******************************************************************************
+
+
 
 
 # ** Migration tax_code_id ****************************************************
@@ -1396,16 +1508,6 @@ debut = Log(debut, "tax_code_id")
 #******************************************************************************
 
 
-#** Enlever les écritures de TVA des lignes de factures ***********************
-SQL="""
-    update account_move_line set display_type='payment_term' 
-    where account_id in (select id from account_account where account_type in ('asset_receivable', 'liability_payable'));
-    update account_move_line set display_type='tax' where tax_line_id is not null;
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-#******************************************************************************
-
 
 #** Migration des taxes sur les factures **************************************
 SQL="DELETE FROM account_move_line_account_tax_rel"
@@ -1428,6 +1530,37 @@ for row in rows:
 cnx_dst.commit()
 debut = Log(debut, "account_move_line_account_tax_rel")
 #******************************************************************************
+
+
+
+
+
+
+#** Enlever les écritures de TVA des lignes de factures ***********************
+SQL="""
+    update account_move_line set display_type='payment_term' 
+    where account_id in (select id from account_account where account_type in ('asset_receivable', 'liability_payable'));
+    update account_move_line set display_type='tax' where tax_line_id is not null;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1712,8 +1845,10 @@ tables=[
     "is_pointage_commentaire",
     "is_pointage",
     "is_presse_arret",
+    "is_presse_arret_of_rel",
     "is_presse_classe",
     "is_presse_cycle",
+    "is_presse_cycle_of_rel",
     "is_presse_puissance",
     "is_preventif_equipement_heure",
     "is_preventif_equipement_saisie",
@@ -1765,6 +1900,17 @@ tables=[
     #"is_mode_operatoire",      TODO : A revoir car les liens avec les menus sont à revoir
     #"is_theia_habilitation_operateur_etat",
 ]
+
+
+
+
+
+
+
+
+
+
+
 for table in tables:
     MigrationTable(db_src,db_dst,table)
     debut = Log(debut, table)
@@ -1941,13 +2087,65 @@ debut = Log(debut, "purchase_order_stock_picking_rel")
 
 #** Divers ********************************************************************
 SQL="""
-    update is_mode_operatoire_menu set menu_id=Null;
+    update is_mode_operatoire_menu set menu_id=NULL;
     update stock_location set company_id=1;
+    delete from mail_followers;
+    update stock_picking set is_facture_pk_id=NULL;
+    update is_ctrl100_gamme_standard set operation_standard_id=NULL;
+    update is_edi_cde_cli_line set file_id=NULL;
+    delete from stock_valuation_layer;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
+
+#** stock_move : Suppression des mouvements annulés des composants des OF *****
+debut = Log(debut, "Début suppression des mouvements annulés des composants des OF")
+SQL="""
+    delete from stock_move where raw_material_production_id is not null and state='cancel';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+debut = Log(debut, "Fin suppression des mouvements annulés des composants des OF")
+#******************************************************************************
+
+
+#** Qt Rcp et Qt Facturée sur les lignes des commandes fournisseur  ***********
+debut = Log(debut, "Début Qt Rcp et Qt Facturée sur les réceptions")
+SQL="""
+    SELECT 
+        pol.id,
+        pol.product_id, 
+        pol.product_uom, 
+        pol.product_uom_qty, 
+        pol.product_qty,
+        pol.qty_received,
+        pol.qty_received_manual, 
+        pol.qty_invoiced, 
+        pol.qty_to_invoice,
+        (   SELECT sum(product_uom_qty)
+            FROM stock_move
+            where product_id=pol.product_id and purchase_line_id=pol.id and state='done'
+            group by product_id
+        ) qty_received,
+        (   SELECT sum(product_uom_qty)
+            FROM stock_move
+            where product_id=pol.product_id and purchase_line_id=pol.id and state='done' and invoice_state='invoiced'
+            group by product_id
+        ) qty_invoiced
+    FROM purchase_order_line pol
+    order by pol.id
+"""
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    #print(row["product_id"], row["product_qty"], row["product_uom_qty"], row["qty_received"], row["qty"])
+    SQL="UPDATE purchase_order_line SET qty_received=%s, qty_invoiced=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['qty_received'],row['qty_invoiced'],row['id']])
+cnx_dst.commit()
+debut = Log(debut, "Fin Qt Rcp et Qt Facturée sur les réceptions")
+#********************************************************************
 
 
 
