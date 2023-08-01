@@ -5,148 +5,48 @@ from datetime import datetime
 import os
 
 
+
+#TODO : 
+# - Migrer les champs de res_company (ex : Les mot de passe)
+# - Revoir les routes pour une livraison (emplacement 01 de déstcage) => Fait manuellement dans odoo1 => A revoir pour les autres sites
+
+
+
+
+
+
+
+
+
+
+
 #TODO : Durée de la migration complète de odoo8 sur vm-postgres à odoo16 su vm-postgres-bullseye (le 24/06/2023)
-#- odoo0 : 1mn
-#- odoo1 : 105mn (90mn tout seul)
-#- odoo3 : 90mn
-#- odoo4 : 47mn
-#- Total en paralelle => 2H
+#                 23/06   | 23/07
+#- odoo0       :    1mn   |   2mn
+#- odoo1       :  105mn   | 125mn     | 90mn tout seul
+#- odoo3       :   90mn   | 100mn
+#- odoo4       :   47mn   |  47mn
+#- Total en // :  120mn
+
+
+
+#Facturation fournisseur : J'ai du configr maneullement ces 2 champs dans account_journal pour faire une facture d'achat
+
+# pg-odoo16-1=# select id,name,default_account_id,type from account_journal where id=2;
+#  id |        name        | default_account_id |   type   
+# ----+--------------------+--------------------+----------
+#   2 | Journal des achats |                618 | purchase
+# (1 ligne)
+
+# Et j'ai du supprimer les lignes de cette table pour povoir créer une facture d'achat
+# pg-odoo16-1=# delete from mail_alias ;
+
 
 
 #TODO : 
 #- Sequences des ordres de fabrictions à revoir
-#- Voir le problème dans les OT dans odoo 0 (Imposible de créer ou de voir la liste)
-#- Impossible de créer un ordre de fabrication dans odoo4
-#- Faire une vérfication de l'intégrite des bases 
-#- ERREUR:  la relation « ir_sequence_026  n'existe pas (cf ci-dessous)
-#- ERREUR:  une instruction insert ou update sur la table « is_ctrl100_gamme_standard » viole la contrainte de clé
-#- ERREUR:  une instruction insert ou update sur la table « is_edi_cde_cli_line » viole la contrainte de clé
-#- DÉTAIL : La clé (file_id)=(485) n'est pas présente dans la table « ir_attachment ».
-#- DÉTAIL : La clé (operation_standard_id)=(3) n'est pas présente dans la table « is_ctrl100_operation_standard ».
-#- ERREUR:  la relation « uom_uom » n'existe pas
-#- DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
-#- ERREUR:  la relation « product_packaging » n'existe pas
-
-# ERREUR:  une instruction insert ou update sur la table « is_ctrl100_gamme_standard » viole la contrainte de clé
-# étrangère « is_ctrl100_gamme_standard_operation_standard_id_fkey »
-# DÉTAIL : La clé (operation_standard_id)=(2) n'est pas présente dans la table « is_ctrl100_operation_standard ».
-# => La table is_ctrl100_operation_standard est vide dans odoo16-3
-# => En attendant => update is_ctrl100_gamme_standard set operation_standard_id=Null;
-
-
-#TODO : A revoir
-# Migration  odoo3
-# Traceback (most recent call last):
-#   File "/media/sf_dev_odoo/migration-odoo/migration-odoo-plastigray-8-vers-16.py", line 687, in <module>
-#     MigrationIrSequence(db_src,db_dst,id_src=43,id_dst=26) # Séquence pour les ordres de fabrication
-#   File "/media/sf_dev_odoo/migration-odoo/migration_fonction.py", line 667, in MigrationIrSequence
-#     cr_dst.execute(SQL,[last_value])
-#   File "/usr/lib/python3/dist-packages/psycopg2/extras.py", line 236, in execute
-#     return super().execute(query, vars)
-# psycopg2.errors.UndefinedTable: ERREUR:  la relation « ir_sequence_026 » n'existe pas
-
-
-# 14:39:45 : DEBUT import bdd odoo16-4 *************************************
-# DROP DATABASE
-# CREATE DATABASE
-# ERREUR:  une instruction insert ou update sur la table « is_ctrl100_gamme_standard » viole la contrainte de clé
-# étrangère « is_ctrl100_gamme_standard_operation_standard_id_fkey »
-# DÉTAIL : La clé (operation_standard_id)=(3) n'est pas présente dans la table « is_ctrl100_operation_standard ».
-# ERREUR:  une instruction insert ou update sur la table « is_edi_cde_cli_line » viole la contrainte de clé
-# étrangère « is_edi_cde_cli_line_file_id_fkey »
-# DÉTAIL : La clé (file_id)=(485) n'est pas présente dans la table « ir_attachment ».
-# ERREUR:  une instruction insert ou update sur la table « mail_followers » viole la contrainte de clé
-# étrangère « mail_followers_partner_id_fkey »
-# DÉTAIL : La clé (partner_id)=(7) n'est pas présente dans la table « res_partner ».
-# ERREUR:  une instruction insert ou update sur la table « stock_rule » viole la contrainte de clé
-# étrangère « stock_rule_route_id_fkey »
-# DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
-# ERREUR:  la relation « product_packaging » n'existe pas
-# LIGNE 1 : (select qty from product_packaging where product_id=producti...
-#                            ^
-# REQUÊTE : (select qty from product_packaging where product_id=productid order by id limit 1)
-# CONTEXTE : fonction PL/pgSQL public.is_qt_par_uc(integer), ligne 3 à RETURN
-# ERREUR:  la relation « uom_uom » n'existe pas
-# LIGNE 3 :                         from uom_uom
-#                                        ^
-# REQUÊTE : factor1 := (
-#                         select factor 
-#                         from uom_uom
-#                         where id=uom1
-#                     )
-# CONTEXTE : fonction PL/pgSQL public.is_unit_coef(integer,integer), ligne 7 à affectation
-
-
-
-#sys.exit()
-
-
-# ERREUR:  la relation « product_packaging » n'existe pas
-# LIGNE 1 : (select qty from product_packaging where product_tmpl_id=pro...
-#                            ^
-# REQUÊTE : (select qty from product_packaging where product_tmpl_id=product_template_id order by id limit 1)
-# CONTEXTE : fonction PL/pgSQL public.is_qt_par_uc(integer), ligne 3 à RETURN
-# ERREUR:  la relation « product_uom » n'existe pas
-# LIGNE 3 :         from product_uom
-#                        ^
-# REQUÊTE : factor1 := (
-#         select factor 
-#         from product_uom
-#         where id=uom1
-#     )
-# CONTEXTE : fonction PL/pgSQL public.is_unit_coef(integer,integer), ligne 7 à affectation
-# ERREUR:  la relation « product_packaging » n'existe pas
-# LIGNE 1 : (select qty from product_packaging where product_tmpl_id=pro...
-#                            ^
-# REQUÊTE : (select qty from product_packaging where product_tmpl_id=product_template_id order by id limit 1)
-# CONTEXTE : fonction PL/pgSQL public.is_qt_par_uc(integer), ligne 3 à RETURN
-# ERREUR:  la relation « product_uom » n'existe pas
-# LIGNE 3 :         from product_uom
-#                        ^
-# REQUÊTE : factor1 := (
-#         select factor 
-#         from product_uom
-#         where id=uom1
-#     )
-# CONTEXTE : fonction PL/pgSQL public.is_unit_coef(integer,integer), ligne 7 à affectation
-# ERREUR:  la relation « product_packaging » n'existe pas
-# LIGNE 1 : (select qty from product_packaging where product_tmpl_id=pro...
-#                            ^
-# REQUÊTE : (select qty from product_packaging where product_tmpl_id=product_template_id order by id limit 1)
-# CONTEXTE : fonction PL/pgSQL public.is_qt_par_uc(integer), ligne 3 à RETURN
-# ERREUR:  la relation « product_uom » n'existe pas
-# LIGNE 3 :         from product_uom
-#                        ^
-# REQUÊTE : factor1 := (
-#         select factor 
-#         from product_uom
-#         where id=uom1
-#     )
-# CONTEXTE : fonction PL/pgSQL public.is_unit_coef(integer,integer), ligne 7 à affectation
-
-
-
-
-
-
-
-# TODO : 
-# - Mettre 4 coeurs sur la VM + 8 Go + ajout index sur is_account_invoice_line_id  => Je suis passé de 3H à 5mn pour migrer les facutres (surtout account_move_line_account_tax_rel)
-# - Installer base Postres 15
-# - Recalculer les qt livrées et facturées sur les commandes achats et ventes
-# - Relancer l'anlyse des contraintes
-# - Refaire une migration complète depuis une base Odoo 8 récente
-# - Faire un script python pour tester les contraintes, car la requete acutelle s'arrete sur chaque anomalie et il faut la relancer
-
-# TODO : A revoir : 
-# pg-odoo16-0=# alter table stock_rule validate constraint stock_rule_route_id_fkey;
-# ERREUR:  une instruction insert ou update sur la table « stock_rule » viole la contrainte de clé
-# étrangère « stock_rule_route_id_fkey »
-# DÉTAIL : La clé (route_id)=(7) n'est pas présente dans la table « stock_route ».
-
-
-
-
+#- Faire une vérfication de l'intégrite des bases  : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
+#- Recalculer les qt livrées et facturées sur les commandes de ventes
 
 
 # TODO : Permet de récupérer les tables d'origine d'une base vierge
@@ -154,38 +54,14 @@ import os
 #db_dst = "pg-odoo16-1"
 #MigrationTable(db_src,db_dst,'stock_route')
 #MigrationTable(db_src,db_dst,'stock_rule')
-# sys.exit()
-
-
-# pg-odoo16-0=# select * from  ;
-#  partner_id | site_id 
-# ------------+---------
-# (0 ligne)
-
-# pg-odoo16-0=# select * from  ;
 
 
 #socs=[0,1,3,4]
-#socs=[0]
-
-
 # for soc in socs:
 #     #** Paramètres ************************************************************
 #     db_src = "pg-odoo8-%s"%soc
 #     db_dst = "pg-odoo16-%s"%soc
 #     #**************************************************************************
-
-#     #cnx,cr=GetCR(db_src)
-#     #db_vierge = db_dst+'-vierge'
-#     #SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
-#     #cde="""echo '"""+SQL+"""' | psql postgres"""
-#     #lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
-
-#     cnx_src,cr_src=GetCR(db_src)
-#     cnx_dst,cr_dst=GetCR(db_dst)
-#     #cnx_vierge,cr_vierge=GetCR(db_vierge)
-
-
 
 
 #** Traitements des arguments pour indique le site à traiter ******************
@@ -204,11 +80,13 @@ db_src = "pg-odoo8-%s"%soc
 db_dst = "pg-odoo16-%s"%soc
 #******************************************************************************
 
+
 #cnx,cr=GetCR(db_src)
 #db_vierge = db_dst+'-vierge'
 #SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
 #cde="""echo '"""+SQL+"""' | psql postgres"""
 #lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
@@ -216,8 +94,106 @@ cnx_dst,cr_dst=GetCR(db_dst)
 debut=datetime.now()
 
 
-#sys.exit()
 
+
+
+#TODO : Lien entre lignes des commandes clients et lignes des factures à revoir
+
+# #** sale_order_line_invoice_rel ***********************************************
+# #ids=InvoiceIds2MoveIds(cr_src)
+# cr_dst.execute("delete from sale_order_line_invoice_rel")
+# cnx_dst.commit()
+# SQL="SELECT order_line_id, invoice_id FROM sale_order_line_invoice_rel"
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     order_line_id=row["order_line_id"]
+#     invoice_id=ids[row["invoice_id"]]
+
+#     SQL="SELECT order_line_id, invoice_id FROM sale_order_line_invoice_rel"
+#     cr_src.execute(SQL)
+#     rows = cr_src.fetchall()
+
+
+
+
+#     print(order_line_id, row["invoice_id"],'=>',invoice_id)
+#     SQL="""
+#         INSERT INTO sale_order_line_invoice_rel (order_line_id, invoice_id)
+#         VALUES(%s,%s)
+#     """
+#     cr_dst.execute(SQL,[order_line_id, invoice_id])
+# cnx_dst.commit()
+# debut = Log(debut, "sale_order_line_invoice_rel")
+# #******************************************************************************
+
+# sys.exit()
+
+# #pg-odoo16-1=# select id,is_account_invoice_line_id from account_move_line where is_account_invoice_line_id is not null
+
+
+
+    # SQL="""
+    #     INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, invoice_tax_id, company_id, sequence, use_in_tax_closing)
+    #     VALUES (%s,%s,%s,%s,%s,%s);
+    # """
+
+
+
+
+
+
+ #   "",
+
+
+
+
+# ** image dans res_partner dans ir_attachment ********************************
+print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
+print("/opt/odoo-14/odoo-bin -c /etc/odoo/coheliance14.conf")
+name = input("Appuyer sur Entrée pour continuer") 
+models,uid,password = XmlRpcConnection(db_dst)
+
+
+
+# ** Champ "photo" dans "is.ctrl100.defautheque" *******************************
+SQL="SELECT id,name,photo from is_ctrl100_defautheque where photo is not null order by name"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=1
+for row in rows:
+    name="photo"
+    ImageField2IrAttachment(models,db_dst,uid,password,"is.ctrl100.defautheque",row["id"],row[name], name=name)
+    print(ct,"/",nb,row["name"])
+    ct+=1
+#*******************************************************************************
+
+# ** Champ "photo" dans "is.ctrl100.operation.specifique" **********************
+SQL="SELECT id,photo from is_ctrl100_operation_specifique where photo is not null order by id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=1
+for row in rows:
+    name="photo"
+    ImageField2IrAttachment(models,db_dst,uid,password,"is.ctrl100.operation.specifique",row["id"],row[name], name=name)
+    print(ct,"/",nb,row["id"])
+    ct+=1
+#*******************************************************************************
+
+
+
+
+
+
+
+
+
+
+
+
+sys.exit()
 
 
 
@@ -908,16 +884,6 @@ MigrationTable(db_src,db_dst,'stock_location', default=default, text2jsonb=True)
 parent_store_compute(cr_dst,cnx_dst,'stock_location','location_id')
 #******************************************************************************
 
-
-#** stock_route ******************************************************
-#TODO : Ne pas migrer cette table => Laisser la table par défaut
-#MigrationTable(db_src,db_dst,'stock_location_route',table_dst='stock_route',text2jsonb=True)
-#MigrationTable(db_src,db_dst,'stock_route_product')
-#debut = Log(debut, "stock_route")
-#MigrationTable(db_src,db_dst,'stock_rule')           #TODO : Ne pas migrer cette table => Laisser la table par défaut
-#MigrationTable(db_src,db_dst,'stock_location_route') #TODO : Ne pas migrer cette table => Laisser la table par défaut
-#******************************************************************************
-
 #** Recherche emplacement de stock virtuel WH *********************************
 location_stock_id = False
 SQL="select id from stock_location where active='t' and usage='view' and name='WH'"
@@ -926,6 +892,7 @@ rows = cr_dst.fetchall()
 for row in rows:
     location_stock_id = row["id"]
 #******************************************************************************
+
 
 #** Recherche emplacement de stock virtuel Customers **************************
 location_customer_id = False
@@ -936,7 +903,17 @@ for row in rows:
     location_customer_id = row["id"]
 #******************************************************************************
 
+
+#** stock_route : stock_rule **************************************************
+#MigrationTable(db_src,db_dst,'stock_rule') #TODO : Ne pas migrer cette table => Laisser la table par défaut
+MigrationTable(db_src,db_dst,'stock_location_route',table_dst='stock_route',text2jsonb=True)
+MigrationTable(db_src,db_dst,'stock_route_product')
+#******************************************************************************
+
+
 #** Initialisation location_src_id et location_dest_id dans stock_rule ********
+SQL="delete from stock_rule where route_id not in (select id from stock_route)"
+cr_dst.execute(SQL)
 SQL="update stock_rule set location_src_id=Null, location_dest_id=1, picking_type_id=1"
 cr_dst.execute(SQL)
 SQL="""
@@ -972,6 +949,7 @@ for row in rows:
         """%(location_stock_id,row["id"])
     cr_dst.execute(SQL)
 cnx_dst.commit()
+debut = Log(debut, "stock_route / stock_rule")
 #******************************************************************************
 
 
@@ -1478,8 +1456,18 @@ cnx_dst.commit()
 debut = Log(debut, "Fin account_invoice_line => account_move")
 #******************************************************************************
 
-
-
+#** Migration invoice_id dans is_export_cegid_ligne **************************
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="SELECT id, invoice_id FROM is_export_cegid_ligne"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    invoice_id = ids[row['invoice_id']]
+    SQL="UPDATE is_export_cegid_ligne SET invoice_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[invoice_id,row['id']])
+cnx_dst.commit()
+debut = Log(debut, "invoice_id dans is_export_cegid_ligne")
+#******************************************************************************
 
 # ** Migration tax_code_id ****************************************************
 cr_dst.execute("update account_move_line set amount_currency=(debit-credit)")
@@ -1900,17 +1888,45 @@ tables=[
     #"is_mode_operatoire",      TODO : A revoir car les liens avec les menus sont à revoir
     #"is_theia_habilitation_operateur_etat",
 ]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+    debut = Log(debut, table)
 
 
-
-
-
-
-
-
-
-
-
+tables=[
+    'hr_employee_is_demande_absence_rel',
+    'hr_employee_is_demande_conges_rel',
+    'is_article',
+    'is_ctrl100_defaut_line_operateur',
+    'is_ctrl100_defaut_operateur',
+    'is_ctrl100_gamme_mur_qualite_formation_operateur_rel',
+    'is_ctrl100_pareto_dossierf_rel',
+    'is_ctrl100_pareto_typologie_rel',
+    'is_ctrl100_risque_lie',
+    'is_database_preventif_equipement_user_ids_rel',
+    'is_deb_line',
+    'is_facturation_fournisseur_line',
+    'is_facturation_fournisseur_line_taxe_ids',
+    'is_facture_pk',
+    'is_facture_pk_line',
+    'is_facture_pk_moule',
+    'is_galia_base',
+    'is_gestion_lot',
+    'is_instruction_particuliere_dossierf_rel',
+    'is_instruction_particuliere_groupe_rel',
+    'is_instruction_particuliere_mold_rel',
+    'is_instruction_particuliere_product_rel',
+    'is_mold_dossierf_rel',
+    'is_mold_presse_rel',
+    'is_preventif_equipement_gamme_rel',
+    'is_res_company_users_rel',
+    'is_res_users',
+    'is_sale_ar_contact_id_rel',
+    'is_taux_rotation_stock_new',
+    'is_theia_lecture_ip_of_rel',
+    'is_ctrl100_operation_standard',
+    'is_invest_cde',
+]
 for table in tables:
     MigrationTable(db_src,db_dst,table)
     debut = Log(debut, table)
@@ -2007,12 +2023,6 @@ cnx_dst.commit()
 #**************************************************************************
 
 
-#** stock_route ***********************************************************
-MigrationTable(db_src,db_dst,'stock_location_route',table_dst='stock_route',text2jsonb=True)
-MigrationTable(db_src,db_dst,'stock_route_product')
-debut = Log(debut, "stock_route")
-#**************************************************************************
-
 
 #** product_template : detailed_type **************************************
 SQL="UPDATE product_template SET detailed_type=type"
@@ -2094,6 +2104,8 @@ SQL="""
     update is_ctrl100_gamme_standard set operation_standard_id=NULL;
     update is_edi_cde_cli_line set file_id=NULL;
     delete from stock_valuation_layer;
+    delete from account_move_purchase_order_rel;
+    update sale_order_line set currency_id=1 where currency_id is null;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()

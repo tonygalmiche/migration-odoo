@@ -7,7 +7,8 @@ import base64
 import magic
 import os
 import json
-from xmlrpc import client as xmlrpclib
+#from xmlrpc import client as xmlrpclib
+import xmlrpc.client
 from datetime import datetime
 
 
@@ -285,7 +286,10 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False):
     path = "/tmp/"+table_src+".csv"
     f = open(path, "r")
     champs = f.readline()
-    champs=champs.replace(',order,','",order",') # order est un nom de champ réservé dans une table postgresql
+    # order est un nom de champ réservé dans une table postgresql
+    champs=champs.replace(',order,','",order",') 
+    if champs[0:6]=="order,":
+        champs='"order",'+champs[6:]
     SQL="""
         ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
         DELETE FROM """+table_dst+""";
@@ -695,13 +699,24 @@ def XmlRpcConnection(db_dst):
     url = "http://127.0.0.1:8069"
     username = 'admin'
     password = GetAdminPassword()
-    common = xmlrpclib.ServerProxy('{}/xmlrpc/2/common'.format(url))
-    models = xmlrpclib.ServerProxy('{}/xmlrpc/2/object'.format(url))
-    uid = common.login(db_dst, username, password)
+
+
+    common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url))
+    print(common.version())
+    models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url))
+
+    #common = xmlrpclib.ServerProxy('{}/xmlrpc/2/common'.format(url))
+    #models = xmlrpclib.ServerProxy('{}/xmlrpc/2/object'.format(url))
+
+    #uid = common.login(db_dst, username, password)
+    #uid = common.authenticate(db_dst, username, password, {})
+    uid=2
+
+
     return models,uid,password
 
 
-def ImageField2IrAttachment(models,db_dst,uid,password,res_model,res_id,ImageField):
+def ImageField2IrAttachment(models,db_dst,uid,password,res_model,res_id,ImageField, name=False):
     """Copie un champ image de type binary dans ir_attachment"""
     image=base64.b64decode(ImageField)
     path='/tmp/ImageField'
@@ -717,6 +732,10 @@ def ImageField2IrAttachment(models,db_dst,uid,password,res_model,res_id,ImageFie
     datas       = ImageBase64.decode('ascii')
     os.unlink(new_path)
     sizes=['image_1024', 'image_256', 'image_512', 'image_128', 'image_1920']
+
+    if name:
+        sizes=[name]
+
     for size in sizes:
         vals={
             'res_model': res_model,
@@ -741,6 +760,16 @@ def InvoiceId2MoveId(cr_src,invoice_id):
         move_id = row['move_id']
     return move_id
 
+
+def InvoiceIds2MoveIds(cr_src):
+    """Correspondances entre account_invoice et account_move"""
+    SQL="SELECT id,move_id from account_invoice"
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    ids={}
+    for row in rows:
+        ids[row['id']] = row['move_id']
+    return ids
 
 
 
