@@ -219,11 +219,12 @@ def NbChampsTable(cursor,table):
 
 #            type_src = GetChampsTable(cr_src,table_src,champ)[0][1]
 
-def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False):
+def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False, db_src=False):
     SQL="SELECT "+champs+" FROM "+table+" t"
     if where!="":
         SQL=SQL+" WHERE "+where
-    path = "/tmp/"+table+".csv"
+    #path = "/tmp/"+table+".csv"
+    path = "/tmp/%s-%s.csv"%(db_src or 'x',table)
     if rename or default or text2jsonb:
         cr_src.execute(SQL)
         rows = cr_src.fetchall()
@@ -279,11 +280,11 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
             cr_src.copy_expert(SQL_for_file_output, f_output)
 
 
-def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False):
+def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False, db_src=False):
     #Source : https://www.postgresqltutorial.com/import-csv-file-into-posgresql-table/
     if not table_dst:
         table_dst=table_src
-    path = "/tmp/"+table_src+".csv"
+    path = "/tmp/%s-%s.csv"%(db_src or 'x',table_src)
     f = open(path, "r")
     champs = f.readline()
     # order est un nom de champ réservé dans une table postgresql
@@ -335,9 +336,6 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
         if not table_dst:
             table_dst=table_src
         champs_src = GetChamps(cr_src,table_src)
-
-
-
         champs_dst = GetChamps(cr_dst,table_dst)
         champs = champs_src + champs_dst # Concatener les 2 listes
         for k in rename:
@@ -353,10 +351,34 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
 
         #print("champs=",champs, champs_src, champs_dst)
 
-
-        Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst)
-        CSV2Table(cnx_dst,cr_dst,table_src,table_dst)
+        Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst,db_src=db_src)
+        CSV2Table(cnx_dst,cr_dst,table_src,table_dst,db_src=db_src)
         SetSequence(cr_dst,cnx_dst,table_dst)
+
+
+def CopieTable(db_src,db_dst,table,where):
+    "Permet de copier certaines lignes d'une table dans une autre base avec une clause where"
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    champs_src = GetChamps(cr_src,table)
+    champs_src.remove('id') #Suppression de l'id pour pouvoir faire des insert into sans doublons
+    champs=",".join(champs_src)
+    SQL="SELECT * FROM %s WHERE %s"%(table,where)
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        x=[]
+        values=[]
+        for line in  champs_src:
+            x.append("%s")
+            values.append(row[line])
+        x=",".join(x)
+        SQL="""
+            INSERT INTO %s (%s)
+            VALUES (%s)
+        """%(table,champs,x)
+        cr_dst.execute(SQL,values)
+    cnx_dst.commit()
 
 
 def GetChampsCommuns(cr_src,cr_dst,table):
@@ -700,9 +722,8 @@ def XmlRpcConnection(db_dst):
     username = 'admin'
     password = GetAdminPassword()
 
-
     common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url))
-    print(common.version())
+    #print(common.version())
     models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url))
 
     #common = xmlrpclib.ServerProxy('{}/xmlrpc/2/common'.format(url))
@@ -711,8 +732,6 @@ def XmlRpcConnection(db_dst):
     #uid = common.login(db_dst, username, password)
     #uid = common.authenticate(db_dst, username, password, {})
     uid=2
-
-
     return models,uid,password
 
 
@@ -748,6 +767,24 @@ def ImageField2IrAttachment(models,db_dst,uid,password,res_model,res_id,ImageFie
             'mimetype' : mime,
         }
         id = models.execute(db_dst, uid, password, 'ir.attachment', 'create', [vals])
+
+
+
+def ImageModel2IrAttachment(cr_src,models,db_dst,uid,password,res_model,res_field, name=False):
+    """Copie tous les champs image d'un model dans ir_attachment"""
+    table=res_model.replace(".","_")
+    SQL="SELECT id,%s from %s where %s is not null"%(res_field,table,res_field)
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    nb=len(rows)
+    ct=1
+    for row in rows:
+        ImageField2IrAttachment(models,db_dst,uid,password,res_model,row["id"],row[res_field], name=name)
+        #print(ct,"/",nb,row["id"])
+        ct+=1
+    #*******************************************************************************
+
+
 
 
 def InvoiceId2MoveId(cr_src,invoice_id):

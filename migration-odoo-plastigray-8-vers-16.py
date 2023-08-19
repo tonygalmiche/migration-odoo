@@ -1,67 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from migration_fonction import *
-from datetime import datetime
 import os
-
-
-
-#TODO : 
-# - Migrer les champs de res_company (ex : Les mot de passe)
-# - Revoir les routes pour une livraison (emplacement 01 de déstcage) => Fait manuellement dans odoo1 => A revoir pour les autres sites
-
-
-
-
-
-
-
-
-
-
-
-#TODO : Durée de la migration complète de odoo8 sur vm-postgres à odoo16 su vm-postgres-bullseye (le 24/06/2023)
-#                 23/06   | 23/07
-#- odoo0       :    1mn   |   2mn
-#- odoo1       :  105mn   | 125mn     | 90mn tout seul
-#- odoo3       :   90mn   | 100mn
-#- odoo4       :   47mn   |  47mn
-#- Total en // :  120mn
-
-
-
-#Facturation fournisseur : J'ai du configr maneullement ces 2 champs dans account_journal pour faire une facture d'achat
-
-# pg-odoo16-1=# select id,name,default_account_id,type from account_journal where id=2;
-#  id |        name        | default_account_id |   type   
-# ----+--------------------+--------------------+----------
-#   2 | Journal des achats |                618 | purchase
-# (1 ligne)
-
-# Et j'ai du supprimer les lignes de cette table pour povoir créer une facture d'achat
-# pg-odoo16-1=# delete from mail_alias ;
-
-
-
-#TODO : 
-#- Sequences des ordres de fabrictions à revoir
-#- Faire une vérfication de l'intégrite des bases  : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
-#- Recalculer les qt livrées et facturées sur les commandes de ventes
-
-
-# TODO : Permet de récupérer les tables d'origine d'une base vierge
-#db_src = "pg-odoo16"
-#db_dst = "pg-odoo16-1"
-#MigrationTable(db_src,db_dst,'stock_route')
-#MigrationTable(db_src,db_dst,'stock_rule')
-
-
-#socs=[0,1,3,4]
-# for soc in socs:
-#     #** Paramètres ************************************************************
-#     db_src = "pg-odoo8-%s"%soc
-#     db_dst = "pg-odoo16-%s"%soc
-#     #**************************************************************************
+from datetime import datetime
+from migration_fonction import *
 
 
 #** Traitements des arguments pour indique le site à traiter ******************
@@ -75,26 +16,37 @@ if soc not in ["0","1","3","4"]:
 #******************************************************************************
 
 
-#** Paramètres ****************************************************************
-db_src = "pg-odoo8-%s"%soc
-db_dst = "pg-odoo16-%s"%soc
-#******************************************************************************
+#TODO : Durée de la migration complète de odoo8 sur vm-postgres à odoo16 su vm-postgres-bullseye (le 24/06/2023)
+#                 23/06   | 23/07
+#- odoo0       :    1mn   |   2mn
+#- odoo1       :  105mn   | 125mn     | 90mn tout seul
+#- odoo3       :   90mn   | 100mn
+#- odoo4       :   47mn   |  47mn
+#- Total en // :  120mn
 
 
-#cnx,cr=GetCR(db_src)
-#db_vierge = db_dst+'-vierge'
-#SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
-#cde="""echo '"""+SQL+"""' | psql postgres"""
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+#TODO : 
+# - Revoir les routes pour une livraison (emplacement 01 de déstcage) => Fait manuellement dans odoo1 => A revoir pour les autres sites
+
+#Facturation fournisseur : J'ai du configr maneullement ces 2 champs dans account_journal pour faire une facture d'achat
+# pg-odoo16-1=# select id,name,default_account_id,type from account_journal where id=2;
+#  id |        name        | default_account_id |   type   
+# ----+--------------------+--------------------+----------
+#   2 | Journal des achats |                618 | purchase
 
 
-cnx_src,cr_src=GetCR(db_src)
-cnx_dst,cr_dst=GetCR(db_dst)
-#cnx_vierge,cr_vierge=GetCR(db_vierge)
-debut=datetime.now()
+#TODO : 
+#- Sequences des ordres de fabrictions à revoir
+#- Faire une vérfication de l'intégrite des bases : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
+#- Recalculer les qt livrées et facturées sur les commandes de ventes
 
 
-
+# TODO : Permet de récupérer les tables d'origine d'une base vierge
+# db_src = "pg-odoo16"
+# db_dst = "pg-odoo16-1"
+# #MigrationTable(db_src,db_dst,'stock_route')
+# #MigrationTable(db_src,db_dst,'stock_rule')
+# MigrationTable(db_src,db_dst,'ir_attachment')
 
 
 #TODO : Lien entre lignes des commandes clients et lignes des factures à revoir
@@ -114,9 +66,6 @@ debut=datetime.now()
 #     cr_src.execute(SQL)
 #     rows = cr_src.fetchall()
 
-
-
-
 #     print(order_line_id, row["invoice_id"],'=>',invoice_id)
 #     SQL="""
 #         INSERT INTO sale_order_line_invoice_rel (order_line_id, invoice_id)
@@ -130,78 +79,46 @@ debut=datetime.now()
 # sys.exit()
 
 # #pg-odoo16-1=# select id,is_account_invoice_line_id from account_move_line where is_account_invoice_line_id is not null
-
-
-
     # SQL="""
     #     INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, invoice_tax_id, company_id, sequence, use_in_tax_closing)
     #     VALUES (%s,%s,%s,%s,%s,%s);
     # """
 
 
+#TODO : Revoir le lien entre les lignes des DEB et les factures
+#odoo16-4=# update is_deb_line set invoice_id=NULL;
+
+
+#TODO une fois migrée à Plastigray les PDF ne fonctionnaitent pas => web.base.url = http://127.0.0.1:8969
+
+
+#** Paramètres ****************************************************************
+db_src    = "pg-odoo8-%s"%soc
+db_dst    = "pg-odoo16-%s"%soc
+db_vierge = "pg-odoo16"
+#******************************************************************************
+
+
+#cnx,cr=GetCR(db_src)
+#SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
+#cde="""echo '"""+SQL+"""' | psql postgres"""
+#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
+
+cnx_src   , cr_src    = GetCR(db_src)
+cnx_dst   , cr_dst    = GetCR(db_dst)
+cnx_vierge, cr_vierge = GetCR(db_vierge)
+debut=datetime.now()
 
 
 
-
- #   "",
-
-
-
-
-# ** image dans res_partner dans ir_attachment ********************************
-print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
-print("/opt/odoo-14/odoo-bin -c /etc/odoo/coheliance14.conf")
-name = input("Appuyer sur Entrée pour continuer") 
-models,uid,password = XmlRpcConnection(db_dst)
-
-
-
-# ** Champ "photo" dans "is.ctrl100.defautheque" *******************************
-SQL="SELECT id,name,photo from is_ctrl100_defautheque where photo is not null order by name"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-nb=len(rows)
-ct=1
-for row in rows:
-    name="photo"
-    ImageField2IrAttachment(models,db_dst,uid,password,"is.ctrl100.defautheque",row["id"],row[name], name=name)
-    print(ct,"/",nb,row["name"])
-    ct+=1
-#*******************************************************************************
-
-# ** Champ "photo" dans "is.ctrl100.operation.specifique" **********************
-SQL="SELECT id,photo from is_ctrl100_operation_specifique where photo is not null order by id"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-nb=len(rows)
-ct=1
-for row in rows:
-    name="photo"
-    ImageField2IrAttachment(models,db_dst,uid,password,"is.ctrl100.operation.specifique",row["id"],row[name], name=name)
-    print(ct,"/",nb,row["id"])
-    ct+=1
-#*******************************************************************************
-
-
-
-
-
-
-
-
-
-
-
-
-sys.exit()
-
+#MigrationTable(db_src,db_dst,"is_mold_operation_systematique") #TODO : Test modif
+#sys.exit()
 
 
 
 debut=datetime.now()
 
 debut = Log(debut, "** Début migration %s ***********************************************"%(db_dst))
-
 
 
 #** Correction des anomalies dans odoo8 avant migration ***********************
@@ -211,12 +128,6 @@ SQL="""
 cr_src.execute(SQL)
 cnx_src.commit()
 #******************************************************************************
-
-
-
-
-
-
 
 
 #** barcode_rule => Nouvelle table pas utile à priori *************************
@@ -247,19 +158,8 @@ MigrationTable(db_src,db_dst,'res_partner_title',text2jsonb=True)
 
 #** res_partner ****************************************************************
 MigrationTable(db_src,db_dst,'res_partner')
-#*******************************************************************************
-
-
 debut = Log(debut, "res_partner")
-
-
-
-
-
-
-
-
-
+#*******************************************************************************
 
 
 #** res_users *****************************************************************
@@ -444,16 +344,8 @@ default={
     'active'       : True,
 }
 MigrationTable(db_src,db_dst,'product_pricelist_item',default=default)
-#******************************************************************************
-
 debut = Log(debut, "product")
-
-
-
-
-
-
-
+#******************************************************************************
 
 
 #** res_currency ***************************************************************
@@ -542,6 +434,7 @@ cnx_dst.commit()
 
 #** account_tax **************************************************************
 SQL="""
+    delete from account_move_line;
     delete from account_tax_repartition_line;
     delete from account_account_tag_account_tax_repartition_line_rel;
     update res_company set account_purchase_tax_id=1;
@@ -607,17 +500,8 @@ for row in rows:
     """
     cr_dst.execute(SQL,[100,'tax',id,1,1,True,row["account_paid_id"]])
 cnx_dst.commit()
-#******************************************************************************
-
 debut = Log(debut, "account")
-
-
-
-
-
-
-
-
+#******************************************************************************
 
 
 #** mrp_workcenter ************************************************************
@@ -674,18 +558,8 @@ SQL="""
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
-#******************************************************************************
-
 debut = Log(debut, "mrp")
-
-
-
-
-
-
-
-
-
+#******************************************************************************
 
 
 #** purchase_order ************************************************************
@@ -1140,19 +1014,6 @@ debut = Log(debut, "fin stock_move_line")
 #******************************************************************************
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 #** sale_order ****************************************************************
 MigrationTable(db_src,db_dst,'resource_calendar_leaves')
 rename={
@@ -1192,30 +1053,6 @@ MigrationTable(db_src,db_dst,'procurement_group', rename=rename, default=default
 #******************************************************************************
 
 debut = Log(debut, "sale_order")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 #** account_move_line *********************************************************
@@ -1520,10 +1357,6 @@ debut = Log(debut, "account_move_line_account_tax_rel")
 #******************************************************************************
 
 
-
-
-
-
 #** Enlever les écritures de TVA des lignes de factures ***********************
 SQL="""
     update account_move_line set display_type='payment_term' 
@@ -1533,28 +1366,6 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 #** hr_department ***************************************************************
@@ -1574,8 +1385,6 @@ default={
 }
 MigrationTable(db_src,db_dst,'hr_job', default=default, text2jsonb=True)
 #******************************************************************************
-
-
 
 
 #** resource_resource *********************************************************
@@ -1602,20 +1411,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 debut = Log(debut, "hr_employee")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 tables=[
@@ -1677,16 +1472,12 @@ tables=[
     "is_ctrl100_gamme_defautheque_line",
     "is_ctrl100_gamme_mur_qualite_formation",
     "is_ctrl100_gamme_mur_qualite",
-    "is_ctrl100_gamme_standard",
+    #"is_ctrl100_gamme_standard", #Le champ active a été renommé en is_active
     "is_ctrl100_operation_specifique",
-
-
-
     # #"is_ctrl100_operation_standard", #TODO  : A revoi car plantage à cause du 'order'
 
 #psycopg2.errors.SyntaxError: ERREUR:  erreur de syntaxe sur ou près de « order »
 #LINE 4:         COPY is_invest_cde (order,base,code_pg,create_date,c...
-
 
     "is_ctrl100_pareto",
     "is_ctrl100_rapport_controle",
@@ -1774,13 +1565,10 @@ tables=[
     "is_inventaire_line",
     "is_inventaire",
 
-
     #"is_invest_cde", #TODO  : A revoi car plantage à cause du 'order'
 
 #psycopg2.errors.SyntaxError: ERREUR:  erreur de syntaxe sur ou près de « order »
 #LINE 4:         COPY is_invest_cde (order,base,code_pg,create_date,c...
-
-
 
     "is_invest_compta",
     "is_invest_detail",
@@ -1892,7 +1680,6 @@ for table in tables:
     MigrationTable(db_src,db_dst,table)
     debut = Log(debut, table)
 
-
 tables=[
     'hr_employee_is_demande_absence_rel',
     'hr_employee_is_demande_conges_rel',
@@ -1930,6 +1717,15 @@ tables=[
 for table in tables:
     MigrationTable(db_src,db_dst,table)
     debut = Log(debut, table)
+#******************************************************************************
+
+
+#** is_ctrl100_gamme_standard *************************************************
+rename={
+    'active': 'is_active',
+}
+MigrationTable(db_src,db_dst,"is_ctrl100_gamme_standard",rename=rename)
+#******************************************************************************
 
 
 #** is_equipement_champ_line **************************************************
@@ -2014,14 +1810,11 @@ debut = Log(debut, "res_partner_bank")
 # *************************************************************************
 
 
-
-
 #** init weight product_product (nouveau champ) ***************************
 SQL="update product_product set weight=(select weight from product_template pt where pt.id=product_tmpl_id)"
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #**************************************************************************
-
 
 
 #** product_template : detailed_type **************************************
@@ -2094,7 +1887,6 @@ debut = Log(debut, "purchase_order_stock_picking_rel")
 #******************************************************************************
 
 
-
 #** Divers ********************************************************************
 SQL="""
     update is_mode_operatoire_menu set menu_id=NULL;
@@ -2105,7 +1897,10 @@ SQL="""
     update is_edi_cde_cli_line set file_id=NULL;
     delete from stock_valuation_layer;
     delete from account_move_purchase_order_rel;
-    update sale_order_line set currency_id=1 where currency_id is null;
+    update sale_order_line set currency_id=1 where currency_id is NULL;
+    update account_move set message_main_attachment_id=NULL;
+    update res_users set chatter_position='bottom';
+    delete from mail_alias;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -2158,6 +1953,102 @@ for row in rows:
 cnx_dst.commit()
 debut = Log(debut, "Fin Qt Rcp et Qt Facturée sur les réceptions")
 #********************************************************************
+
+
+#** res_company ***************************************************************
+#cr_dst.execute("update res_company set account_purchase_tax_id=Null")
+#cnx_dst.commit()
+MigrationDonneesTable(db_src,db_dst,'res_company')
+#******************************************************************************
+
+
+#** company_colors ************************************************************
+company_colors={
+    "0": '{"color_navbar_bg": "#0c94d4", "color_navbar_bg_hover": "#0c94d4", "color_navbar_text": "#000", "color_button_bg": "#eeeeec", "color_button_bg_hover": "#000000", "color_button_text": "#000000", "color_link_text": "#000000", "color_link_text_hover": "#000000"}',
+    "1": '{"color_navbar_bg": "#0066cc", "color_navbar_bg_hover": "#0066cc", "color_navbar_text": "#000", "color_button_bg": "#f3f3f3", "color_button_bg_hover": "#000000", "color_button_text": "#000000", "color_link_text": "#000000", "color_link_text_hover": "#000000"}',
+    "3": '{"color_navbar_bg": "#e70013", "color_navbar_bg_hover": "#e70013", "color_navbar_text": "#2e3436", "color_button_bg": "#ffffff", "color_button_bg_hover": "#2e3436", "color_button_text": "#2e3436", "color_link_text": "#2e3436", "color_link_text_hover": "#2e3436"}',
+    "4": '{"color_navbar_bg": "#000000", "color_navbar_bg_hover": "#000000", "color_navbar_text": "#ffffff", "color_button_bg": "#ffffff", "color_button_bg_hover": "#000000", "color_button_text": "#fce94f", "color_link_text": "#0c94d4", "color_link_text_hover": "#0c94d4"}',
+}
+SQL="update res_company set company_colors=%s"
+cr_dst.execute(SQL,[company_colors[soc]])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** ir_attachment *************************************************************
+tables=[
+    "ir_attachment",
+    "is_certificat_attachment_rel",
+    "is_ctrl100_gamme_mur_qualite_attachment_rel",
+    "is_demande_conges_attachment_rel",
+    #"is_doc_attachment_rel",        TODO : N'existe pas !
+    #"is_export_edi_attachment_rel", TODO : N'existe pas !
+    "is_mode_operatoire_attachment_rel",
+    "is_mold_attachment_rel",
+    "is_preventif_equipement_saisie_attachment_rel",
+    "is_preventif_moule_attachment_rel",
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+    debut = Log(debut, table)
+#******************************************************************************
+
+
+#** Pièces jointes des factures ***********************************************
+SQL="""
+    SELECT 
+        id,
+        move_id
+     from account_invoice
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="update ir_attachment set res_model='account.move', res_id=%s where res_id=%s and res_model='account.invoice'"
+    cr_dst.execute(SQL,[row["move_id"], row["id"]])
+cnx_dst.commit()
+debut = Log(debut, "Pièces jointes des factures")
+#******************************************************************************
+
+
+#** Récupérer la ligne de ir_attachment pour faire fonctionner les PDF ********
+table="ir_attachment"
+where="name='res.company.scss'"
+CopieTable(db_vierge,db_dst,table,where)
+#******************************************************************************
+
+
+# ** Convertir les images en pieces jointes ***********************************
+print("Pour finaliser la migration, il faut démarrer Odoo avec cette commande : ")
+print("/opt/odoo16/odoo-bin -c /etc/odoo/pg-odoo16.conf")
+#name = input("Appuyer sur Entrée pour continuer") 
+models,uid,password = XmlRpcConnection(db_dst)
+fields=[
+    ("image"                   ,"res.partner"),
+    ("photo"                   ,"is.ctrl100.operation.specifique"),
+    ("photo"                   ,"is.ctrl100.defautheque"),
+    ("image_finale"            ,"is.fiche.tampographie"),
+    ("image_encrier1"          ,"is.fiche.tampographie"),
+    ("image_encrier2"          ,"is.fiche.tampographie"),
+    ("image_encrier3"          ,"is.fiche.tampographie"),
+    ("image_posage"            ,"is.fiche.tampographie"),
+    ("contenu"                 ,"is.instruction.particuliere"),
+    ("fichier"                 ,"is.inventaire.feuille"),
+    ("is_logo"                 ,"res.company"),
+    ("is_cachet_plastigray"    ,"res.company"),
+    ("is_certificat"           ,"is.certifications.qualite"),
+    ("is_signature"            ,"res.users"),
+]
+for line in fields:
+    res_field=line[0]
+    res_model=line[1]
+    name = res_field
+    if res_model=="res.partner":
+        name=False
+    ImageModel2IrAttachment(cr_src,models,db_dst,uid,password,res_model,res_field, name=name)
+    debut = Log(debut, "ImageModel2IrAttachment : %s / %s (%s)"%(res_field, res_model, name))
+#*******************************************************************************
+
 
 
 
