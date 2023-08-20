@@ -17,13 +17,22 @@ if soc not in ["0","1","3","4"]:
 
 
 #TODO : Durée de la migration complète de odoo8 sur vm-postgres à odoo16 su vm-postgres-bullseye (le 24/06/2023)
-#                 23/06   | 23/07
-#- odoo0       :    1mn   |   2mn
-#- odoo1       :  105mn   | 125mn     | 90mn tout seul
-#- odoo3       :   90mn   | 100mn
-#- odoo4       :   47mn   |  47mn
-#- Total en // :  120mn
+#                23/06 | 23/07 | 19/08
+#- odoo0       :  0H01 |  0H02 |  0H08
+#- odoo1       :  1H45 |  2H05 |  1H54
+#- odoo3       :  1H30 |  1H40 |  1H28
+#- odoo4       :  0H47 |  0H47 |  0H49
+#- Total en // :  1H45 |  2H05 |  1H54
 
+
+
+#TODO : Revoir les favoris pour account.journal (Tableau de bord de la compta)
+# Et pourquoi les graphique du tableau de bords sont vides (journal des ventes et des achats devrait avoir des données)
+# Dans odoo3 et odoo4, l'utilsateur admin n'est pas dans le groupe qui voit toutes les fonctions de la compta
+# Il y a 2 groupe : 
+# - Montrer les fonctions de comptabilité complètes"
+# - Afficher les fonctionnalités de comptabilité - Lecture seule
+# il faut mettre les même personnes dans ces 2 groupes
 
 #TODO : 
 # - Revoir les routes pour une livraison (emplacement 01 de déstcage) => Fait manuellement dans odoo1 => A revoir pour les autres sites
@@ -111,8 +120,7 @@ debut=datetime.now()
 
 
 
-#MigrationTable(db_src,db_dst,"is_mold_operation_systematique") #TODO : Test modif
-#sys.exit()
+sys.exit()
 
 
 
@@ -169,6 +177,9 @@ MigrationTable(db_src,db_dst,table,default=default)
 #******************************************************************************
 
 
+
+
+
 #** res_users (id=2) **********************************************************
 MigrationTable(db_src,db_dst,"is_database")
 champs = GetChamps(cr_dst,'res_partner')
@@ -219,6 +230,8 @@ cnx_dst.commit()
 
 
 #** res_groups ****************************************************************
+#cr_dst.execute("delete from res_groups_users_rel")
+#cnx_dst.commit()
 MigrationResGroups(db_src,db_dst)
 cr_dst.execute("delete from res_groups_users_rel where gid in (9,10);") # L'utilisateur ne peut pas avoir plus d'un type d'utilisateur.
 cnx_dst.commit()
@@ -241,6 +254,17 @@ if category_id:
         cr_dst.execute(SQL,[row["id"]]) # L'utilisateur ne peut pas avoir plus d'un type d'utilisateur.
     cnx_dst.commit()
 #******************************************************************************
+
+
+#** res_groups_users_rel : Ajoute des utilisateurs dans les nouveaux groupes **
+AddUserGroupToOtherGroup(db_dst, "is_employes_hors_production_group", "group_allow_export")     # Export pour employés
+AddUserGroupToOtherGroup(db_dst, "group_erp_manager"                , "group_allow_export")     # Export pour admins
+AddUserGroupToOtherGroup(db_dst, "is_comptable_group"               , "group_account_readonly") # Compta complète pour comptable
+AddUserGroupToOtherGroup(db_dst, "is_comptable_group"               , "group_account_user")     # Compta complète pour comptable
+AddUserGroupToOtherGroup(db_dst, "group_erp_manager"               , "group_account_readonly")  # Compta complète pour admins
+AddUserGroupToOtherGroup(db_dst, "group_erp_manager"               , "group_account_user")      # Compta complète pour admins
+#******************************************************************************
+
 
 #** res_groups_users_rel ******************************************************
 SQL="""
@@ -372,6 +396,29 @@ MigrationTable(db_src,db_dst,table,rename=rename,default=default)
 #******************************************************************************
 
 
+#** Correction champ 'type' dans account_journal ******************************
+journal_type={
+    'sale'           : 'sale',
+    'sale_refund'    : 'sale',
+    'purchase'       : 'purchase',
+    'purchase_refund': 'purchase',
+    'cash'           : 'cash',
+    'bank'           : 'bank',
+    'general'        : 'general',
+    'situation'      : 'general',
+}
+SQL="select id,type from account_journal"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    type8  = row["type"]         # Champ type dans Odoo 8
+    type16 = journal_type[type8] # Champ type dans Odoo 16
+    SQL="update account_journal set type=%s where id=%s"
+    cr_dst.execute(SQL,[type16, row["id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** account_payment_term ******************************************************
 table="account_payment_term"
 default = {'sequence': 10}
@@ -428,6 +475,13 @@ for row in rows:
     root_id = (ord(code[0]) * 1000 + ord(code[1:2] or '\x00'))
     SQL="UPDATE account_account SET root_id=%s WHERE id=%s"
     cr_dst.execute(SQL,[root_id,id])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_journal => set default_account_id *********************************
+cr_dst.execute("update account_journal set default_account_id=%s where type=%s",[AccountCode2Id(cr_dst,'707100'), "sale"])
+cr_dst.execute("update account_journal set default_account_id=%s where type=%s",[AccountCode2Id(cr_dst,'607100'), "purchase"])
 cnx_dst.commit()
 #******************************************************************************
 
@@ -882,17 +936,30 @@ debut = Log(debut, "stock_move")
 #******************************************************************************
 
 
+#** stock_move : Suppression des mouvements annulés des composants des OF *****
+debut = Log(debut, "Début suppression des mouvements annulés des composants des OF (55mn pour odoo4)")
+SQL="""
+    ALTER TABLE stock_move      DISABLE TRIGGER ALL;
+    ALTER TABLE stock_move_line DISABLE TRIGGER ALL;
+
+    delete from stock_move_line;
+    alter sequence stock_move_line_id_seq RESTART;
+    delete from stock_move where raw_material_production_id is not null and state='cancel';
+
+    ALTER TABLE stock_move ENABLE TRIGGER ALL;
+    ALTER TABLE stock_move_line ENABLE TRIGGER ALL;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+debut = Log(debut, "Fin suppression des mouvements annulés des composants des OF")
+#******************************************************************************
+
+
 #** stock_move_line (45 mn de traitement pour odoo1) **************************
 debut = Log(debut, "début stock_move_line (prévoir 45mn pour odoo1)")
 cnx_src = psycopg2.connect("dbname='"+db_src+"'")
 cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
 cr_src.itersize = 10000 # Rows fetched at one time from the server
-SQL="""
-    delete from stock_move_line;
-    alter sequence stock_move_line_id_seq RESTART;
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
 SQL="""
     SELECT 
         spl.name            as lot_name,
@@ -1906,16 +1973,6 @@ cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
-
-#** stock_move : Suppression des mouvements annulés des composants des OF *****
-debut = Log(debut, "Début suppression des mouvements annulés des composants des OF")
-SQL="""
-    delete from stock_move where raw_material_production_id is not null and state='cancel';
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-debut = Log(debut, "Fin suppression des mouvements annulés des composants des OF")
-#******************************************************************************
 
 
 #** Qt Rcp et Qt Facturée sur les lignes des commandes fournisseur  ***********

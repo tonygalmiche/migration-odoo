@@ -273,8 +273,6 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
             writer.writerow(row)
     else:
         #Source : https://kb.objectrocket.com/postgresql/from-postgres-to-csv-with-python-910
-
-
         SQL_for_file_output = "COPY ({0}) TO STDOUT WITH CSV HEADER".format(SQL)
         with open(path, 'w') as f_output:
             cr_src.copy_expert(SQL_for_file_output, f_output)
@@ -294,9 +292,10 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False, db_src=False):
     SQL="""
         ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
         DELETE FROM """+table_dst+""";
-        COPY """+table_dst+""" ("""+champs+""") FROM '/tmp/"""+table_src+""".csv' DELIMITER ',' CSV HEADER;
+        COPY """+table_dst+""" ("""+champs+""") FROM '"""+path+"""' DELIMITER ',' CSV HEADER;
         ALTER TABLE """+table_dst+""" ENABLE TRIGGER ALL;
     """
+        # COPY """+table_dst+""" ("""+champs+""") FROM '/tmp/"""+table_src+""".csv' DELIMITER ',' CSV HEADER;
     cr_dst.execute(SQL)
     cnx_dst.commit()
 
@@ -421,12 +420,14 @@ def GroupName2Id(cr,name):
     return id
 
 
-def ExternalId2GroupId(cr,external_id):
+def ExternalId2GroupId(cr,external_id,module=False):
     SQL="""
         select res_id
         from ir_model_data 
         where model='res.groups' and name='"""+external_id+"""'
     """
+    if module:
+        SQL+=" and module='%s'"%module
     cr.execute(SQL)
     rows = cr.fetchall()
     id=0
@@ -460,6 +461,18 @@ def MigrationResGroups(db_src,db_dst):
             """
             cr_dst.execute(SQL)
     cnx_dst.commit()
+
+
+def AddUserGroupToOtherGroup(db_dst, group_src_external_id, group_dst_external_id):
+    """Ajoute les utilisateurs d'un groupe dans un autre groupe"""
+    cnx_dst,cr_dst=GetCR(db_dst)
+    group_src_id = ExternalId2GroupId(cr_dst,group_src_external_id)
+    group_dst_id = ExternalId2GroupId(cr_dst,group_dst_external_id)
+    SQL="select * from res_groups_users_rel where gid=%s"
+    cr_dst.execute(SQL,[group_src_id])
+    rows = cr_dst.fetchall()
+    for row in rows:
+        AddUserInGroup(db_dst, group_dst_id, row["uid"])
 
 
 def AddUserInGroup(db_dst, gid, uid):
@@ -600,6 +613,16 @@ def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
             r['write_date'],
         ])
     cnx_dst.commit()
+
+
+def AccountCode2Id(cr,code):
+    SQL="select id from account_account where code=%s limit 1"
+    cr.execute(SQL,[code])
+    rows = cr.fetchall()
+    id=False
+    for row in rows:
+        id=row["id"]
+    return id
 
 
 def GetFiscalPositionPartner(cr,partner_id):
