@@ -16,50 +16,28 @@ if soc not in ["0","1","3","4"]:
 #******************************************************************************
 
 
-#TODO : Durée de la migration complète de odoo8 sur vm-postgres à odoo16 su vm-postgres-bullseye (le 24/06/2023)
-#                23/06 | 23/07 | 19/08
-#- odoo0       :  0H01 |  0H02 |  0H08
-#- odoo1       :  1H45 |  2H05 |  1H54
-#- odoo3       :  1H30 |  1H40 |  1H28
-#- odoo4       :  0H47 |  0H47 |  0H49
-#- Total en // :  1H45 |  2H05 |  1H54
+# Durée de la migration complète de odoo8 sur vm-postgres à odoo16 su vm-postgres-bullseye (le 24/06/2023)
+#               23/06 | 23/07 | 19/08
+# odoo0       :  0H01 |  0H02 |  0H08
+# odoo1       :  1H45 |  2H05 |  1H54
+# odoo3       :  1H30 |  1H40 |  1H28
+# odoo4       :  0H47 |  0H47 |  0H49
+# Total en // :  1H45 |  2H05 |  1H54
 
 
 
-#TODO : Revoir les favoris pour account.journal (Tableau de bord de la compta)
-# Et pourquoi les graphique du tableau de bords sont vides (journal des ventes et des achats devrait avoir des données)
-# Dans odoo3 et odoo4, l'utilsateur admin n'est pas dans le groupe qui voit toutes les fonctions de la compta
-# Il y a 2 groupe : 
-# - Montrer les fonctions de comptabilité complètes"
-# - Afficher les fonctionnalités de comptabilité - Lecture seule
-# il faut mettre les même personnes dans ces 2 groupes
+#TODO : Installer la derniere version d'Odoo 16 et repartir sur des bases vierges pour les 4 bases (attention aux pieces jointes)
 
-#TODO : 
-# - Revoir les routes pour une livraison (emplacement 01 de déstcage) => Fait manuellement dans odoo1 => A revoir pour les autres sites
+#TODO : Voir si il faut utilser cette fonction pour d'autres sequences
+#sequence_production_id = MigrationIrSequenceByName(db_src,db_dst,"production")
 
-#Facturation fournisseur : J'ai du configr maneullement ces 2 champs dans account_journal pour faire une facture d'achat
-# pg-odoo16-1=# select id,name,default_account_id,type from account_journal where id=2;
-#  id |        name        | default_account_id |   type   
-# ----+--------------------+--------------------+----------
-#   2 | Journal des achats |                618 | purchase
-
-
-#TODO : 
-#- Sequences des ordres de fabrictions à revoir
-#- Faire une vérfication de l'intégrite des bases : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
-#- Recalculer les qt livrées et facturées sur les commandes de ventes
-
-
-# TODO : Permet de récupérer les tables d'origine d'une base vierge
-# db_src = "pg-odoo16"
-# db_dst = "pg-odoo16-1"
-# #MigrationTable(db_src,db_dst,'stock_route')
-# #MigrationTable(db_src,db_dst,'stock_rule')
-# MigrationTable(db_src,db_dst,'ir_attachment')
-
+#TODO : Revoir les routes pour une livraison (emplacement 01 de déstcage) => Fait manuellement dans odoo1 => A revoir pour les autres sites
+#TODO : Revoir le lien entre les lignes des DEB et les factures (#odoo16-4=# update is_deb_line set invoice_id=NULL;)
+#TODO : Recalculer les qt livrées et facturées sur les commandes de ventes
+#TODO : Ne pas afficher les infobulle de l'assistant (cf Web Tours Disabled) => Pas important car uniquement pour admin
+#TODO : Faire vérfication intégrite bases après chaque migration : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
 
 #TODO : Lien entre lignes des commandes clients et lignes des factures à revoir
-
 # #** sale_order_line_invoice_rel ***********************************************
 # #ids=InvoiceIds2MoveIds(cr_src)
 # cr_dst.execute("delete from sale_order_line_invoice_rel")
@@ -70,11 +48,9 @@ if soc not in ["0","1","3","4"]:
 # for row in rows:
 #     order_line_id=row["order_line_id"]
 #     invoice_id=ids[row["invoice_id"]]
-
 #     SQL="SELECT order_line_id, invoice_id FROM sale_order_line_invoice_rel"
 #     cr_src.execute(SQL)
 #     rows = cr_src.fetchall()
-
 #     print(order_line_id, row["invoice_id"],'=>',invoice_id)
 #     SQL="""
 #         INSERT INTO sale_order_line_invoice_rel (order_line_id, invoice_id)
@@ -85,20 +61,25 @@ if soc not in ["0","1","3","4"]:
 # debut = Log(debut, "sale_order_line_invoice_rel")
 # #******************************************************************************
 
-# sys.exit()
-
 # #pg-odoo16-1=# select id,is_account_invoice_line_id from account_move_line where is_account_invoice_line_id is not null
-    # SQL="""
-    #     INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, invoice_tax_id, company_id, sequence, use_in_tax_closing)
-    #     VALUES (%s,%s,%s,%s,%s,%s);
-    # """
+# SQL="""
+#     INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, invoice_tax_id, company_id, sequence, use_in_tax_closing)
+#     VALUES (%s,%s,%s,%s,%s,%s);
 
 
-#TODO : Revoir le lien entre les lignes des DEB et les factures
-#odoo16-4=# update is_deb_line set invoice_id=NULL;
 
 
-#TODO une fois migrée à Plastigray les PDF ne fonctionnaitent pas => web.base.url = http://127.0.0.1:8969
+# Permet de récupérer les tables d'origine d'une base vierge
+# db_src = "pg-odoo16"
+# db_dst = "pg-odoo16-1"
+# #MigrationTable(db_src,db_dst,'stock_route')
+# #MigrationTable(db_src,db_dst,'stock_rule')
+# MigrationTable(db_src,db_dst,'ir_attachment')
+
+#cnx,cr=GetCR(db_src)
+#SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
+#cde="""echo '"""+SQL+"""' | psql postgres"""
+#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
 
 
 #** Paramètres ****************************************************************
@@ -107,16 +88,12 @@ db_dst    = "pg-odoo16-%s"%soc
 db_vierge = "pg-odoo16"
 #******************************************************************************
 
-
-#cnx,cr=GetCR(db_src)
-#SQL='DROP DATABASE \"'+db_dst+'\";CREATE DATABASE \"'+db_dst+'\" WITH TEMPLATE \"'+db_vierge+'\"'
-#cde="""echo '"""+SQL+"""' | psql postgres"""
-#lines=os.popen(cde).readlines() #Permet de repartir sur une base vierge si la migration échoue
-
 cnx_src   , cr_src    = GetCR(db_src)
 cnx_dst   , cr_dst    = GetCR(db_dst)
 cnx_vierge, cr_vierge = GetCR(db_vierge)
 debut=datetime.now()
+
+
 
 
 
@@ -688,7 +665,7 @@ default_location_src_id  = 12 # WH / 01 pour les 3 sites
 default_location_dest_id = 12 # WH / 01 pour les 3 sites
 warehouse_id = 1
 company_id = 1
-sequence_id = 17
+sequence_id = MigrationIrSequenceByName(db_src,db_dst,"production") #Migration de la sequence et récuperation de son id
 sequence_code = 'MO'
 code = "mrp_operation"
 reservation_method = "at_confirm"
@@ -924,151 +901,212 @@ debut = Log(debut, "mrp_workorder")
 
 
 #** stock_move ****************************************************************
-debut = Log(debut, "début stock_move (prévoir 5mn pour odoo1 et 3mn pour odoo3)")
-MigrationTable(db_src,db_dst,'stock_move')
+debut = Log(debut, "stock_move (Début)(prévoir 5mn pour odoo1 et 3mn pour odoo3)")
+where="raw_material_production_id is not null and state<>'cancel' or raw_material_production_id is null"
+MigrationTable(db_src,db_dst,'stock_move', where=where) #, where="picking_id=101532")
 SQL="""
     update stock_move set state='draft' where raw_material_production_id is not null and state in ('confirmed','assigned');
     update stock_move set state='draft' where production_id is not null and state='confirmed';
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
-debut = Log(debut, "stock_move")
+debut = Log(debut, "stock_move (Fin)")
 #******************************************************************************
 
 
-#** stock_move : Suppression des mouvements annulés des composants des OF *****
-debut = Log(debut, "Début suppression des mouvements annulés des composants des OF (55mn pour odoo4)")
+#** stock_move_line (7 mn de traitement pour odoo1) ***************************
+debut = Log(debut, "stock_move_line (Début)(prévoir 8mn pour odoo1)")
 SQL="""
-    ALTER TABLE stock_move      DISABLE TRIGGER ALL;
-    ALTER TABLE stock_move_line DISABLE TRIGGER ALL;
+    select 
+        ROW_NUMBER () OVER (ORDER BY sq.id) as id,
+        1                    as company_id, 
+        sm.create_date       as create_date, 
+        sm.create_uid        as create_uid, 
+        sm.date              as date, 
+        NULL                 as description_picking, 
+        sm.location_dest_id  as location_dest_id, 
+        sm.location_id       as location_id, 
+        sq.lot_id            as lot_id, 
+        spl.name             as lot_name, 
+        rel.move_id          as move_id, 
+        sq.owner_id          as owner_id, 
+        sq.package_id        as package_id, 
+        NULL                 as package_level_id, 
+        sm.picking_id        as picking_id, 
+        NULL                 as product_category_name, 
+        sm.product_id        as product_id, 
+        pt.uom_id            as product_uom_id, 
+        sm.production_id     as production_id, 
+        sq.qty               as qty_done, 
+        spl.ref               as reference, 
+        0                    as reserved_qty, 
+        0                    as reserved_uom_qty, 
+        NULL                 as result_package_id, 
+        sm.state             as state, 
+        NULL                 as workorder_id, 
+        sm.write_date        as write_date, 
+        sm.write_uid         as write_uid
+    from stock_quant sq join stock_quant_move_rel rel on sq.id=rel.quant_id 
+                        join stock_move            sm on rel.move_id=sm.id
+                        join product_product       pp on sq.product_id=pp.id 
+                        join product_template      pt on pp.product_tmpl_id=pt.id
+                        left join stock_production_lot spl on sq.lot_id=spl.id
 
-    delete from stock_move_line;
-    alter sequence stock_move_line_id_seq RESTART;
-    delete from stock_move where raw_material_production_id is not null and state='cancel';
-
-    ALTER TABLE stock_move ENABLE TRIGGER ALL;
-    ALTER TABLE stock_move_line ENABLE TRIGGER ALL;
+    where
+        (sm.raw_material_production_id is not null and sm.state<>'cancel' or sm.raw_material_production_id is null)
+    -- and sm.picking_id=101532
+    -- limit 10; 
 """
-cr_dst.execute(SQL)
-cnx_dst.commit()
-debut = Log(debut, "Fin suppression des mouvements annulés des composants des OF")
+table="stock_move_line"
+SQL2CSV(db_src, table, SQL)
+CSV2Table(cnx_dst,cr_dst,table, db_src=db_src)
+debut = Log(debut, "stock_move_line (Fin)")
 #******************************************************************************
 
 
-#** stock_move_line (45 mn de traitement pour odoo1) **************************
-debut = Log(debut, "début stock_move_line (prévoir 45mn pour odoo1)")
-cnx_src = psycopg2.connect("dbname='"+db_src+"'")
-cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
-cr_src.itersize = 10000 # Rows fetched at one time from the server
-SQL="""
-    SELECT 
-        spl.name            as lot_name,
-        sm.create_date      as sm_create_date,
-        sm.location_id      as sm_location_id,
-        sm.location_dest_id as sm_location_dest_id,
-        * 
-    from stock_move sm join stock_quant_move_rel rel on sm.id=rel.move_id  
-                    join stock_quant           sq on sq.id=rel.quant_id
-                    left join stock_production_lot spl on sq.lot_id=spl.id
-    order by sm.create_date
-"""
-cr_src.execute(SQL)
-ct=1
-for row in cr_src:
-    SQL="""
-        INSERT INTO stock_move_line (
-            company_id, 
-            create_date, 
-            create_uid, 
-            date, 
-            description_picking, 
-            location_dest_id, 
-            location_id, 
-            lot_id, 
-            lot_name, 
-            move_id, 
-            owner_id, 
-            package_id, 
-            package_level_id, 
-            picking_id, 
-            product_category_name, 
-            product_id, 
-            product_uom_id, 
-            production_id, 
-            qty_done, 
-            reference, 
-            reserved_qty, 
-            reserved_uom_qty, 
-            result_package_id, 
-            state, 
-            workorder_id, 
-            write_date, 
-            write_uid
-        )
-        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """
-    company_id = 1
-    create_date = row["sm_create_date"]
-    create_uid = row["create_uid"]
-    date = row["date"]
-    description_picking =  None
-    location_dest_id = row["sm_location_dest_id"]
-    location_id = row["sm_location_id"]
-    lot_id = row["lot_id"]
-    lot_name =  row["lot_name"]
-    move_id = row["move_id"]
-    owner_id = row["owner_id"]
-    package_id =  row["package_id"]
-    package_level_id =  None
-    picking_id = row["picking_id"]
-    product_category_name =  None
-    product_id= row["product_id"]
-    product_uom_id =  row["product_uom"]
-    production_id = row["production_id"]
-    qty_done = row["product_uom_qty"]
-    reference = row["ref"]
-    reserved_qty = 0
-    reserved_uom_qty = 0
-    result_package_id = None
-    state = row["state"]
-    workorder_id =  None
-    write_date = row["write_date"]
-    write_uid = row["write_uid"]
-    vals=[
-        company_id, 
-        create_date, 
-        create_uid, 
-        date, 
-        description_picking, 
-        location_dest_id, 
-        location_id, 
-        lot_id, 
-        lot_name, 
-        move_id, 
-        owner_id, 
-        package_id, 
-        package_level_id, 
-        picking_id, 
-        product_category_name, 
-        product_id, 
-        product_uom_id, 
-        production_id, 
-        qty_done, 
-        reference, 
-        reserved_qty, 
-        reserved_uom_qty, 
-        result_package_id, 
-        state, 
-        workorder_id, 
-        write_date, 
-        write_uid
-    ]
-    cr_dst.execute(SQL,vals)
-    ct+=1
-cnx_dst.commit()
-debut = Log(debut, "fin stock_move_line")
-#******************************************************************************
+# #** stock_move : Suppression des mouvements annulés des composants des OF *****
+# TODO : N'est plus necessaire à cause de la clause where utilisée ci-dessus
+# debut = Log(debut, "Début suppression des mouvements annulés des composants des OF (55mn pour odoo4)")
+# SQL="""
+#     ALTER TABLE stock_move      DISABLE TRIGGER ALL;
+#     ALTER TABLE stock_move_line DISABLE TRIGGER ALL;
 
+#     delete from stock_move_line;
+#     alter sequence stock_move_line_id_seq RESTART;
+#     delete from stock_move where raw_material_production_id is not null and state='cancel';
+
+#     ALTER TABLE stock_move ENABLE TRIGGER ALL;
+#     ALTER TABLE stock_move_line ENABLE TRIGGER ALL;
+# """
+# cr_dst.execute(SQL)
+# cnx_dst.commit()
+# debut = Log(debut, "Fin suppression des mouvements annulés des composants des OF")
+# #******************************************************************************
+
+
+# #** stock_move_line (45 mn de traitement pour odoo1) **************************
+# TODO : Remplacé par SQL2CSV ci-dessus
+# debut = Log(debut, "début stock_move_line (prévoir 45mn pour odoo1)")
+# cnx_src = psycopg2.connect("dbname='"+db_src+"'")
+# cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
+# cr_src.itersize = 10000 # Rows fetched at one time from the server
+# SQL="""
+#     SELECT 
+#         spl.name            as lot_name,
+#         sm.create_date      as sm_create_date,
+#         sm.location_id      as sm_location_id,
+#         sm.location_dest_id as sm_location_dest_id,
+#         sq.qty              as sq_qty,
+#         sq.location_id      as sq_location_id,
+#         sq.lot_id           as sq_lot_id,
+#         sm.product_uos      as sm_product_uos,
+#         pt.uom_id           as pt_uom_id,
+#         * 
+#     from stock_move sm join stock_quant_move_rel rel on sm.id=rel.move_id  
+#                     join stock_quant           sq on sq.id=rel.quant_id
+#                     join product_product       pp on sq.product_id=pp.id 
+#                     join product_template      pt on pp.product_tmpl_id=pt.id
+#                     left join stock_production_lot spl on sq.lot_id=spl.id
+#     -- where sm.picking_id=101532
+#     order by sm.create_date
+# """
+# cr_src.execute(SQL)
+# ct=1
+# for row in cr_src:
+#     print(row["sm_create_date"])
+#     SQL="""
+#         INSERT INTO stock_move_line (
+#             company_id, 
+#             create_date, 
+#             create_uid, 
+#             date, 
+#             description_picking, 
+#             location_dest_id, 
+#             location_id, 
+#             lot_id, 
+#             lot_name, 
+#             move_id, 
+#             owner_id, 
+#             package_id, 
+#             package_level_id, 
+#             picking_id, 
+#             product_category_name, 
+#             product_id, 
+#             product_uom_id, 
+#             production_id, 
+#             qty_done, 
+#             reference, 
+#             reserved_qty, 
+#             reserved_uom_qty, 
+#             result_package_id, 
+#             state, 
+#             workorder_id, 
+#             write_date, 
+#             write_uid
+#         )
+#         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+#     """
+#     company_id = 1
+#     create_date = row["sm_create_date"]
+#     create_uid = row["create_uid"]
+#     date = row["date"]
+#     description_picking =  None
+#     location_dest_id = row["sm_location_dest_id"]
+#     location_id = row["sq_location_id"]
+#     lot_id = row["sq_lot_id"]
+#     lot_name =  row["lot_name"]
+#     move_id = row["move_id"]
+#     owner_id = row["owner_id"]
+#     package_id =  row["package_id"]
+#     package_level_id =  None
+#     picking_id = row["picking_id"]
+#     product_category_name =  None
+#     product_id= row["product_id"]
+#     product_uom_id =  row["pt_uom_id"]
+#     production_id = row["production_id"]
+#     qty_done = row["sq_qty"]
+#     reference = row["ref"]
+#     reserved_qty = 0
+#     reserved_uom_qty = 0
+#     result_package_id = None
+#     state = row["state"]
+#     workorder_id =  None
+#     write_date = row["write_date"]
+#     write_uid = row["write_uid"]
+#     vals=[
+#         company_id, 
+#         create_date, 
+#         create_uid, 
+#         date, 
+#         description_picking, 
+#         location_dest_id, 
+#         location_id, 
+#         lot_id, 
+#         lot_name, 
+#         move_id, 
+#         owner_id, 
+#         package_id, 
+#         package_level_id, 
+#         picking_id, 
+#         product_category_name, 
+#         product_id, 
+#         product_uom_id, 
+#         production_id, 
+#         qty_done, 
+#         reference, 
+#         reserved_qty, 
+#         reserved_uom_qty, 
+#         result_package_id, 
+#         state, 
+#         workorder_id, 
+#         write_date, 
+#         write_uid
+#     ]
+#     cr_dst.execute(SQL,vals)
+#     ct+=1
+# cnx_dst.commit()
+# debut = Log(debut, "fin stock_move_line")
+# #******************************************************************************
 
 
 #** stock_rule TODO : A Revoir avec stock_picking *****************************
@@ -1372,6 +1410,22 @@ for row in rows:
 cnx_dst.commit()
 debut = Log(debut, "invoice_id dans is_export_cegid_ligne")
 #******************************************************************************
+
+
+#** Migration invoice_id dans is_export_cegid_ligne **************************
+debut = Log(debut, "invoice_id dans is_deb_line (Début)")
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="select id,invoice_id from is_deb_line "
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    invoice_id = ids[row['invoice_id']]
+    SQL="UPDATE is_deb_line SET invoice_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[invoice_id,row['id']])
+cnx_dst.commit()
+debut = Log(debut, "invoice_id dans is_deb_line (Fin)")
+#******************************************************************************
+
 
 # ** Migration tax_code_id ****************************************************
 cr_dst.execute("update account_move_line set amount_currency=(debit-credit)")
@@ -1959,15 +2013,26 @@ SQL="""
     update is_mode_operatoire_menu set menu_id=NULL;
     update stock_location set company_id=1;
     delete from mail_followers;
-    update stock_picking set is_facture_pk_id=NULL;
-    update is_ctrl100_gamme_standard set operation_standard_id=NULL;
     update is_edi_cde_cli_line set file_id=NULL;
     delete from stock_valuation_layer;
     delete from account_move_purchase_order_rel;
+    update sale_order set state='sale' where state='done';
     update sale_order_line set currency_id=1 where currency_id is NULL;
-    update account_move set message_main_attachment_id=NULL;
     update res_users set chatter_position='bottom';
     delete from mail_alias;
+    update account_move set message_main_attachment_id=NULL;
+    update account_move set amount_total_in_currency_signed=amount_total_signed;
+    update account_move set payment_state='not_paid';
+    update account_move set sequence_prefix='';
+    update account_move set sequence_number=name::int;
+    update stock_picking set priority=0;
+    update stock_picking set is_facture_pk_id=NULL;
+    update stock_picking set sale_id=is_sale_order_id where sale_id is null and is_sale_order_id is not null;
+    update stock_picking sp set location_id=(select location_id from stock_move where picking_id=sp.id limit 1) where (select location_id from stock_move where picking_id=sp.id limit 1)  is not null;
+    update stock_picking sp set location_dest_id=(select location_dest_id from stock_move where picking_id=sp.id limit 1) where (select location_dest_id from stock_move where picking_id=sp.id limit 1)  is not null;
+    update stock_move set sale_line_id=is_sale_line_id where sale_line_id is null and is_sale_line_id is not null;
+    update stock_move set quantity_done=product_uom_qty where quantity_done is null and state='done';
+    update stock_move set description_picking=name where description_picking is null and picking_id is not null;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -2009,6 +2074,14 @@ for row in rows:
     cr_dst.execute(SQL,[row['qty_received'],row['qty_invoiced'],row['id']])
 cnx_dst.commit()
 debut = Log(debut, "Fin Qt Rcp et Qt Facturée sur les réceptions")
+#********************************************************************
+
+
+#** Envoi des mails toutes les minutes et non pas toutes les heures
+id = ExternalId2Id(cr_dst,"ir_cron_mail_scheduler_action",module="mail",model="ir.cron")
+SQL="update ir_cron set interval_type='minutes' where id=%s"%id
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #********************************************************************
 
 
@@ -2107,6 +2180,13 @@ for line in fields:
 #*******************************************************************************
 
 
+#** Initialisation des ordres de fabrication ***********************************
+models,uid,password = XmlRpcConnection(db_dst)
+ids = models.execute(db_dst, uid, password, 'mrp.production', 'search', [('state','not in',['done','cancel'])])
+res = models.execute(db_dst, uid, password, 'mrp.production', 'init_qt_reste_action', ids)
+res = models.execute(db_dst, uid, password, 'mrp.production', 'init_nomenclature_action', ids)
+debut = Log(debut, "Initialisation des ordres de fabrication")
+#******************************************************************************
 
 
 debut = Log(debut, "** Fin migration %s ***********************************************"%(db_dst))

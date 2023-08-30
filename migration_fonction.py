@@ -216,8 +216,28 @@ def NbChampsTable(cursor,table):
     return nb
 
 
+#def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False, db_src=False):
 
-#            type_src = GetChampsTable(cr_src,table_src,champ)[0][1]
+def SQL2CSV(db_src, table, SQL):
+    cnx_src,cr_src=GetCR(db_src)
+    cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
+    cr_src.itersize = 50000 # Rows fetched at one time from the server => Permet de limiter l'utilisation de la mémoire
+    cr_src.execute(SQL)
+    #table="stock_move_line"
+    path = "/tmp/%s-%s.csv"%(db_src or 'x',table)
+    ct=0
+    f = open(path, 'w', newline ='')
+    for row in cr_src:
+        if ct==0:
+            keys=[]
+            for key in row:
+                keys.append(key)
+            f.write(','.join(keys)+'\r\n')
+            writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writerow(row)
+        ct+=1
+    f.close()
+
 
 def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False, db_src=False):
     SQL="SELECT "+champs+" FROM "+table+" t"
@@ -271,6 +291,7 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
                     }
                     row[x]=json.dumps(val)
             writer.writerow(row)
+        f.close()
     else:
         #Source : https://kb.objectrocket.com/postgresql/from-postgres-to-csv-with-python-910
         SQL_for_file_output = "COPY ({0}) TO STDOUT WITH CSV HEADER".format(SQL)
@@ -295,9 +316,8 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False, db_src=False):
         COPY """+table_dst+""" ("""+champs+""") FROM '"""+path+"""' DELIMITER ',' CSV HEADER;
         ALTER TABLE """+table_dst+""" ENABLE TRIGGER ALL;
     """
-        # COPY """+table_dst+""" ("""+champs+""") FROM '/tmp/"""+table_src+""".csv' DELIMITER ',' CSV HEADER;
     cr_dst.execute(SQL)
-    cnx_dst.commit()
+    res=cnx_dst.commit()
 
 
 def SetSequence(cr_dst,cnx_dst,table):
@@ -418,6 +438,25 @@ def GroupName2Id(cr,name):
     for row in rows:
         id=row['id']
     return id
+
+
+
+
+def ExternalId2Id(cr,external_id,module=False,model=False):
+    SQL="select res_id from ir_model_data where name='%s' "%external_id
+    if module:
+        SQL+=" and module='%s'"%module
+    if model:
+        SQL+=" and model='%s'"%model
+    cr.execute(SQL)
+    rows = cr.fetchall()
+    id=0
+    for row in rows:
+        id=row['res_id']
+        break
+    return id
+
+
 
 
 def ExternalId2GroupId(cr,external_id,module=False):
@@ -687,6 +726,28 @@ def MigrationNameTraduction(db_src,db_dst,name):
     cnx_dst.commit()
 
 
+def MigrationIrSequenceByName(db_src,db_dst,name):
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    sequence_id_src=sequence_id_dst=False
+
+    SQL="SELECT id FROM ir_sequence WHERE name ilike '%"+name+"%'"
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        sequence_id_src=row["id"]
+    cr_dst.execute(SQL)
+    rows = cr_dst.fetchall()
+    for row in rows:
+        sequence_id_dst=row["id"]
+    print(sequence_id_src, sequence_id_dst)
+    if sequence_id_src and sequence_id_dst:
+        MigrationIrSequence(db_src,db_dst,id_src=sequence_id_src,id_dst=sequence_id_dst)
+    return sequence_id_dst
+
+
+
+
 def MigrationIrSequence(db_src,db_dst,id_src=False,id_dst=False):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
@@ -696,8 +757,8 @@ def MigrationIrSequence(db_src,db_dst,id_src=False,id_dst=False):
         rows = cr_src.fetchall()
         for row in rows:
             code=row["code"]
-            SQL="UPDATE ir_sequence SET name=%s, prefix=%s,padding=%s,number_next=%s WHERE id=%s"
-            cr_dst.execute(SQL,[row["name"], row["prefix"],row["padding"],row["number_next"],id_dst])
+            SQL="UPDATE ir_sequence SET name=%s, code=%s, prefix=%s,padding=%s,number_next=%s WHERE id=%s"
+            cr_dst.execute(SQL,[row["name"], row["code"], row["prefix"],row["padding"],row["number_next"],id_dst])
             if row["implementation"]=="standard":
                 SQL="SELECT id FROM ir_sequence WHERE id=%s"
                 cr_dst.execute(SQL,[id_dst])
