@@ -310,14 +310,15 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False, db_src=False):
     champs=champs.replace(',order,','",order",') 
     if champs[0:6]=="order,":
         champs='"order",'+champs[6:]
-    SQL="""
-        ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
-        DELETE FROM """+table_dst+""";
-        COPY """+table_dst+""" ("""+champs+""") FROM '"""+path+"""' DELIMITER ',' CSV HEADER;
-        ALTER TABLE """+table_dst+""" ENABLE TRIGGER ALL;
-    """
-    cr_dst.execute(SQL)
-    res=cnx_dst.commit()
+    if len(champs)>0:
+        SQL="""
+            ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
+            DELETE FROM """+table_dst+""";
+            COPY """+table_dst+""" ("""+champs+""") FROM '"""+path+"""' DELIMITER ',' CSV HEADER;
+            ALTER TABLE """+table_dst+""" ENABLE TRIGGER ALL;
+        """
+        cr_dst.execute(SQL)
+        res=cnx_dst.commit()
 
 
 def SetSequence(cr_dst,cnx_dst,table):

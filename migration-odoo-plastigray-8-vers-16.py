@@ -24,6 +24,10 @@ if soc not in ["0","1","3","4"]:
 # odoo4       :  0H47 |  0H47 |  0H49
 # Total en // :  1H45 |  2H05 |  1H54
 
+#TODO Prolbème avec les lots (ex : Code PG 501423 et Lot 230613R-184281 dans les changements d'emplacement)
+#TODO : Très long pour afficher le stock disponible depuis une fiche article (Requete DELETE !!)
+
+
 
 
 #TODO : Installer la derniere version d'Odoo 16 et repartir sur des bases vierges pour les 4 bases (attention aux pieces jointes)
@@ -94,15 +98,6 @@ cnx_vierge, cr_vierge = GetCR(db_vierge)
 debut=datetime.now()
 
 
-
-
-
-sys.exit()
-
-
-
-debut=datetime.now()
-
 debut = Log(debut, "** Début migration %s ***********************************************"%(db_dst))
 
 
@@ -152,9 +147,6 @@ table = 'res_users'
 default = {'notification_type': 'email'}
 MigrationTable(db_src,db_dst,table,default=default)
 #******************************************************************************
-
-
-
 
 
 #** res_users (id=2) **********************************************************
@@ -402,7 +394,17 @@ default = {'sequence': 10}
 MigrationTable(db_src,db_dst,table,default=default,text2jsonb=True)
 table="account_payment_term_line"
 default = {'months': 0}
-MigrationTable(db_src,db_dst,table,default=default)
+rename={
+    "days2": "days_after",
+}
+MigrationTable(db_src,db_dst,table,default=default,rename=rename)
+SQL="""
+    update account_payment_term_line set end_month='t' where days_after=-1;
+    update account_payment_term_line set days_after=0 where days_after=-1;
+    update account_payment_term_line set end_month='t' where days_after>0;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -417,6 +419,7 @@ default={
 }
 MigrationTable(db_src,db_dst,'account_fiscal_position',default=default,text2jsonb=True)
 MigrationTable(db_src,db_dst,'account_fiscal_position_tax')
+MigrationTable(db_src,db_dst,'account_fiscal_position_account')
 #******************************************************************************
 
 
@@ -585,7 +588,7 @@ default={
 MigrationTable(db_src,db_dst,'mrp_routing_workcenter', default=default)
 SQL="""
     UPDATE mrp_routing_workcenter SET time_cycle_manual=is_nb_secondes/60;
-    UPDATE mrp_routing_workcenter set active=True;
+    UPDATE mrp_routing_workcenter set active='t';
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -960,6 +963,9 @@ SQL="""
 table="stock_move_line"
 SQL2CSV(db_src, table, SQL)
 CSV2Table(cnx_dst,cr_dst,table, db_src=db_src)
+SQL="SELECT setval('stock_move_line_id_seq', max(id)+1) FROM stock_move_line"
+cr_dst.execute(SQL)
+cnx_dst.commit()
 debut = Log(debut, "stock_move_line (Fin)")
 #******************************************************************************
 
@@ -2020,11 +2026,18 @@ SQL="""
     update sale_order_line set currency_id=1 where currency_id is NULL;
     update res_users set chatter_position='bottom';
     delete from mail_alias;
+    
     update account_move set message_main_attachment_id=NULL;
     update account_move set amount_total_in_currency_signed=amount_total_signed;
     update account_move set payment_state='not_paid';
     update account_move set sequence_prefix='';
     update account_move set sequence_number=name::int;
+    update account_move set amount_untaxed_signed=-amount_untaxed where journal_id=2;
+    update account_move set amount_tax_signed=-amount_tax where journal_id=2;
+    update account_move set amount_total_signed=-amount_total where journal_id=2;
+    update account_move set amount_residual_signed=-amount_residual where journal_id=2;
+    update account_move set amount_total_in_currency_signed=amount_total_signed;
+
     update stock_picking set priority=0;
     update stock_picking set is_facture_pk_id=NULL;
     update stock_picking set sale_id=is_sale_order_id where sale_id is null and is_sale_order_id is not null;
@@ -2187,6 +2200,52 @@ res = models.execute(db_dst, uid, password, 'mrp.production', 'init_qt_reste_act
 res = models.execute(db_dst, uid, password, 'mrp.production', 'init_nomenclature_action', ids)
 debut = Log(debut, "Initialisation des ordres de fabrication")
 #******************************************************************************
+
+
+# #** pg_stock_move *************************************************************
+# #TODO : Voir pour lancer en thread
+# #from threading import Thread
+# def create_pg_stock_move_thread(models, db_dst, uid, password, ids):
+#     res = models.execute(db_dst, uid, password, 'stock.move', 'create_pg_stock_move', ids)
+#     return True
+
+# debut = Log(debut, "pg_stock_move (Début)")
+# cr_dst.execute("delete from pg_stock_move")
+# cnx_dst.commit()
+# cr_src = cnx_src.cursor('BigCursor', cursor_factory=RealDictCursor)
+# cr_src.itersize = 10000 # Rows fetched at one time from the server
+# SQL="select id from stock_move where state='done' order by date" # limit 35000"
+# cr_src.execute(SQL)
+# ids=[]
+# ct=0
+# nb=1
+# models,uid,password = XmlRpcConnection(db_dst)
+# limit=100000
+# #threads={}
+# for row in cr_src:
+#     if ct>=limit:
+#         #threads[nb]=ids
+#         print(nb*limit)
+#         create_pg_stock_move_thread(models, db_dst, uid, password, ids)
+#         #res = models.execute(db_dst, uid, password, 'stock.move', 'create_pg_stock_move', ids)
+#         ct=0
+#         nb+=1
+#         ids=[]
+#     ids.append(row["id"])
+#     ct+=1
+# create_pg_stock_move_thread(models, db_dst, uid, password, ids)
+# #res = models.execute(db_dst, uid, password, 'stock.move', 'create_pg_stock_move', ids)
+# #threads[nb]=ids
+# # for thread in threads:
+# #     ids=threads[thread]
+# #     print(thread, len(ids))
+# #     t = Thread(target=create_pg_stock_move_thread, args=[models, db_dst, uid, password, ids])
+# #     t.start()
+# #     #t.run()
+
+# #create_pg_stock_move_thread(models, db_dst, uid, password, ids)
+# debut = Log(debut, "pg_stock_move (Fin)")
+# #******************************************************************************
 
 
 debut = Log(debut, "** Fin migration %s ***********************************************"%(db_dst))
