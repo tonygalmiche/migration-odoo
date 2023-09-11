@@ -25,6 +25,8 @@ if soc not in ["0","1","3","4"]:
 # Total en // :  1H45 |  2H05 |  1H54
 
 
+#TODO : Livraison / Toutes les livriaosns => icon piece jointe à revoir
+
 #TODO : Installer la derniere version d'Odoo 16 et repartir sur des bases vierges pour les 4 bases (attention aux pieces jointes)
 #TODO : Ne pas afficher les infobulle de l'assistant (cf Web Tours Disabled) => Pas important car uniquement pour admin
 #TODO : Faire vérfication intégrite bases après chaque migration : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
@@ -54,6 +56,9 @@ cnx_src   , cr_src    = GetCR(db_src)
 cnx_dst   , cr_dst    = GetCR(db_dst)
 cnx_vierge, cr_vierge = GetCR(db_vierge)
 debut=datetime.now()
+
+
+
 
 
 sys.exit()
@@ -2199,6 +2204,78 @@ res = models.execute(db_dst, uid, password, 'sale.order', 'external_compute_deli
 debut = Log(debut, "_compute_delivery_status")
 debut = Log(debut, "external_compute_delivery_status")
 #******************************************************************************
+
+
+#** mail **********************************************************************
+tables=[
+    #"mail_followers",
+    #"mail_followers_mail_message_subtype_rel",
+    "mail_mail",
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+#** mail_message *****************************************************************
+#TODO : Consomme beacoup  de mémoire => Cela risque de planter si je lance les 4 migrations en même temps
+table = 'mail_message'
+default = {'message_type': 'notification'}
+MigrationTable(db_src,db_dst,table,default=default)
+#******************************************************************************
+
+#** mail_notification *****************************************************************
+table = 'mail_notification'
+rename = {
+    'message_id': 'mail_message_id',
+    'partner_id': 'res_partner_id',
+}
+default = {'notification_type': 'email'}
+MigrationTable(db_src,db_dst,table,rename=rename,default=default)
+#******************************************************************************
+
+#** mail_message_subtype ******************************************************
+table = 'mail_message_subtype'
+MigrationTable(db_src,db_dst,table,text2jsonb=True)
+#******************************************************************************
+
+#** mail **********************************************************************
+tables=[
+    "mail_mail_res_partner_rel",
+    "mail_message_res_partner_rel",
+    "message_attachment_rel",
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+#** mail_message **************************************************************
+SQL="""
+    update mail_message set model='account.move' where model='account.invoice';
+    update mail_message set model='stock.lot' where model='stock.production.lot';
+    update mail_message set model=NULL where model='procurement.order';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+#** Liens entre mail_message et account_invoice *******************************
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="SELECT id, res_id from mail_message where model='account.invoice' order by id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    invoice_id = row["res_id"]
+    if invoice_id in ids:
+        move_id = ids[invoice_id]
+        #print(move_id,row)
+        SQL="update mail_message set res_id=%s where id=%s"
+        cr_dst.execute(SQL, [move_id, row["id"]])
+cnx_dst.commit()
+debut = Log(debut, "Liens entre mail_message et account_invoice")
+#******************************************************************************
+
+
+
 
 
 # #** pg_stock_move *************************************************************

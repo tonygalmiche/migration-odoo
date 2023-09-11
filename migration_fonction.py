@@ -87,6 +87,10 @@ def GetChamps(cursor,table):
         v = row['attname']
         if v=="order":
             v='"order"'
+        if v=="references":
+            v='"references"'
+        if v=="default":
+            v='"default"'
         res.append(v)
     return res
 
@@ -310,6 +314,10 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False, db_src=False):
     champs=champs.replace(',order,','",order",') 
     if champs[0:6]=="order,":
         champs='"order",'+champs[6:]
+    if champs[0:11]=="references,":
+        champs='"references",'+champs[11:]
+    if champs[0:8]=="default,":
+        champs='"default",'+champs[8:]
     if len(champs)>0:
         SQL="""
             ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
@@ -368,9 +376,6 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
             if champ in champs_src and champ in champs_dst:
                 communs.append(champ)
         champs=','.join(communs)
-
-        #print("champs=",champs, champs_src, champs_dst)
-
         Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst,db_src=db_src)
         CSV2Table(cnx_dst,cr_dst,table_src,table_dst,db_src=db_src)
         SetSequence(cr_dst,cnx_dst,table_dst)
@@ -741,7 +746,7 @@ def MigrationIrSequenceByName(db_src,db_dst,name):
     rows = cr_dst.fetchall()
     for row in rows:
         sequence_id_dst=row["id"]
-    print(sequence_id_src, sequence_id_dst)
+    #print(sequence_id_src, sequence_id_dst)
     if sequence_id_src and sequence_id_dst:
         MigrationIrSequence(db_src,db_dst,id_src=sequence_id_src,id_dst=sequence_id_dst)
     return sequence_id_dst
