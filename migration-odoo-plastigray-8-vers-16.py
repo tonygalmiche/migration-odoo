@@ -24,53 +24,11 @@ if soc not in ["0","1","3","4"]:
 # odoo4       :  0H47 |  0H47 |  0H49
 # Total en // :  1H45 |  2H05 |  1H54
 
-#TODO Prolbème avec les lots (ex : Code PG 501423 et Lot 230613R-184281 dans les changements d'emplacement)
-#TODO : Très long pour afficher le stock disponible depuis une fiche article (Requete DELETE !!)
-
-
-
 
 #TODO : Installer la derniere version d'Odoo 16 et repartir sur des bases vierges pour les 4 bases (attention aux pieces jointes)
-
-#TODO : Voir si il faut utilser cette fonction pour d'autres sequences
-#sequence_production_id = MigrationIrSequenceByName(db_src,db_dst,"production")
-
-#TODO : Revoir les routes pour une livraison (emplacement 01 de déstcage) => Fait manuellement dans odoo1 => A revoir pour les autres sites
-#TODO : Revoir le lien entre les lignes des DEB et les factures (#odoo16-4=# update is_deb_line set invoice_id=NULL;)
-#TODO : Recalculer les qt livrées et facturées sur les commandes de ventes
 #TODO : Ne pas afficher les infobulle de l'assistant (cf Web Tours Disabled) => Pas important car uniquement pour admin
 #TODO : Faire vérfication intégrite bases après chaque migration : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
-
-#TODO : Lien entre lignes des commandes clients et lignes des factures à revoir
-# #** sale_order_line_invoice_rel ***********************************************
-# #ids=InvoiceIds2MoveIds(cr_src)
-# cr_dst.execute("delete from sale_order_line_invoice_rel")
-# cnx_dst.commit()
-# SQL="SELECT order_line_id, invoice_id FROM sale_order_line_invoice_rel"
-# cr_src.execute(SQL)
-# rows = cr_src.fetchall()
-# for row in rows:
-#     order_line_id=row["order_line_id"]
-#     invoice_id=ids[row["invoice_id"]]
-#     SQL="SELECT order_line_id, invoice_id FROM sale_order_line_invoice_rel"
-#     cr_src.execute(SQL)
-#     rows = cr_src.fetchall()
-#     print(order_line_id, row["invoice_id"],'=>',invoice_id)
-#     SQL="""
-#         INSERT INTO sale_order_line_invoice_rel (order_line_id, invoice_id)
-#         VALUES(%s,%s)
-#     """
-#     cr_dst.execute(SQL,[order_line_id, invoice_id])
-# cnx_dst.commit()
-# debut = Log(debut, "sale_order_line_invoice_rel")
-# #******************************************************************************
-
-# #pg-odoo16-1=# select id,is_account_invoice_line_id from account_move_line where is_account_invoice_line_id is not null
-# SQL="""
-#     INSERT INTO account_tax_repartition_line (factor_percent,repartition_type, invoice_tax_id, company_id, sequence, use_in_tax_closing)
-#     VALUES (%s,%s,%s,%s,%s,%s);
-
-
+#TODO : En utilisant les fonctions XML-RPC (OF, commandes,...), cela change les champ write_date et write uid
 
 
 # Permet de récupérer les tables d'origine d'une base vierge
@@ -96,6 +54,14 @@ cnx_src   , cr_src    = GetCR(db_src)
 cnx_dst   , cr_dst    = GetCR(db_dst)
 cnx_vierge, cr_vierge = GetCR(db_vierge)
 debut=datetime.now()
+
+
+sys.exit()
+
+
+
+
+
 
 
 debut = Log(debut, "** Début migration %s ***********************************************"%(db_dst))
@@ -1418,21 +1384,6 @@ debut = Log(debut, "invoice_id dans is_export_cegid_ligne")
 #******************************************************************************
 
 
-#** Migration invoice_id dans is_export_cegid_ligne **************************
-debut = Log(debut, "invoice_id dans is_deb_line (Début)")
-ids=InvoiceIds2MoveIds(cr_src)
-SQL="select id,invoice_id from is_deb_line "
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    invoice_id = ids[row['invoice_id']]
-    SQL="UPDATE is_deb_line SET invoice_id=%s WHERE id=%s"
-    cr_dst.execute(SQL,[invoice_id,row['id']])
-cnx_dst.commit()
-debut = Log(debut, "invoice_id dans is_deb_line (Fin)")
-#******************************************************************************
-
-
 # ** Migration tax_code_id ****************************************************
 cr_dst.execute("update account_move_line set amount_currency=(debit-credit)")
 cr_dst.execute("update account_move_line set company_currency_id=currency_id")
@@ -1797,7 +1748,6 @@ tables=[
     "is_type_etiquette",
     "is_vente_message",
     "mrp_prevision",
-    #"is_deb_line",  TODO a revoir après la migration des factures car il y a un lien avec
     #"is_facturation_fournisseur_line", TODO A revoir après la migration des mouvements de stocks
     #"is_mode_operatoire_menu", TODO : A revoir car les liens avec les menus sont à revoir
     #"is_mode_operatoire",      TODO : A revoir car les liens avec les menus sont à revoir
@@ -1844,6 +1794,20 @@ tables=[
 for table in tables:
     MigrationTable(db_src,db_dst,table)
     debut = Log(debut, table)
+#******************************************************************************
+
+
+#** Migration invoice_id dans is_deb_line **************************
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="select id,invoice_id from is_deb_line "
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    invoice_id = ids[row['invoice_id']]
+    SQL="UPDATE is_deb_line SET invoice_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[invoice_id,row['id']])
+cnx_dst.commit()
+debut = Log(debut, "invoice_id dans is_deb_line")
 #******************************************************************************
 
 
@@ -2024,6 +1988,7 @@ SQL="""
     delete from account_move_purchase_order_rel;
     update sale_order set state='sale' where state='done';
     update sale_order_line set currency_id=1 where currency_id is NULL;
+    update sale_order_line set qty_delivered_method='stock_move';
     update res_users set chatter_position='bottom';
     delete from mail_alias;
     
@@ -2124,8 +2089,7 @@ tables=[
     "is_certificat_attachment_rel",
     "is_ctrl100_gamme_mur_qualite_attachment_rel",
     "is_demande_conges_attachment_rel",
-    #"is_doc_attachment_rel",        TODO : N'existe pas !
-    #"is_export_edi_attachment_rel", TODO : N'existe pas !
+    "is_doc_attachment_rel",
     "is_mode_operatoire_attachment_rel",
     "is_mold_attachment_rel",
     "is_preventif_equipement_saisie_attachment_rel",
@@ -2199,6 +2163,41 @@ ids = models.execute(db_dst, uid, password, 'mrp.production', 'search', [('state
 res = models.execute(db_dst, uid, password, 'mrp.production', 'init_qt_reste_action', ids)
 res = models.execute(db_dst, uid, password, 'mrp.production', 'init_nomenclature_action', ids)
 debut = Log(debut, "Initialisation des ordres de fabrication")
+#******************************************************************************
+
+
+#** sale_order_line_invoice_rel ***********************************************
+ids=InvoiceIds2MoveIds(cr_src)
+cr_dst.execute("delete from sale_order_line_invoice_rel")
+cnx_dst.commit()
+SQL="""
+    SELECT rel.order_line_id, ail.id invoice_line_id, ail.product_id, ail.invoice_id
+    FROM sale_order_line_invoice_rel rel join account_invoice_line ail on ail.id=rel.invoice_id 
+    --limit 200
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    move_id = ids[row["invoice_id"]]
+    SQL="SELECT id FROM account_move_line where move_id=%s and product_id=%s limit 1"
+    cr_dst.execute(SQL, [move_id, row["product_id"]])
+    rows2 = cr_dst.fetchall()
+    for row2 in rows2:
+        SQL="""
+            INSERT INTO sale_order_line_invoice_rel (invoice_line_id,order_line_id)
+            VALUES(%s,%s)
+        """
+        cr_dst.execute(SQL,[row2["id"],row["order_line_id"]])
+cnx_dst.commit()
+debut = Log(debut, "sale_order_line_invoice_rel")
+#******************************************************************************
+
+
+#** sale.order : external_compute_delivery_status *****************************
+models,uid,password = XmlRpcConnection(db_dst)
+res = models.execute(db_dst, uid, password, 'sale.order', 'external_compute_delivery_status', [])
+debut = Log(debut, "_compute_delivery_status")
+debut = Log(debut, "external_compute_delivery_status")
 #******************************************************************************
 
 
