@@ -25,11 +25,14 @@ if soc not in ["0","1","3","4"]:
 # Total en // :  1H45 |  2H05 |  1H54
 
 
-#TODO : Livraison / Toutes les livriaosns => icon piece jointe à revoir
+#TODO : Bug en cliquant sur le bouton "Vue d'ensemble" depuis une nomenclaure 
+#TODO L'unité de mesure kg définie sur la ligne de commande n'appartient pas à la même catégorie que l'unité de mesure m définie sur le produit. Veuillez corriger l'unité de mesure définie sur la ligne de commande ou sur le produit, elles doivent appartenir à la même catégorie.
 
+#TODO : Filtres de recherhce perso à migrer
 #TODO : Installer la derniere version d'Odoo 16 et repartir sur des bases vierges pour les 4 bases (attention aux pieces jointes)
 #TODO : Ne pas afficher les infobulle de l'assistant (cf Web Tours Disabled) => Pas important car uniquement pour admin
-#TODO : Faire vérfication intégrite bases après chaque migration : cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
+#TODO : Faire vérfication intégrite bases après chaque migration : 
+# cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
 #TODO : En utilisant les fonctions XML-RPC (OF, commandes,...), cela change les champ write_date et write uid
 
 
@@ -60,12 +63,100 @@ debut=datetime.now()
 
 
 
+#** is_famille_achat_res_partner_rel *******************************************
+MigrationTable(db_src,db_dst,'is_famille_achat_res_partner_rel')
+#******************************************************************************
+
+
+
+
+
+sys.exit()
+
+
+# ** image dans product_template dans ir_attachment ***************************
+models,uid,password = XmlRpcConnection(db_dst)
+SQL="SELECT id,image,name  from product_template where image is not null order by name"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=1
+for row in rows:
+    ImageField2IrAttachment(models,db_dst,uid,password,"product.template",row["id"],row["image"])
+    print(ct,"/",nb,row["name"])
+    ct+=1
+#*******************************************************************************
+
+
+
+
+sys.exit()
+
+
+
+#** rapport_controle_attachment_rel *******************************************
+MigrationTable(db_src,db_dst,'rapport_controle_attachment_rel')
+#******************************************************************************
+
 
 sys.exit()
 
 
 
 
+
+#** mail_group ****************************************************************
+default = {'access_mode': 'public'}
+MigrationTable(db_src,db_dst,'mail_group',default=default,text2jsonb=True)
+
+#******************************************************************************
+ 
+
+sys.exit()
+
+
+
+AddUserGroupToOtherGroup(db_dst, "is_employes_hors_production_group", "group_show_line_subtotals_tax_excluded") # Montant HT sur les factures
+
+
+sys.exit()
+
+
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="""
+    SELECT id,supplier_invoice_number
+    FROM account_invoice
+    WHERE supplier_invoice_number is not null
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    move_id = ids[row['id']]
+    SQL="UPDATE account_move SET supplier_invoice_number=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['supplier_invoice_number'],move_id])
+
+    print(row["supplier_invoice_number"])
+
+
+cnx_dst.commit()
+
+
+
+
+sys.exit()
+
+
+SQL="""
+    delete from mail_tracking_value;
+    delete from mail_channel_member;
+    delete from pg_stock_move ;
+    delete from mail_mail_res_partner_rel;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+
+sys.exit()
 
 
 
@@ -439,9 +530,18 @@ cnx_dst.commit()
 
 #** account_tax **************************************************************
 SQL="""
+    ALTER TABLE account_move_line DISABLE TRIGGER ALL;
     delete from account_move_line;
+    ALTER TABLE account_move_line ENABLE TRIGGER ALL;
+
+    ALTER TABLE account_tax_repartition_line DISABLE TRIGGER ALL;
     delete from account_tax_repartition_line;
+    ALTER TABLE account_tax_repartition_line ENABLE TRIGGER ALL;
+
+    ALTER TABLE account_account_tag_account_tax_repartition_line_rel DISABLE TRIGGER ALL;
     delete from account_account_tag_account_tax_repartition_line_rel;
+    ALTER TABLE account_account_tag_account_tax_repartition_line_rel ENABLE TRIGGER ALL;
+
     update res_company set account_purchase_tax_id=1;
     update res_company set account_sale_tax_id=2;
 """
@@ -570,6 +670,7 @@ debut = Log(debut, "mrp")
 #** purchase_order ************************************************************
 rename={
     'validator': 'user_id',
+    'minimum_planned_date': 'date_planned',
 }
 MigrationTable(db_src,db_dst,'purchase_order', rename=rename)
 SQL="""
@@ -1099,7 +1200,8 @@ debut = Log(debut, "stock_move_line (Fin)")
 #** sale_order ****************************************************************
 MigrationTable(db_src,db_dst,'resource_calendar_leaves')
 rename={
-    'fiscal_position':'fiscal_position_id'
+    'fiscal_position': 'fiscal_position_id',
+    'payment_term'   : 'payment_term_id',
 }
 default={
     'currency_id': 1,
@@ -1192,7 +1294,6 @@ SQL="""
         ai.origin,
         ai.supplier_invoice_number,
         ai.payment_term,
-
         ai.is_bon_a_payer,
         ai.is_date_envoi_mail,
         ai.is_document,
@@ -1234,7 +1335,7 @@ for row in rows:
                 fiscal_position_id=%s,
                 invoice_origin=%s,
                 invoice_payment_term_id=%s,
-
+                supplier_invoice_number=%s,
                 is_bon_a_payer=%s,
                 is_date_envoi_mail=%s,
                 is_document=%s,
@@ -1265,7 +1366,7 @@ for row in rows:
             row['fiscal_position'],
             row['origin'],
             row['payment_term'],
-
+            row['supplier_invoice_number'],
             row['is_bon_a_payer'],
             row['is_date_envoi_mail'],
             row['is_document'],
@@ -1288,7 +1389,6 @@ for row in rows:
                 ail.price_unit,
                 ail.price_subtotal,
                 ail.sequence,
-
                 ail.is_amortissement_moule,
                 ail.is_amt_interne,
                 ail.is_cagnotage,
@@ -1320,7 +1420,6 @@ for row in rows:
                     balance=(debit-credit),
                     amount_currency=(debit-credit),
                     sequence=%s,
-
                     is_amortissement_moule=%s,
                     is_amt_interne=%s,
                     is_cagnotage=%s,
@@ -1346,7 +1445,6 @@ for row in rows:
                 row2['price_subtotal'],
                 row2['price_subtotal'],
                 row2['sequence'],
-
                 row2['is_amortissement_moule'],
                 row2['is_amt_interne'],
                 row2['is_cagnotage'],
@@ -1357,7 +1455,6 @@ for row in rows:
                 row2['is_montant_matiere'],
                 row2['is_move_id'],
                 row2['is_section_analytique_id'],
-
                 move_id,
                 ct2
             ))
@@ -1785,6 +1882,10 @@ tables=[
     'is_instruction_particuliere_groupe_rel',
     'is_instruction_particuliere_mold_rel',
     'is_instruction_particuliere_product_rel',
+    "is_mini_delta_dore",
+    "is_mini_delta_dore_besoin",
+    "is_mini_delta_dore_file_rel",
+    "is_mini_delta_dore_line",
     'is_mold_dossierf_rel',
     'is_mold_presse_rel',
     'is_preventif_equipement_gamme_rel',
@@ -2055,9 +2156,39 @@ for row in rows:
     #print(row["product_id"], row["product_qty"], row["product_uom_qty"], row["qty_received"], row["qty"])
     SQL="UPDATE purchase_order_line SET qty_received=%s, qty_invoiced=%s WHERE id=%s"
     cr_dst.execute(SQL,[row['qty_received'],row['qty_invoiced'],row['id']])
+SQL="update purchase_order_line set qty_received_method='stock_moves'"
+cr_dst.execute(SQL)
 cnx_dst.commit()
 debut = Log(debut, "Fin Qt Rcp et Qt Facturée sur les réceptions")
 #********************************************************************
+
+
+#** Migration stock_inventory *************************************************
+tables=[
+   'stock_inventory',
+   'stock_inventory_line',
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+    debut = Log(debut, table)
+tables=[
+   'is_inventaire_inventory',
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+    debut = Log(debut, table)
+#******************************************************************************
+
+
+# #** Migration inventory_id ****************************************************
+# SQL="SELECT id,inventory_id FROM stock_move"
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     SQL="UPDATE stock_move SET inventory_id=%s WHERE id=%s"
+#     cr_dst.execute(SQL,[row['inventory_id'],row['id']])
+# cnx_dst.commit()
+# #******************************************************************************
 
 
 #** Envoi des mails toutes les minutes et non pas toutes les heures
@@ -2275,7 +2406,27 @@ debut = Log(debut, "Liens entre mail_message et account_invoice")
 #******************************************************************************
 
 
-
+#** is_gestion_demandes *******************************************************
+if soc=="0":
+    tables=[
+        'is_gestion_demandes_application',
+        'is_gestion_demandes',
+    ]
+    for table in tables:
+        MigrationTable(db_src,db_dst,table)
+        debut = Log(debut, table)
+    # Champ facture => Ajout 0 devant si 3 chiffres
+    SQL="SELECT id,facture FROM is_gestion_demandes"
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        facture = row["facture"]
+        if facture and len(facture)==3:
+            facture="0%s"%facture
+        SQL="UPDATE is_gestion_demandes SET facture=%s WHERE id=%s"
+        cr_dst.execute(SQL,[facture,row['id']])
+    cnx_dst.commit()
+#******************************************************************************
 
 
 # #** pg_stock_move *************************************************************
