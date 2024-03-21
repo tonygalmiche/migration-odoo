@@ -15,37 +15,9 @@ cnx_dst   , cr_dst    = GetCR(db_dst)
 debut=datetime.now()
 
 
-
-
-
 #TODO : 
-#- Migrer les users 
-#- Migrer les droits des users
 #- Créer un groupe 'Admin odoo-glpi' car l'admin n'a plus aucun accès
-#- Migrer toutes les tables ayant des données
-#- Migrer les pieces jointes
 #- Automatiser le processus de migration
-
-
-
-
-# ** ir_filters ***************************************************************
-# ** Si le filtre n'a pas d'action associée il sera visible dans tous les menus du modèle
-# ** Et comme l'id de l'action change lors du changement de version, il est préférable de vider ce champ
-default = {'sort': []}
-MigrationTable(db_src,db_dst,"ir_filters", default=default)
-SQL="""
-    update ir_filters set action_id=NULL, active='t';
-    update ir_filters set user_id=2 where user_id=1;
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-#******************************************************************************
-
-
-
-sys.exit()
-
 
 
 tables=[
@@ -226,5 +198,19 @@ MigrationTable(db_src,db_dst,table,default=default)
 #** mail_message_subtype ******************************************************
 table = 'mail_message_subtype'
 MigrationTable(db_src,db_dst,table,text2jsonb=True)
+#******************************************************************************
+
+
+# ** ir_filters ***************************************************************
+# ** Si le filtre n'a pas d'action associée il sera visible dans tous les menus du modèle
+# ** Et comme l'id de l'action change lors du changement de version, il est préférable de vider ce champ
+default = {'sort': []}
+MigrationTable(db_src,db_dst,"ir_filters", default=default)
+SQL="""
+    update ir_filters set action_id=NULL, active='t';
+    update ir_filters set user_id=2 where user_id=1;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
 

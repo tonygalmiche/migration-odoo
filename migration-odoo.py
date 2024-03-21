@@ -3,8 +3,8 @@
 from migration_fonction import *
 
 #** Paramètres *****************************************************************
-db_src = "pg-odoo8-3"
-db_dst = "pg-odoo16-3"
+db_src = "pg-odoo8-1"
+db_dst = "pg-odoo16-1"
 #*******************************************************************************
 
 
@@ -179,7 +179,7 @@ if action=='compare_tables':
     tables.sort()                    # Trier
     nb=len(tables)
     ct=0
-    print(s('ct/nb',10),s('table',60),s('nb_src',10),s('nb_dst',10),s('nb_champs_src',15),s('nb_champs_dst',15),s('test1',10),s('test2',10))
+    print(s('ct/nb',10),'\t',s('table',60),'\t',s('nb_src',10),'\t',s('nb_dst',10),'\t',s('nb_champs_src',15),'\t',s('nb_champs_dst',15),'\t',s('test1',10),'\t',s('test2',10))
     for table in tables:
         ct+=1
         nb_src = nb_dst = nb_champs_src = nb_champs_dst = ''
@@ -202,7 +202,7 @@ if action=='compare_tables':
             if nb_src!=nb_dst:
                 test5='test5'
 
-        print(s(str(ct)+'/'+str(nb),10),s(table,50),s(nb_src,8),s(nb_dst,8),s(nb_champs_src,8),s(nb_champs_dst,8),s(test1,6),s(test2,6),s(test3,6),s(test4,6),s(test5,6))
+        print(s(str(ct)+'/'+str(nb),10),'\t',s(table,50),'\t',s(nb_src,8),'\t',s(nb_dst,8),'\t',s(nb_champs_src,8),'\t',s(nb_champs_dst,8),'\t',s(test1,6),'\t',s(test2,6),'\t',s(test3,6),'\t',s(test4,6),'\t',s(test5,6))
     print("test1 : nb_src=='' or nb_dst==''")
     print("test2 : str(nb_src)!=str(nb_dst)")
     print("test3 : nb_src>0 and nb_dst=='' => Données dans la table source et table de destination inexistante")

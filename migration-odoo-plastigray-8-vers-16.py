@@ -29,8 +29,6 @@ if soc not in ["0","1","3","4"]:
 #TODO L'unité de mesure kg définie sur la ligne de commande n'appartient pas à la même catégorie que l'unité de mesure m définie sur le produit. Veuillez corriger l'unité de mesure définie sur la ligne de commande ou sur le produit, elles doivent appartenir à la même catégorie.
 
 #TODO : Filtres de recherhce perso à migrer
-#TODO : Installer la derniere version d'Odoo 16 et repartir sur des bases vierges pour les 4 bases (attention aux pieces jointes)
-#TODO : Ne pas afficher les infobulle de l'assistant (cf Web Tours Disabled) => Pas important car uniquement pour admin
 #TODO : Faire vérfication intégrite bases après chaque migration : 
 # cat /media/sf_dev_odoo/migration-odoo/controle-integrite-bdd.sql | psql pg-odoo16-1
 #TODO : En utilisant les fonctions XML-RPC (OF, commandes,...), cela change les champ write_date et write uid
@@ -63,82 +61,20 @@ debut=datetime.now()
 
 
 
-#** is_famille_achat_res_partner_rel *******************************************
-MigrationTable(db_src,db_dst,'is_famille_achat_res_partner_rel')
-#******************************************************************************
-
-
-
-
-
-sys.exit()
-
-
-# ** image dans product_template dans ir_attachment ***************************
-models,uid,password = XmlRpcConnection(db_dst)
-SQL="SELECT id,image,name  from product_template where image is not null order by name"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-nb=len(rows)
-ct=1
-for row in rows:
-    ImageField2IrAttachment(models,db_dst,uid,password,"product.template",row["id"],row["image"])
-    print(ct,"/",nb,row["name"])
-    ct+=1
-#*******************************************************************************
-
-
-
-
-sys.exit()
-
-
-
-#** rapport_controle_attachment_rel *******************************************
-MigrationTable(db_src,db_dst,'rapport_controle_attachment_rel')
-#******************************************************************************
-
-
-sys.exit()
-
-
-
-
-
-#** mail_group ****************************************************************
-default = {'access_mode': 'public'}
-MigrationTable(db_src,db_dst,'mail_group',default=default,text2jsonb=True)
-
-#******************************************************************************
- 
-
-sys.exit()
-
-
-
-AddUserGroupToOtherGroup(db_dst, "is_employes_hors_production_group", "group_show_line_subtotals_tax_excluded") # Montant HT sur les factures
-
-
-sys.exit()
-
-
-ids=InvoiceIds2MoveIds(cr_src)
-SQL="""
-    SELECT id,supplier_invoice_number
-    FROM account_invoice
-    WHERE supplier_invoice_number is not null
-"""
+#** is_proforma_chine_mold_rel **************************************
+SQL="SELECT proforma_id,mold_id  FROM is_proforma_chine_mold_rel"
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
 for row in rows:
-    move_id = ids[row['id']]
-    SQL="UPDATE account_move SET supplier_invoice_number=%s WHERE id=%s"
-    cr_dst.execute(SQL,[row['supplier_invoice_number'],move_id])
-
-    print(row["supplier_invoice_number"])
-
-
+    SQL="""
+        INSERT INTO is_proforma_chine_mold_rel (proforma_id, mold_id)
+        VALUES (%s,%s)
+        ON CONFLICT DO NOTHING
+    """
+    cr_dst.execute(SQL,[row['proforma_id'],row['mold_id']])
 cnx_dst.commit()
+#******************************************************************************
+
 
 
 
@@ -146,14 +82,140 @@ cnx_dst.commit()
 sys.exit()
 
 
+debut = Log(debut, "** Début migration %s ***********************************************"%(db_dst))
+tables=[
+    'auditlog_rule',
+    'auditlog_http_request',
+    'auditlog_http_session',
+    'auditlog_log',
+    'auditlog_log_line',
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+    debut = Log(debut, table)
+
+
+#** Liens entre model_id db_src et db_dst *************************************
+models={}
+SQL="select id,model from ir_model"
+cr_src.execute(SQL,)
+rows_src = cr_src.fetchall()
+for row_src in rows_src:
+    model=row_src["model"]
+    if model=='stock.production.lot':
+        model='stock.lot'
+    SQL="select id from ir_model where model=%s"
+    cr_dst.execute(SQL,[model])
+    rows_dst = cr_dst.fetchall()
+    for row_dst in rows_dst:
+        models[row_src["id"]]=row_dst["id"]
+#******************************************************************************
+
+
+#** update model_id auditlog_rule *********************************************
+SQL="select id,name,model_id from auditlog_rule order by name"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    model_id = models[row["model_id"]]
+    SQL="update auditlog_rule set model_id=%s where id=%s"
+    cr_dst.execute(SQL,(model_id,row["id"]))
+cnx_dst.commit()
+debut = Log(debut, "fin update auditlog_rule")
+#******************************************************************************
+
+
+#** update auditlog_log *******************************************************
+SQL="select id,model_id from auditlog_log"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    model_id = models[row["model_id"]]
+    SQL="update auditlog_log set model_id=%s where id=%s"
+    cr_dst.execute(SQL,(model_id,row["id"]))
+cnx_dst.commit()
+debut = Log(debut, "fin update auditlog_log")
+#******************************************************************************
+
+
+#** Liens entre field_id db_src et db_dst *************************************
+fields={}
+SQL="select id,model_id,name from ir_model_fields"
+cr_src.execute(SQL,)
+rows_src = cr_src.fetchall()
+for row_src in rows_src:
+    name = row_src["name"]
+    model_id = False
+    if row_src["model_id"] in models:
+        model_id = models[row_src["model_id"]]
+    if model_id:
+        #print(model_id, name)
+        SQL="select id, field_description->>'fr_FR' fr, field_description->>'en_US' en from ir_model_fields where model_id=%s and name=%s"
+        cr_dst.execute(SQL,[model_id,name])
+        rows_dst = cr_dst.fetchall()
+        for row_dst in rows_dst:
+            #print(row_dst)
+            description = row_dst["fr"] or row_dst["en"]
+            #print(model_id, name, description)
+            fields[row_src["id"]] = (row_dst["id"], name, description)
+#******************************************************************************
+
+
+#** update auditlog_log_line **************************************************
+SQL="select distinct field_id from auditlog_log_line"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    field = False
+    if row["field_id"] in fields:
+        field = fields[row["field_id"]]
+        field_id          = field[0]
+        field_name        = field[1]
+        field_description = field[2]
+        SQL="update auditlog_log_line set field_id=%s, field_name=%s, field_description=%s where field_id=%s"
+        cr_dst.execute(SQL,(field_id,field_name,field_description,row["field_id"]))
+        debut = Log(debut, "%s : %s"%(field_id,field_name))
+cnx_dst.commit()
+debut = Log(debut, "fin update auditlog_log_line")
+#******************************************************************************
+
+
+debut = Log(debut, "** Fin migration %s ***********************************************"%(db_dst))
+
+sys.exit()
+
+
+
+
+
+
+
+
+
+# ** ir_filters ***************************************************************
+default = {
+    'sort': '[]',
+    'active': True,
+}
+MigrationTable(db_src,db_dst,'ir_filters', default=default)
+# ** Si le filtre n'a pas d'action associée il sera visible dans tous les menus du modèle
+# ** il faut supprimer les action_id mais avant, il faut supprimer les doublons
+SQL="select model_id,user_id,lower(name) name,count(*),max(id) id from ir_filters group by model_id,user_id,lower(name)  having count(*)>1"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="delete from ir_filters where model_id=%s and user_id=%s and lower(name)=%s and id<>%s"
+    cr_dst.execute(SQL,[row['model_id'],row['user_id'],row['name'],row['id']])
+cnx_dst.commit()
+#Supprimer action_id car celle-ci n'est plus la même et uid admin passe de 1 à 2
 SQL="""
-    delete from mail_tracking_value;
-    delete from mail_channel_member;
-    delete from pg_stock_move ;
-    delete from mail_mail_res_partner_rel;
+    update ir_filters set action_id=NULL;
+    update ir_filters set user_id=2 where user_id=1;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
+#******************************************************************************
+
 
 
 sys.exit()
@@ -2207,11 +2269,17 @@ MigrationDonneesTable(db_src,db_dst,'res_company')
 
 
 #** company_colors ************************************************************
+# company_colors={
+#     "0": '{"color_navbar_bg": "#0c94d4", "color_navbar_bg_hover": "#0c94d4", "color_navbar_text": "#000", "color_button_bg": "#eeeeec", "color_button_bg_hover": "#000000", "color_button_text": "#000000", "color_link_text": "#000000", "color_link_text_hover": "#000000"}',
+#     "1": '{"color_navbar_bg": "#0066cc", "color_navbar_bg_hover": "#0066cc", "color_navbar_text": "#000", "color_button_bg": "#f3f3f3", "color_button_bg_hover": "#000000", "color_button_text": "#000000", "color_link_text": "#000000", "color_link_text_hover": "#000000"}',
+#     "3": '{"color_navbar_bg": "#e70013", "color_navbar_bg_hover": "#e70013", "color_navbar_text": "#2e3436", "color_button_bg": "#ffffff", "color_button_bg_hover": "#2e3436", "color_button_text": "#2e3436", "color_link_text": "#2e3436", "color_link_text_hover": "#2e3436"}',
+#     "4": '{"color_navbar_bg": "#000000", "color_navbar_bg_hover": "#000000", "color_navbar_text": "#ffffff", "color_button_bg": "#ffffff", "color_button_bg_hover": "#000000", "color_button_text": "#fce94f", "color_link_text": "#0c94d4", "color_link_text_hover": "#0c94d4"}',
+# }
 company_colors={
-    "0": '{"color_navbar_bg": "#0c94d4", "color_navbar_bg_hover": "#0c94d4", "color_navbar_text": "#000", "color_button_bg": "#eeeeec", "color_button_bg_hover": "#000000", "color_button_text": "#000000", "color_link_text": "#000000", "color_link_text_hover": "#000000"}',
-    "1": '{"color_navbar_bg": "#0066cc", "color_navbar_bg_hover": "#0066cc", "color_navbar_text": "#000", "color_button_bg": "#f3f3f3", "color_button_bg_hover": "#000000", "color_button_text": "#000000", "color_link_text": "#000000", "color_link_text_hover": "#000000"}',
-    "3": '{"color_navbar_bg": "#e70013", "color_navbar_bg_hover": "#e70013", "color_navbar_text": "#2e3436", "color_button_bg": "#ffffff", "color_button_bg_hover": "#2e3436", "color_button_text": "#2e3436", "color_link_text": "#2e3436", "color_link_text_hover": "#2e3436"}',
-    "4": '{"color_navbar_bg": "#000000", "color_navbar_bg_hover": "#000000", "color_navbar_text": "#ffffff", "color_button_bg": "#ffffff", "color_button_bg_hover": "#000000", "color_button_text": "#fce94f", "color_link_text": "#0c94d4", "color_link_text_hover": "#0c94d4"}',
+    "0": '{"color_navbar_bg": "#0c94d4", "color_navbar_bg_hover": "#0c94d4", "color_navbar_text": "#000", "color_button_bg": "#c8c8c1", "color_button_bg_hover": "#000000", "color_button_text": "#000000", "color_link_text": "#000000", "color_link_text_hover": "#000000"}',
+    "1": '{"color_navbar_bg": "#91c8ff", "color_navbar_bg_hover": "#7dbeff", "color_navbar_text": "#000", "color_button_bg": "#75baff", "color_button_bg_hover": "#000000", "color_button_text": "#ffffff", "color_link_text": "#0080ff", "color_link_text_hover": "#000000"}',
+    "3": '{"color_navbar_bg": "#ff8080", "color_navbar_bg_hover": "#ff8080", "color_navbar_text": "#000000", "color_button_bg": "#ff8080", "color_button_bg_hover": "#000000", "color_button_text": "#ffffff", "color_link_text": "#0080ff", "color_link_text_hover": "#000000"}',
+    "4": '{"color_navbar_bg": "#00d269", "color_navbar_bg_hover": "#00d269", "color_navbar_text": "#000", "color_button_bg": "#00d269", "color_button_bg_hover": "#000000", "color_button_text": "#ffffff", "color_link_text": "#0080ff", "color_link_text_hover": "#000000"}',
 }
 SQL="update res_company set company_colors=%s"
 cr_dst.execute(SQL,[company_colors[soc]])
@@ -2332,7 +2400,6 @@ debut = Log(debut, "sale_order_line_invoice_rel")
 #** sale.order : external_compute_delivery_status *****************************
 models,uid,password = XmlRpcConnection(db_dst)
 res = models.execute(db_dst, uid, password, 'sale.order', 'external_compute_delivery_status', [])
-debut = Log(debut, "_compute_delivery_status")
 debut = Log(debut, "external_compute_delivery_status")
 #******************************************************************************
 
@@ -2427,6 +2494,65 @@ if soc=="0":
         cr_dst.execute(SQL,[facture,row['id']])
     cnx_dst.commit()
 #******************************************************************************
+
+
+#** is_famille_achat_res_partner_rel *******************************************
+MigrationTable(db_src,db_dst,'is_famille_achat_res_partner_rel')
+#******************************************************************************
+
+
+# ** image dans product_template dans ir_attachment ***************************
+models,uid,password = XmlRpcConnection(db_dst)
+SQL="SELECT id,image,name  from product_template where image is not null order by name"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+nb=len(rows)
+ct=1
+for row in rows:
+    ImageField2IrAttachment(models,db_dst,uid,password,"product.template",row["id"],row["image"])
+    print(ct,"/",nb,row["name"])
+    ct+=1
+#*******************************************************************************
+
+
+#** rapport_controle_attachment_rel *******************************************
+MigrationTable(db_src,db_dst,'rapport_controle_attachment_rel')
+#******************************************************************************
+
+
+#** mail_group ****************************************************************
+default = {'access_mode': 'public'}
+MigrationTable(db_src,db_dst,'mail_group',default=default,text2jsonb=True)
+#******************************************************************************
+ 
+
+AddUserGroupToOtherGroup(db_dst, "is_employes_hors_production_group", "group_show_line_subtotals_tax_excluded") # Montant HT sur les factures
+
+
+
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="""
+    SELECT id,supplier_invoice_number
+    FROM account_invoice
+    WHERE supplier_invoice_number is not null
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    move_id = ids[row['id']]
+    SQL="UPDATE account_move SET supplier_invoice_number=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['supplier_invoice_number'],move_id])
+cnx_dst.commit()
+
+
+SQL="""
+    delete from mail_tracking_value;
+    delete from mail_channel_member;
+    delete from pg_stock_move ;
+    delete from mail_mail_res_partner_rel;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 
 
 # #** pg_stock_move *************************************************************
