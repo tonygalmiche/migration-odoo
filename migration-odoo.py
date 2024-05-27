@@ -3,8 +3,8 @@
 from migration_fonction import *
 
 #** Paramètres *****************************************************************
-db_src = "pg-odoo8-1"
-db_dst = "pg-odoo16-1"
+db_src = "gestion-odoo12"
+db_dst = "gestion-odoo16"
 #*******************************************************************************
 
 
