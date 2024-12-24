@@ -4,9 +4,21 @@ from migration_fonction import *
 import os
 
 
+#TODO : 
+# Manque les affaires sur les factures
+# account_payment
+# Pieces joints
+# Actviviés (serveur, factures et parnter)
+# Menu CRM / Facture à revoir (context en création)
+# PDF des factures à faire
+# Désactvier l'apercu de la facture dans la vue PDF
+# Mettre les activités en bas si le module communiatire existe
+
+
+
 #** Paramètres ****************************************************************
 db_src = "gestion-odoo12"
-db_dst = "gestion-odoo16"
+db_dst = "gestion-odoo18"
 #******************************************************************************
 
 cnx,cr=GetCR(db_src)
@@ -19,12 +31,6 @@ cnx_dst,cr_dst=GetCR(db_dst)
 SQL="""
     delete from account_partial_reconcile ;
     delete from account_move;
-    delete from mail_channel;
-    delete from mail_alias;
-    delete from mail_mail;
-    delete from mail_message;
-    delete from mail_message_subtype;
-    delete from mail_followers;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -32,21 +38,26 @@ cnx_dst.commit()
 
 
 #** res_partner ***************************************************************
-MigrationTable(db_src,db_dst,'res_partner')
+default={
+    "autopost_bills": "ask",
+}
+MigrationTable(db_src,db_dst,'res_partner', default=default)
+SQL="UPDATE res_partner set complete_name=name"
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
-
 
 
 #** product *******************************************************************
 default={
-    "detailed_type": "consu",
+    "service_tracking": "no",
+    "sale_line_warn": "no-message",
 }
 MigrationTable(db_src,db_dst,'product_template',text2jsonb=True, default=default)
 MigrationTable(db_src,db_dst,'product_product')
 #******************************************************************************
 
-
-
+  
 # ** Tables diverses **********************************************************
 tables=[
     "is_affaire",                                         
@@ -60,8 +71,69 @@ for table in tables:
 #******************************************************************************
 
 
+#** account_account ***********************************************************
+table='account_account'
+rename={
+    'user_type': 'user_type_id',
+}
+default={
+    'account_type': 'income',
+}
+MigrationTable(db_src,db_dst,table,rename=rename,default=default,text2jsonb=True)
+#******************************************************************************
+
+#** account_account : code => code_store **************************************
+SQL="SELECT id,code FROM account_account order by code"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    code = row['code']
+    val=json.dumps({'1': code})
+    SQL="UPDATE account_account SET code_store=%s WHERE id=%s"
+    cr_dst.execute(SQL,[val,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+#** account_account : internal_group => account_type **************************
+mydict={
+    'liability': 'liability_current',
+    'equity'   : 'equity',
+    'expense'  : 'expense',
+    'income'   : 'income',
+    'asset'    : 'asset_current',
+}
+SQL="SELECT id,internal_group FROM account_account order by internal_group"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:    
+    internal_group = row['internal_group']
+    account_type = mydict.get(internal_group)
+    if internal_group:
+        SQL="UPDATE account_account SET account_type=%s WHERE id=%s"
+        cr_dst.execute(SQL,[account_type,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_payment *********************************************************
+default={
+    "company_id": 1,
+}
+rename={
+    'payment_date': 'date'
+}
+MigrationTable(db_src,db_dst,'account_payment', default=default, rename=rename)
+SQL="UPDATE res_partner set complete_name=name"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+
+
 #** account_move_line *********************************************************
-MigrationTable(db_src,db_dst,'account_payment')
+
 MigrationTable(db_src,db_dst,'account_full_reconcile')
 rename={
     'amount': 'amount_total'
@@ -86,17 +158,23 @@ MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line',
 
 
 
-# Recherche du compte 411200 pour le reglement ci-dessous *********************
-SQL="select id from account_account where code='411100'"
-destination_account_id=False
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    destination_account_id = row["id"]
-if not destination_account_id:
-    print("Compte 411100 non trouvé !")
-    sys.exit()
- #******************************************************************************
+
+
+
+
+
+
+# # Recherche du compte 411200 pour le reglement ci-dessous *********************
+# SQL="select id from account_account where code='411100'"
+# destination_account_id=False
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     destination_account_id = row["id"]
+# if not destination_account_id:
+#     print("Compte 411100 non trouvé !")
+#     sys.exit()
+#  #******************************************************************************
 
 
 
@@ -253,8 +331,11 @@ SQL="""
     update account_move_line set amount_currency=balance where amount_currency=0;
     update account_move_line set price_subtotal=(credit-debit) where price_subtotal is null;
     update account_move_line set price_total=(credit-debit) where price_total is null;
+    update account_move set currency_id=(select currency_id from res_company limit 1);
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
 
