@@ -6,6 +6,7 @@ import os
 
 #TODO : 
 # Manque les affaires sur les factures
+# Pb avec les codes comptable des taxes sur les factures (445x)
 # account_payment
 # Pieces joints
 # Actviviés (serveur, factures et parnter)
@@ -31,6 +32,7 @@ cnx_dst,cr_dst=GetCR(db_dst)
 SQL="""
     delete from account_partial_reconcile ;
     delete from account_move;
+    delete from mail_followers;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -48,6 +50,34 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** ir_default ****************************************************************
+SetDefaultValue(db_dst, 'res.partner', 'property_account_payable_id'   , '401100')
+SetDefaultValue(db_dst, 'res.partner', 'property_account_receivable_id', '411100')
+#******************************************************************************
+
+
+
+
+
+
+#sys.exit()
+
+
+#** product_category **********************************************************
+MigrationTable(db_src,db_dst,'product_category')
+property_account_income_categ_id  = JsonAccountCode2Id(cr_dst,'707100')
+property_account_expense_categ_id = JsonAccountCode2Id(cr_dst,'607100')
+SQL="SELECT id FROM product_category"
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_income_categ_id' , 1, property_account_income_categ_id)
+    set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_expense_categ_id', 1, property_account_expense_categ_id)
+#******************************************************************************
+
+
+
+
 #** product *******************************************************************
 default={
     "service_tracking": "no",
@@ -55,7 +85,13 @@ default={
 }
 MigrationTable(db_src,db_dst,'product_template',text2jsonb=True, default=default)
 MigrationTable(db_src,db_dst,'product_product')
+property_account_income_id  = JsonAccountCode2Id(cr_dst,'706000')
+set_json_property(cr_dst,cnx_dst,'product_template', 1, 'property_account_income_id' , 1, property_account_income_id)
+property_account_income_id  = JsonAccountCode2Id(cr_dst,'706100')
+set_json_property(cr_dst,cnx_dst,'product_template', 2, 'property_account_income_id' , 1, property_account_income_id)
 #******************************************************************************
+
+
 
   
 # ** Tables diverses **********************************************************
@@ -96,11 +132,11 @@ cnx_dst.commit()
 
 #** account_account : internal_group => account_type **************************
 mydict={
-    'liability': 'liability_current',
+    'liability': 'liability_payable',
     'equity'   : 'equity',
     'expense'  : 'expense',
     'income'   : 'income',
-    'asset'    : 'asset_current',
+    'asset'    : 'asset_receivable',
 }
 SQL="SELECT id,internal_group FROM account_account order by internal_group"
 cr_src.execute(SQL)
@@ -113,6 +149,29 @@ for row in rows:
         cr_dst.execute(SQL,[account_type,row['id']])
 cnx_dst.commit()
 #******************************************************************************
+
+
+# selection=[
+#     ("asset_receivable", "Receivable"),
+#     ("asset_cash", "Bank and Cash"),
+#     ("asset_current", "Current Assets"),
+#     ("asset_non_current", "Non-current Assets"),
+#     ("asset_prepayments", "Prepayments"),
+#     ("asset_fixed", "Fixed Assets"),
+#     ("liability_payable", "Payable"),
+#     ("liability_credit_card", "Credit Card"),
+#     ("liability_current", "Current Liabilities"),
+#     ("liability_non_current", "Non-current Liabilities"),
+#     ("equity", "Equity"),
+#     ("equity_unaffected", "Current Year Earnings"),
+#     ("income", "Income"),
+#     ("income_other", "Other Income"),
+#     ("expense", "Expenses"),
+#     ("expense_depreciation", "Depreciation"),
+#     ("expense_direct_cost", "Cost of Revenue"),
+#     ("off_balance", "Off-Balance Sheet"),
+# ],
+
 
 
 #** account_payment *********************************************************
@@ -332,6 +391,8 @@ SQL="""
     update account_move_line set price_subtotal=(credit-debit) where price_subtotal is null;
     update account_move_line set price_total=(credit-debit) where price_total is null;
     update account_move set currency_id=(select currency_id from res_company limit 1);
+    update account_move_line set currency_id=(select currency_id from res_company limit 1);
+    update account_move_line set company_currency_id=(select currency_id from res_company limit 1);
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -339,3 +400,13 @@ cnx_dst.commit()
 
 
 
+
+#** Enlever les écritures de TVA des lignes de factures ***********************
+SQL="""
+    update account_move_line set display_type='payment_term' 
+        where account_id in (select id from account_account where account_type in ('asset_receivable', 'liability_payable'));
+    update account_move_line set display_type='tax' where tax_line_id is not null;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************

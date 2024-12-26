@@ -546,6 +546,17 @@ def GetFielsdId(cr,model,field):
     return fields_id
 
 
+
+def SetDefaultValue(db,model,field_name,account_code):
+    "Valeurs par défaut dans la nouvelle table de Odoo 18 ir_default"
+    cnx,cr=GetCR(db)
+    field_id = GetFielsdId(cr,model,field_name)
+    account_id = JsonAccountCode2Id(cr,account_code) 
+    SQL="UPDATE ir_default SET json_value=%s WHERE field_id=%s"
+    cr.execute(SQL,[account_id,field_id])
+    cnx.commit()
+
+
 def GetCountrySrc2Dst(cr_src,cr_dst):
     """Correspondance entre les id src et dst de res_country"""
     SQL="""
@@ -588,6 +599,10 @@ def MigrationChampTable(db_src,db_dst,table,champ,ids):
                 ]
             )
     cnx_dst.commit()
+
+
+#def getPropertyValue(db,model,property)
+
 
 
 def MigrationIrProperty2Field(db_src,db_dst,model,property_src,field_dst):
@@ -660,6 +675,18 @@ def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
     cnx_dst.commit()
 
 
+# Cette fonction dans Odoo retourne les comptes (account_id) pas défaut en fonction de la localisation fiscale
+# def _get_fr_template_data(self):
+#     return {
+#         'code_digits': 6,
+#         'property_account_receivable_id': 'fr_pcg_recv',
+#         'property_account_payable_id': 'fr_pcg_pay',
+#         'property_account_expense_categ_id': 'pcg_607_account',
+#         'property_account_income_categ_id': 'pcg_707_account',
+#         'property_account_downpayment_categ_id': 'pcg_4191',
+#     }
+
+
 def AccountCode2Id(cr,code):
     SQL="select id from account_account where code=%s limit 1"
     cr.execute(SQL,[code])
@@ -668,6 +695,25 @@ def AccountCode2Id(cr,code):
     for row in rows:
         id=row["id"]
     return id
+
+
+def JsonAccountCode2Id(cr,code,key=1):
+    "Depuis Odoo 18, les properties sont enregistrées en json directement dans les tables"
+    SQL="select id from account_account where code_store->>'%s'='%s' limit 1"%(key,code)
+    cr.execute(SQL)
+    rows = cr.fetchall()
+    id=False
+    for row in rows:
+        id=row["id"]
+    return id
+
+
+def set_json_property(cr,cnx,table,id,field_name,key,val):
+    "Depuis Odoo 18, les properties sont enregistrées en json directement dans les tables"
+    json_val=json.dumps({key: val})
+    SQL="UPDATE "+table+" SET "+field_name+"=%s WHERE id=%s"
+    cr.execute(SQL,[json_val,id])
+    cnx.commit()
 
 
 def GetFiscalPositionPartner(cr,partner_id):
