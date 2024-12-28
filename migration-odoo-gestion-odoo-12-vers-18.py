@@ -5,16 +5,12 @@ import os
 
 
 #TODO : 
-# Manque les affaires sur les factures
-# Pb avec les codes comptable des taxes sur les factures (445x)
-# account_payment
-# Pieces joints
-# Actviviés (serveur, factures et parnter)
-# Menu CRM / Facture à revoir (context en création)
+# Pb avec la postion fiscale des clients
+# Ajouter les taxes sur les articles, categories ou fiche société
+# Pieces jointes
 # PDF des factures à faire
 # Désactvier l'apercu de la facture dans la vue PDF
 # Mettre les activités en bas si le module communiatire existe
-
 
 
 #** Paramètres ****************************************************************
@@ -28,11 +24,31 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
 
+
+
+
+
 # ** purge des tests **********************************************************
 SQL="""
     delete from account_partial_reconcile ;
     delete from account_move;
+    delete from account_account_res_company_rel;
     delete from mail_followers;
+
+    ALTER TABLE account_move_line DISABLE TRIGGER ALL;
+    delete from account_move_line;
+    ALTER TABLE account_move_line ENABLE TRIGGER ALL;
+
+    ALTER TABLE account_tax_repartition_line DISABLE TRIGGER ALL;
+    delete from account_tax_repartition_line;
+    ALTER TABLE account_tax_repartition_line ENABLE TRIGGER ALL;
+
+    ALTER TABLE account_account_tag_account_tax_repartition_line_rel DISABLE TRIGGER ALL;
+    delete from account_account_tag_account_tax_repartition_line_rel;
+    ALTER TABLE account_account_tag_account_tax_repartition_line_rel ENABLE TRIGGER ALL;
+
+    update res_company set account_purchase_tax_id=1;
+    update res_company set account_sale_tax_id=2;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -49,19 +65,10 @@ cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
-
 #** ir_default ****************************************************************
 SetDefaultValue(db_dst, 'res.partner', 'property_account_payable_id'   , '401100')
 SetDefaultValue(db_dst, 'res.partner', 'property_account_receivable_id', '411100')
 #******************************************************************************
-
-
-
-
-
-
-#sys.exit()
-
 
 #** product_category **********************************************************
 MigrationTable(db_src,db_dst,'product_category')
@@ -74,9 +81,6 @@ for row in rows:
     set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_income_categ_id' , 1, property_account_income_categ_id)
     set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_expense_categ_id', 1, property_account_expense_categ_id)
 #******************************************************************************
-
-
-
 
 #** product *******************************************************************
 default={
@@ -91,9 +95,6 @@ property_account_income_id  = JsonAccountCode2Id(cr_dst,'706100')
 set_json_property(cr_dst,cnx_dst,'product_template', 2, 'property_account_income_id' , 1, property_account_income_id)
 #******************************************************************************
 
-
-
-  
 # ** Tables diverses **********************************************************
 tables=[
     "is_affaire",                                         
@@ -105,7 +106,6 @@ tables=[
 for table in tables:
     MigrationTable(db_src,db_dst,table)
 #******************************************************************************
-
 
 #** account_account ***********************************************************
 table='account_account'
@@ -150,29 +150,74 @@ for row in rows:
 cnx_dst.commit()
 #******************************************************************************
 
+#** account_account_res_company_rel *******************************************
+SQL="SELECT id FROM account_account"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:  
+    SQL="""
+        INSERT INTO account_account_res_company_rel (account_account_id,res_company_id)
+        VALUES (%s,1)
+    """
+    cr_dst.execute(SQL,[row['id']])
+cnx_dst.commit()
+#******************************************************************************
 
-# selection=[
-#     ("asset_receivable", "Receivable"),
-#     ("asset_cash", "Bank and Cash"),
-#     ("asset_current", "Current Assets"),
-#     ("asset_non_current", "Non-current Assets"),
-#     ("asset_prepayments", "Prepayments"),
-#     ("asset_fixed", "Fixed Assets"),
-#     ("liability_payable", "Payable"),
-#     ("liability_credit_card", "Credit Card"),
-#     ("liability_current", "Current Liabilities"),
-#     ("liability_non_current", "Non-current Liabilities"),
-#     ("equity", "Equity"),
-#     ("equity_unaffected", "Current Year Earnings"),
-#     ("income", "Income"),
-#     ("income_other", "Other Income"),
-#     ("expense", "Expenses"),
-#     ("expense_depreciation", "Depreciation"),
-#     ("expense_direct_cost", "Cost of Revenue"),
-#     ("off_balance", "Off-Balance Sheet"),
-# ],
+# account_account account_type ************************************************
+cr_dst.execute("update account_account set account_type='asset_current' where code_store->>'1' like '445%'") # Dette à court terme pour la TVA
+cnx_dst.commit()
+#******************************************************************************
 
+#** account_tax_group *********************************************************
+rename={
+    #'type':'amount_type'
+}
+default={
+    "company_id": 1,
+}
+MigrationTable(db_src,db_dst,'account_tax_group',rename=rename,default=default,text2jsonb=True)
+#******************************************************************************
 
+#** account_tax **************************************************************
+rename={
+    'type':'amount_type'
+}
+default={
+    "tax_group_id": 1,
+    "country_id"  : 75,
+}
+MigrationTable(db_src,db_dst,'account_tax',rename=rename,default=default,text2jsonb=True)
+#******************************************************************************
+
+#** Ajouter les comptes sur les taxes *****************************************    
+cr_dst.execute("delete from account_tax_repartition_line")
+SQL="SELECT id, account_id,refund_account_id FROM account_tax"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    id = row["id"]
+    SQL="""
+        INSERT INTO account_tax_repartition_line (document_type,factor_percent,repartition_type, tax_id, company_id, sequence, use_in_tax_closing)
+        VALUES (%s,%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,['invoice',0,'base',id,1,1,False])
+    SQL="""
+        INSERT INTO account_tax_repartition_line (document_type,factor_percent,repartition_type, tax_id, company_id, sequence, use_in_tax_closing)
+        VALUES (%s,%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,['refund',0,'base',id,1,1,False])
+    SQL="""
+    INSERT INTO account_tax_repartition_line (document_type,factor_percent,repartition_type, tax_id, company_id, sequence, use_in_tax_closing, account_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,['invoice',100,'tax',id,1,1,True,row["account_id"]])
+    SQL="""
+    INSERT INTO account_tax_repartition_line (document_type,factor_percent,repartition_type, tax_id, company_id, sequence, use_in_tax_closing, account_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s);
+    """
+    cr_dst.execute(SQL,['refund',100,'tax',id,1,1,True,row["refund_account_id"]])
+cnx_dst.commit()
+#******************************************************************************
 
 #** account_payment *********************************************************
 default={
@@ -187,12 +232,7 @@ cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
-
-
-
-
 #** account_move_line *********************************************************
-
 MigrationTable(db_src,db_dst,'account_full_reconcile')
 rename={
     'amount': 'amount_total'
@@ -201,6 +241,12 @@ default={
     'move_type'  : 'entry',
     'currency_id': 1,
     'auto_post': 'no',
+    'is_storno': False,
+    'always_tax_exigible': False,
+    'checked': True,
+    'posted_before': True,
+    'made_sequence_gap': True,
+    'invoice_currency_rate': 1,
 }
 MigrationTable(db_src,db_dst,'account_move'     , table_dst='account_move'     , rename=rename,default=default)
 default={
@@ -209,13 +255,12 @@ default={
     'credit': 0,
     'amount_currency': 0,
     'display_type': 'product',
+    'is_imported': False,
+    'tax_tag_invert': False,
 }
 rename={}
 MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
 #******************************************************************************
-
-
-
 
 
 
@@ -285,7 +330,10 @@ SQL="""
         ai.fiscal_position_id,
         ai.name move_name,
         ai.origin,
-        ai.payment_term_id
+        ai.payment_term_id,
+        ai.state,
+        ai.is_affaire_id,
+        ai.is_date_paiement
     from account_invoice ai inner join res_partner rp on ai.partner_id=rp.id 
     order by ai.id
 """
@@ -294,6 +342,14 @@ rows = cr_src.fetchall()
 nb=len(rows)
 ct=0
 for row in rows:
+    payment_states={
+        'draft': 'draft',
+        'cancel': 'cancel',
+        'paid': 'paid',
+        'open': 'not_paid',
+    }
+    payment_state = payment_states.get(row['state'], None)
+    sequence_number = int(row['number'] or '0')
     ct+=1
     move_id = row['move_id']
     if move_id:
@@ -315,7 +371,11 @@ for row in rows:
                 invoice_user_id=%s,
                 fiscal_position_id=%s,
                 invoice_origin=%s,
-                invoice_payment_term_id=%s
+                invoice_payment_term_id=%s,
+                payment_state=%s,
+                sequence_number=%s,
+                is_affaire_id=%s,
+                is_date_paiement=%s
             where id=%s
         """
         cr_dst.execute(SQL,(
@@ -335,6 +395,10 @@ for row in rows:
             row['fiscal_position_id'],
             row['origin'],
             row['payment_term_id'],
+            payment_state,
+            sequence_number,
+            row['is_affaire_id'],
+            row['is_date_paiement'],
             move_id
         ))
         SQL="""
@@ -344,7 +408,9 @@ for row in rows:
                 ail.name,
                 ail.price_unit,
                 ail.price_subtotal,
-                ail.sequence
+                ail.sequence,
+                ai.partner_id,
+                ai.state
             from account_invoice_line ail inner join account_invoice ai on ail.invoice_id=ai.id
             WHERE ai.id="""+str(row['id'])+"""
             order by ail.id
@@ -359,12 +425,15 @@ for row in rows:
                 UPDATE account_move_line 
                 set 
                     name=%s, 
+                    is_account_invoice_line_id=%s,
                     price_unit=%s,
                     price_subtotal=%s,
                     price_total=%s,
                     balance=(debit-credit),
                     amount_currency=(debit-credit),
-                    sequence=%s
+                    sequence=%s,
+                    partner_id=%s,
+                    parent_state=%s
                 WHERE id IN (
                     SELECT id
                     FROM account_move_line
@@ -375,28 +444,107 @@ for row in rows:
             """
             cr_dst.execute(SQL,(
                 row2['name'],
+                row2['id'],
                 row2['price_unit'],
                 row2['price_subtotal'],
                 row2['price_subtotal'],
                 row2['sequence'],
+                row2['partner_id'],
+                row2['state'],
                 move_id,
                 ct2
             ))
             ct2+=1
 cnx_dst.commit()
+
+ 
+
+
+
+
 SQL="""
     update account_move_line set price_unit=(credit-debit) where price_unit is null;
     update account_move_line set balance=(debit-credit) where balance is null;
     update account_move_line set amount_currency=balance where amount_currency=0;
     update account_move_line set price_subtotal=(credit-debit) where price_subtotal is null;
     update account_move_line set price_total=(credit-debit) where price_total is null;
-    update account_move set currency_id=(select currency_id from res_company limit 1);
     update account_move_line set currency_id=(select currency_id from res_company limit 1);
     update account_move_line set company_currency_id=(select currency_id from res_company limit 1);
+    update account_move_line set amount_residual_currency=amount_residual;
+    update account_move_line set invoice_date=date;
+
+    update account_move_line aml set parent_state=(select am.state from account_move am where am.id=aml.move_id); 
+    
+    update account_move set currency_id=(select currency_id from res_company limit 1);
+    update account_move set amount_untaxed_in_currency_signed=amount_untaxed_signed;
+    update account_move set amount_total_in_currency_signed=amount_total_signed;
+    update account_move set sequence_prefix='';
+ 
+    -- Correction bug sur compte 401/411 des factures de Plastigray
+    update account_move_line set account_id=281 where account_id=267;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
+# # ** Migration tax_code_id ****************************************************
+# SQL="""
+#     select aml.id move_line_id,aml.name,aml.tax_code_id,aml.debit,aml.credit,at.id tax_line_id
+#     from account_move_line aml inner join account_tax at on aml.tax_code_id=at.tax_code_id 
+# """
+# cr_src.execute(SQL)
+# rows = cr_src.fetchall()
+# for row in rows:
+#     SQL="""
+#         UPDATE account_move_line
+#         SET 
+#             tax_line_id=%s,
+#             tax_group_id=1,
+#             currency_id=1,
+#             company_currency_id=1,
+#             quantity=1
+#         WHERE id=%s
+#     """
+#     cr_dst.execute(SQL,[row["tax_line_id"],row["move_line_id"]])
+# cnx_dst.commit()
+# #******************************************************************************
+
+
+#** Migration des taxes sur les factures **************************************
+SQL="DELETE FROM account_move_line_account_tax_rel"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT invoice_line_id, tax_id  FROM account_invoice_line_tax order by invoice_line_id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="SELECT id FROM account_move_line WHERE is_account_invoice_line_id="+str(row['invoice_line_id'])
+    cr_dst.execute(SQL)
+    rows2 = cr_dst.fetchall()
+    for row2 in rows2:
+        SQL="""
+            INSERT INTO account_move_line_account_tax_rel (account_move_line_id, account_tax_id)
+            VALUES (%s,%s)
+            ON CONFLICT DO NOTHING
+        """
+        cr_dst.execute(SQL,[row2['id'],row['tax_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+#** account_move_line / tax_repartition_line_id *******************************
+SQL="""
+    update account_move_line set tax_repartition_line_id=(select id 
+    from account_tax_repartition_line where tax_id=tax_line_id and repartition_type='tax' limit 1) 
+    where tax_line_id is not null
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
 
 
 
@@ -410,3 +558,76 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+#** account_fiscal_position_tax ***********************************************
+default={
+}
+MigrationTable(db_src,db_dst,'account_fiscal_position_tax', default=default)
+#******************************************************************************
+
+#** mail **********************************************************************
+tables=[
+    "mail_mail",
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+#** mail_message *****************************************************************
+table = 'mail_message'
+default = {'message_type': 'notification'}
+MigrationTable(db_src,db_dst,table,default=default)
+#******************************************************************************
+
+# #** mail_notification *****************************************************************
+# table = 'mail_notification'
+# rename = {
+#     'message_id': 'mail_message_id',
+#     'partner_id': 'res_partner_id',
+# }
+# default = {'notification_type': 'email'}
+# MigrationTable(db_src,db_dst,table,rename=rename,default=default)
+# #******************************************************************************
+
+#** mail_message_subtype ******************************************************
+table = 'mail_message_subtype'
+MigrationTable(db_src,db_dst,table,text2jsonb=True)
+#******************************************************************************
+
+#** mail **********************************************************************
+tables=[
+    "mail_mail_res_partner_rel",
+    "mail_message_res_partner_rel",
+    "message_attachment_rel",
+    "mail_tracking_value",
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+#** mail_message **************************************************************
+SQL="""
+    update mail_message set model='account.move' where model='account.invoice';
+    update mail_message set model='stock.lot' where model='stock.production.lot';
+    update mail_message set model=NULL where model='procurement.order';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+#** Liens entre mail_message et account_invoice *******************************
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="SELECT id, res_id from mail_message where model='account.invoice' order by id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    invoice_id = row["res_id"]
+    if invoice_id in ids:
+        move_id = ids[invoice_id]
+        SQL="update mail_message set res_id=%s where id=%s"
+        cr_dst.execute(SQL, [move_id, row["id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
