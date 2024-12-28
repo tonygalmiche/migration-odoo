@@ -8,9 +8,7 @@ import os
 # Pb avec la postion fiscale des clients
 # Ajouter les taxes sur les articles, categories ou fiche société
 # Pieces jointes
-# PDF des factures à faire
-# Désactvier l'apercu de la facture dans la vue PDF
-# Mettre les activités en bas si le module communiatire existe
+# Documentation a mettre au format md et non pas odt pour faire des rechrches depuis Studio Code
 
 
 #** Paramètres ****************************************************************
@@ -22,8 +20,6 @@ cnx,cr=GetCR(db_src)
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
-
-
 
 
 
@@ -629,5 +625,29 @@ for row in rows:
 cnx_dst.commit()
 #******************************************************************************
 
+# ** ir_filters ***************************************************************
+# ** Si le filtre n'a pas d'action associée il sera visible dans tous les menus du modèle
+# ** Et comme l'id de l'action change lors du changement de version, il est préférable de vider ce champ
+default = {'sort': []}
+MigrationTable(db_src,db_dst,"ir_filters", default=default)
+SQL="""
+    update ir_filters set action_id=NULL, active='t';
+    update ir_filters set user_id=2 where user_id=1;
+    update ir_filters set model_id='account.move' where model_id='account.invoice';
+
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT id,model_id,domain,context FROM ir_filters"
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    if row['model_id']=='account.move':
+        domain  = row['domain'].replace('date_invoice','invoice_date')
+        context = row['context'].replace('date_invoice','invoice_date')
+        SQL="UPDATE ir_filters set domain=%s, context=%s WHERE id=%s"
+        cr_dst.execute(SQL,(domain, context,row['id']))
+cnx_dst.commit()
+#******************************************************************************
 
 
