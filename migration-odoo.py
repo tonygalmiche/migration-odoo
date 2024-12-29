@@ -106,10 +106,10 @@ if action=='compare_modules':
     for module in modules:
         ok_src = ok_dst = state_src = state_dst = ''
         if module in modules_src:
-            ok_src='OK'
+            ok_src='ok_src'
             state_src='state_src='+GetInfosModule(cr_src,module)['state']
         if module in modules_dst:
-            ok_dst='OK'
+            ok_dst='ok_dst'
             state_dst='state_dst='+GetInfosModule(cr_dst,module)['state']
         print('-',s(module,30),s(state_src,25),s(state_dst,25),s(ok_src,8),s(ok_dst,8))
 

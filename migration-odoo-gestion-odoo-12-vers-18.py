@@ -5,9 +5,6 @@ import os
 
 
 #TODO : 
-# Pb avec la postion fiscale des clients
-# Ajouter les taxes sur les articles, categories ou fiche société
-# Pieces jointes
 # Documentation a mettre au format md et non pas odt pour faire des rechrches depuis Studio Code
 
 
@@ -20,7 +17,6 @@ cnx,cr=GetCR(db_src)
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
-
 
 
 
@@ -81,7 +77,7 @@ for row in rows:
 #** product *******************************************************************
 default={
     "service_tracking": "no",
-    "sale_line_warn": "no-message",
+    #"sale_line_warn": "no-message",
 }
 MigrationTable(db_src,db_dst,'product_template',text2jsonb=True, default=default)
 MigrationTable(db_src,db_dst,'product_product')
@@ -259,54 +255,6 @@ MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line',
 #******************************************************************************
 
 
-
-
-
-
-
-# # Recherche du compte 411200 pour le reglement ci-dessous *********************
-# SQL="select id from account_account where code='411100'"
-# destination_account_id=False
-# cr_src.execute(SQL)
-# rows = cr_src.fetchall()
-# for row in rows:
-#     destination_account_id = row["id"]
-# if not destination_account_id:
-#     print("Compte 411100 non trouvé !")
-#     sys.exit()
-#  #******************************************************************************
-
-
-
-# #** account_payment ***********************************************************
-# cr_dst.execute("DELETE FROM account_payment")
-# cnx_dst.commit()
-# SQL="""
-#     select am.id,am.name, l.credit,a2.code,am.partner_id
-#     from account_move am join account_move_line l on am.id=l.move_id join account_journal aj on am.journal_id=aj.id 
-#                          join account_account a2 on l.account_id=a2.id  
-#     -- where aj.type='bank' and a2.code like '4%' ;
-# """
-# cr_src.execute(SQL)
-# rows = cr_src.fetchall()
-# for row in rows:
-#     debit = row["credit"]
-#     SQL="""
-#     INSERT INTO account_payment (move_id, is_reconciled, is_matched, is_internal_transfer, payment_method_id, amount, payment_type, partner_type, currency_id, partner_id, destination_account_id)
-#     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
-#     """
-#     cr_dst.execute(SQL,[row['id'],True,False,False,1,debit,'inbound','customer',1,row["partner_id"],destination_account_id])
-# cnx_dst.commit()
-
-#******************************************************************************
-
-
-
-
-
-
-
-
 #** account_invoice_line => account_move **************************************
 SQL="""
     SELECT 
@@ -454,10 +402,6 @@ for row in rows:
 cnx_dst.commit()
 
  
-
-
-
-
 SQL="""
     update account_move_line set price_unit=(credit-debit) where price_unit is null;
     update account_move_line set balance=(debit-credit) where balance is null;
@@ -483,30 +427,6 @@ cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
 
-
-# # ** Migration tax_code_id ****************************************************
-# SQL="""
-#     select aml.id move_line_id,aml.name,aml.tax_code_id,aml.debit,aml.credit,at.id tax_line_id
-#     from account_move_line aml inner join account_tax at on aml.tax_code_id=at.tax_code_id 
-# """
-# cr_src.execute(SQL)
-# rows = cr_src.fetchall()
-# for row in rows:
-#     SQL="""
-#         UPDATE account_move_line
-#         SET 
-#             tax_line_id=%s,
-#             tax_group_id=1,
-#             currency_id=1,
-#             company_currency_id=1,
-#             quantity=1
-#         WHERE id=%s
-#     """
-#     cr_dst.execute(SQL,[row["tax_line_id"],row["move_line_id"]])
-# cnx_dst.commit()
-# #******************************************************************************
-
-
 #** Migration des taxes sur les factures **************************************
 SQL="DELETE FROM account_move_line_account_tax_rel"
 cr_dst.execute(SQL)
@@ -528,8 +448,6 @@ for row in rows:
 cnx_dst.commit()
 #******************************************************************************
 
-
-
 #** account_move_line / tax_repartition_line_id *******************************
 SQL="""
     update account_move_line set tax_repartition_line_id=(select id 
@@ -539,11 +457,6 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
-
-
-
-
-
 
 #** Enlever les écritures de TVA des lignes de factures ***********************
 SQL="""
@@ -649,5 +562,34 @@ for row in rows:
         cr_dst.execute(SQL,(domain, context,row['id']))
 cnx_dst.commit()
 #******************************************************************************
+
+
+# ** Migration des pièces jointes *********************************************
+MigrationTable(db_src,db_dst,"ir_attachment")
+#******************************************************************************
+
+#** Pièces jointes des factures ***********************************************
+SQL="""
+    SELECT 
+        id,
+        move_id
+     from account_invoice
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="update ir_attachment set res_model='account.move', res_id=%s where res_id=%s and res_model='account.invoice'"
+    cr_dst.execute(SQL,[row["move_id"], row["id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+#** Récupérer la ligne de ir_attachment pour faire fonctionner les PDF ********
+table="ir_attachment"
+where="name='res.company.scss'"
+db_vierge = 'odoo18'
+CopieTable(db_vierge,db_dst,table,where)
+#******************************************************************************
+
+
 
 
