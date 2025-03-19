@@ -3,8 +3,8 @@
 from migration_fonction import *
 
 #** Paramètres *****************************************************************
-db_src = "gestion-odoo12"
-db_dst = "gestion-odoo18"
+db_src = "opta-s12"
+db_dst = "opta-s18"
 #*******************************************************************************
 
 

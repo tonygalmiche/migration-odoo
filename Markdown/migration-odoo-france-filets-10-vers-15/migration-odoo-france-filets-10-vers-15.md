@@ -1,4 +1,6 @@
 ﻿Migration Odoo France Filets 10 vers 15
+====
+
 # ***Visio du 28/01/2022***
 
 |***A Faire***|***Fait le***|
@@ -70,7 +72,10 @@
 Pour cela, il faut mettre les utilisateurs dans ce groupe non visible depuis la fiche utilisateur :
 
 Show Accounting Features - Readonly
-1. # ***Liens entre les factures et les règlements***
+
+
+# ***Liens entre les factures et les règlements***
+```
    Exemple de facture :
 
 select am.name,aml.move\_id,aml.id
@@ -129,10 +134,13 @@ france-filets15=# select am.name,aml.move\_id,aml.id from account\_move am join 
 
 ` `BNK1/2021/11/0001 |    **1348** | 3210
 
+```
+
 Mais il n’y a pas de lien directe avec la facture, car il peut y avoir plusieurs règlements pour une même facture ou un seul règlement pour plusieurs factures.
 
 La table « account\_partial\_reconcile » fait le lien entre les lignes des factures et les lignes de la piece comptable attachée au règlement :  
 
+```
 select id, debit\_move\_id, credit\_move\_id, full\_reconcile\_id from account\_partial\_reconcile where debit\_move\_id=3209;
 
 ` `id  | debit\_move\_id | credit\_move\_id | full\_reconcile\_id
@@ -142,10 +150,14 @@ select id, debit\_move\_id, credit\_move\_id, full\_reconcile\_id from account\_
 ` `637 |          **3209** |           **3213** |               636
 
 ` `636 |          **3209** |           **3211** |               636
+```
+
 
 Conclusion : La ligne de facture **3209**, est attachée aux lignes des pièces comptables  **3213** et  **3211**, car elle a 2 règlements
 
-1. # ***Modification style mise en page***
+# ***Modification style mise en page***
+
+```
 Style error
 
 The style compilation failed, see the error below. Your recent actions may be the cause, please try reverting the changes you made.
@@ -201,3 +213,4 @@ france-filets15-vierge=# select id,name,url,store\_fname from ir\_attachment whe
 ` `97 | web.assets\_frontend\_lazy.min.js     | /web/assets/97-011e75e/web.assets\_frontend\_lazy.min.js       | ee/ee68369850f2a56720b18029bfec196df47fb330
 |<p>*nfoSaône - 1 rue Jean Moulin 21110 Pluvault - http://www.infosaone.com*</p><p>*Tony Galmiche - Tél : 03 80 47 93 81 - Portable : 06 19 43 39 31 - Courriel :  tony.galmiche@infosaone.com*</p>|*age 4/4**|
 | :- | :-: |
+```

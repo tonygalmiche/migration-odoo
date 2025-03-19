@@ -1,4 +1,4 @@
-La syntaxe markdown
+La syntaxe markdown 2
 ====
 
 Source : https://docs.framasoft.org/fr/grav/markdown.html
