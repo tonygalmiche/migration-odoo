@@ -601,7 +601,23 @@ def MigrationChampTable(db_src,db_dst,table,champ,ids):
     cnx_dst.commit()
 
 
-#def getPropertyValue(db,model,property)
+def getPropertyValue(db,model,property,id):
+    cnx,cr=GetCR(db)
+    fields_id = GetFielsdId(cr,model,property)
+    res_id = "%s,%s"%(model,id)
+    SQL="""
+        select *
+        from ir_property
+        where fields_id=%s and res_id=%s
+    """
+
+    cr.execute(SQL,[fields_id,res_id])
+    rows = cr.fetchall()
+    value=False
+    for r in rows:   
+        if r["res_id"] and r["value_reference"]:
+            value  = r["value_reference"].split(",")[1]
+    return value
 
 
 
@@ -685,6 +701,7 @@ def MigrationIrProperty(db_src,db_dst,model,field_src,field_dst=False):
 #         'property_account_income_categ_id': 'pcg_707_account',
 #         'property_account_downpayment_categ_id': 'pcg_4191',
 #     }
+# J'ai résolu ce problème avec ir_default
 
 
 def AccountCode2Id(cr,code):
