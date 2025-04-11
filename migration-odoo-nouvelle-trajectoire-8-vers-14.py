@@ -18,6 +18,7 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
 
+
 tables=[
     'is_base_documentaire',
     'is_niveau',

@@ -20,6 +20,7 @@ cnx_dst,cr_dst=GetCR(db_dst)
 
 
 
+
 # ** purge des tests **********************************************************
 SQL="""
     delete from account_partial_reconcile ;

@@ -17,7 +17,11 @@ debut = Log(debut, "Début migration (Prévoir 2mn)")
 
 #TODO:
 
+#- Documenter le focntionnemnt des regelement et du raprochement des factues dans Odoo 18
+#- Finaliser la migration des facutres suite à la docuementation sur les raprochement et refaire une migration complète
+#- Vérfier tous les champs manqautat dans les factures et lignes de facture
 #- Si je passe en brouillon et que je vlaide une facure migrée payée, elle reste bien en payée mis son regelmen en bas à droite dispararait
+#- Il manque les champs persnalisés des factures
 #- Dans la vue liste des facues, les montants sont à 0
 #- Voir le sens des avoir (postiif ou nagtif)
 #- Compteur
@@ -57,6 +61,40 @@ debut = Log(debut, "Début migration (Prévoir 2mn)")
 
 
 
+
+
+
+# Dans la facture du regelment le champ 'memo' n'est pas renseigné
+# Mais c'est surtout le champ 'move_id' qui pose prolbème car il est relié à la facture client et non pas à la facture du regkement : 
+# => Du coup, le bouton 'Piece comptable' en haut du regelment affiche la factue client et non pas la facture du regelement 
+# opta-s18=# select  id,move_id,name,memo,create_date from account_payment where id=325132;
+#    id   | move_id |       name        | memo |        create_date        
+# --------+---------+-------------------+------+---------------------------
+#  325132 |  657951 | CUST.IN/2024/0344 |      | 2024-12-17 07:56:31.80769
+
+
+
+# Dans Odoo 12, j'ai le lien entre le reglement et la facture du reglement dans la table account_move_line
+# opta-s12=# select id,payment_id,move_id from account_move_line where id=3027041;
+#    id    | payment_id | move_id 
+# ---------+------------+---------
+#  3027041 |     325132 |  658026
+# (1 ligne)
+
+
+
+#** Lien entre les réglements et les factures de réglements *******************
+SQL="SELECT distinct payment_id,move_id FROM account_move_line WHERE payment_id is not null"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:   
+    print(row['payment_id'], row['move_id']) 
+    SQL="UPDATE account_payment SET move_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['move_id'],row['payment_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+sys.exit()
 
 
 #** account_payment : recherche move_id ***************************************
