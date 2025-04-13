@@ -1,5 +1,6 @@
-﻿Enregistrement des paiement entre Odoo 12 et Odoo 18
-# ***Fonctionnement du règlement d’une facture***
+﻿# Enregistrement des paiement entre Odoo 12 et Odoo 18
+
+## ***Fonctionnement du règlement d’une facture***
    Le bouton « Paiements » en haut de la facture permet d’arriver sur le paiement BNK1/2025/00005 :
 
    ![](Aspose.Words.83ea8e9e-03de-4ebb-944e-633c22389ebf.001.png)
@@ -13,28 +14,26 @@
    ![](Aspose.Words.83ea8e9e-03de-4ebb-944e-633c22389ebf.003.png)
 
 
-
-
-# ***Facture client et facture du paiement en base de données :***
+## ***Facture client et facture du paiement en base de données :***
 
 ```
-   select id,name,create\_date,write\_date from account\_move;
+   select id,name,create_date,write_date from account_move;
       id      |      name           |        create_date        |         write_date         
    --------+-----------------+----------------------------+----------------------------
    **658328** | **FAC/2025/00005**  | 2025-04-07 06:35:59.398823 | 2025-04-07 06:37:25.469433    => Facture client
    **658329** | **BNK1/2025/00005** | 2025-04-07 06:37:25.469433 | 2025-04-07 06:37:25.469433    => Facture du paiement
 ```
 
-   # ***Paiement en base de données***
+## ***Paiement en base de données***
    Le champ `move_id` contient le lien entre le paiement et la facture du paiement
 ```
-   opta-s18=# select  id,move_id,name,memo,create_date from account_payment;
-   id         | **move_id** |      name       |      memo      |        create_date         
-   --------+---------+-----------------+----------------+----------------------------
-   **325264** |  **658329** | BNK1/2025/00005 | FAC/2025/00005 | 2025-04-07 06:37:25.469433
+   select  id,move_id,name,memo,create_date from account_payment;
+   id     | move_id |      name       |      memo      |        create_date         
+   -------+---------+-----------------+----------------+----------------------------
+   325264 | 658329  | BNK1/2025/00005 | FAC/2025/00005 | 2025-04-07 06:37:25.469433
 ```
 
-# ***Crédits en circulation***
+## ***Crédits en circulation***
    Si je repasse en brouillon cette facture et que je la valide, les 2 boutons en haut sont toujours opérationnels, mais le widget du paiement en bas n'est plus relié à la facture et le message 'Crédits en circulation' apparaît :
 
    ![](Aspose.Words.83ea8e9e-03de-4ebb-944e-633c22389ebf.004.png)
@@ -43,7 +42,7 @@
 
    La différence entre ces 2 états est le champ `is_reconciled` dans `account_payment` et il y a le champ `payment_state` de la facture qui change
 
-# ***Lien entre la facture client et le paiement***
+## ***Lien entre la facture client et le paiement***
 ```
    account_invoice_payment_rel => account_move__account_payment
    opta-s18=# select * from account_move__account_payment
@@ -54,7 +53,7 @@
 ```
 
 
-# ***Analyse de la facture 2024-00315 (id=657951)***
+## ***Analyse de la facture 2024-00315 (id=657951)***
    Le bouton `Paiement` en haut permet bien d’arriver sur la paiement `CUST.IN/2024/0344` (id=325132)
    Le widget du paiement en bas également. La table est correcte :
 ```
@@ -63,7 +62,7 @@
    **657951** |     325132
 ```
 
-   Dans la facture du paiement le champ '**memo**' n'est pas renseigné.
+   Dans la facture du paiement le champ `memo` n'est pas renseigné.
    Mais c'est surtout le champ `move_id` qui pose problème car il est relié à la facture client et non pas à la facture du paiement.
    Du coup, le bouton `Pièce comptable` en haut du paiement affiche la facture client et non pas la facture du paiement.
 ```
@@ -107,11 +106,11 @@
 
    Le problème vient de ces tables :
 ```
-   account.full.reconcile
-   acount.partial.reconcile
+   account_full_reconcile
+   acount_partial_reconcile
 ```
 
-   # ***Fonctionnement du lien entre la facture et le paiement***
+   ## Fonctionnement du lien entre la facture et le paiement
    La table `account_partial_reconcile` fait le lien entre les lignes de la facture client (`debit_move_id`) et la facture du paiement (`credit_move_id`) et la table `account_full_reconcile`
 ```
    opta-s18=# select id,move_id from account_move_line where move_id in (658329,658328) order by id;
@@ -125,81 +124,100 @@
 
    opta-s18=# select  id,debit_move_id,credit_move_id,full_reconcile_id,write_date  from account_partial_reconcile  order by id desc limit 1;
  ```  
+
+ ```
    id        | debit_move_id | credit_move_id | full_reconcile_id |        write_date         
    ----------+---------------+----------------+-------------------+---------------------------
    325331    |   **3028329** |    **3028331** |        **325322** | 2025-04-07 07:50:47.30836
-   opta-s18=# select \* from account\_full\_reconcile order by id desc limit 5;
-   `   `id   | exchange\_move\_id | create\_uid | write\_uid |        create\_date         |         write\_date         
-   --------+------------------+------------+-----------+----------------------------+----------------------------
-   ` `**325322** |                  |          2 |         2 | 2025-04-07 07:50:47.30836  | 2025-04-07 07:50:47.30836
+
+   select * from account_full_reconcile order by id desc limit 5;
+   id      | exchange_move_id | create_uid | write_uid |        create_date   |   write_date         
+   --------+------------------+------------+-----------+-----------------------------------
+   325322  |                  |          2 |         2 | 2025-04-07 07:50:47  | 2025-04-07 07:50:47
 ```
 
-   Le problème vient du champ 'full\_reconile\_id qui n'est pas renseigné :
 
-   opta-s18=# select id,move\_id,full\_reconcile\_id from account\_move\_line where move\_id in (658329,658328) order by id;
+Le problème vient du champ `full_reconile_id` qui n'est pas renseigné :
 
-   `   `id    | move\_id | full\_reconcile\_id
+```
+select id,move_id,full_reconcile_id from account_move_line where move_id in (658329,658328);
 
-   ---------+---------+-------------------
+   id      | move_id | full_reconcile_id
+   --------+---------+-------------------
+   3028327 |  658328 |                  
+   3028329 |  658328 |            325322
+   3028330 |  658329 |                  
+   3028331 |  658329 |            325322
+   3028335 |  658328 |                  
 
-   ` `3028327 |  658328 |                  
+select id,move_id,full_reconcile_id from account_move_line where move_id in (657527,657570);
+   id      | move_id | full_reconcile_id
+   --------+---------+-------------------
+   3025018 |  657527 |                  
+   3025019 |  657527 |                  
+   3025147 |  657570 |                  
+   3025148 |  657570 |       
+```           
 
-   ` `3028329 |  658328 |            325322
-
-   ` `3028330 |  658329 |                  
-
-   ` `3028331 |  658329 |            325322
-
-   ` `3028335 |  658328 |                  
-
-   opta-s18=# select id,move\_id,full\_reconcile\_id from account\_move\_line where move\_id in (657527,657570) order by id;
-
-   `   `id    | move\_id | full\_reconcile\_id
-
-   ---------+---------+-------------------
-
-   ` `3025018 |  657527 |                  
-
-   ` `3025019 |  657527 |                  
-
-   ` `3025147 |  657570 |                  
-
-   ` `3025148 |  657570 |                  
-
-   Le champ full\_reconcile\_id est bien migré, mais en passant la facture en brouillon, celui-ci est effacé ce qui est normal
+   Le champ `full_reconcile_id` est bien migré, mais en passant la facture en brouillon, celui-ci est effacé ce qui est normal
 
    C'est également le cas avec une facture créée manuellement qui fonctionne.
 
-   Sur une facture qui fonctionne, ce champ n'est pas remis par défaut mail le widget affiche 'Crédits en circulation' permettant d'associé à nouveau le paiment à la facture
+   Sur une facture qui fonctionne, ce champ n'est pas remis par défaut mail le widget affiche `Crédits en circulation` permettant d'associé à nouveau le paiment à la facture
 
-   Il faut donc regarder le fonctionnement ce ce champ et de la fonction « **\_compute\_payments\_widget\_to\_reconcile\_info** »
+   Il faut donc regarder le fonctionnement ce ce champ et de la fonction `_compute_payments_widget_to_reconcile_info`
 
-   <field
+```
+   <field name="invoice_outstanding_credits_debits_widget" class="oe_invoice_outstanding_credits_debits py-3" colspan="2" nolabel="1"
+       widget="payment"
+       invisible="state != 'posted' or not invoice_has_outstanding"/>
+```
 
-   `    `name="invoice\_outstanding\_credits\_debits\_widget" class="oe\_invoice\_outstanding\_credits\_debits py-3" colspan="2" nolabel="1"
-
-   `    `widget="payment"
-
-   `    `invisible="state != 'posted' or not invoice\_has\_outstanding"/>
-
-   Domain pour la recherche des factures dans \_compute\_payments\_widget\_to\_reconcile\_info
-
-   [   ('account\_id', 'in', [281]), ('parent\_state', '=', 'posted'),
-
-   `    `('partner\_id', '=', False),
-
-   `    `('reconciled', '=', False), '|', ('amount\_residual', '!=', 0.0), ('amount\_residual\_currency', '!=', 0.0), ('balance', '<', 0.0)
-
+   Domain pour la recherche des factures dans `_compute_payments_widget_to_reconcile_info`
+```
+   [   ('account_id', 'in', [281]), ('parent_state', '=', 'posted'),
+       ('partner_id', '=', False),
+       ('reconciled', '=', False), '|', ('amount_residual', '!=', 0.0),
+       ('amount_residual_currency', '!=', 0.0), ('balance', '<', 0.0)
    ]
+```   
 
-   Le problème vient du champ 'partner\_id qui est à False
+   Le problème vient du champ `partner_id` qui est à False
+   Cela vient du champ `commercial_partner_id` qui n'est pas renseigné car il existe dans `account_invoice`, mais pas dans `account_move`
+   Cela vient aussi du champ `parent_state` qui n'est pas renseigné dans `account_move_line`
+```
+   update account_move_line set parent_state=(select am.state from account_move am where move_id=am.id limit 1)
+```
 
-   Cela vient du champ **commercial\_partner\_id** qui n'est pas renseigné car il existe dans account\_invoice, mais pas dans account\_move
-
-   Cela vient aussi du champ **parent\_state** qui n'est pas renseigné dans account\_move\_line
-
-   update account\_move\_line set parent\_state=(select am.state from account\_move am where move\_id=am.id limit 1)
 
 
-|<p>*nfoSaône - 1 rue Jean Moulin 21110 Pluvault - http://www.infosaone.com*</p><p>*Tony Galmiche - Tél : 03 80 47 93 81 - Portable : 06 19 43 39 31 - Courriel :  tony.galmiche@infosaone.com*</p>|*age 5/5**|
-| :- | :-: |
+
+## Vous ne pouvez pas enregistrer un paiement car il n'y a plus rien à payer sur les écritures comptables sélectionnées.
+Pour résoude ce problème : 
+```
+update account_move_line set amount_residual_currency=amount_residual;
+update account_move_line set invoice_date=date;
+update account_move_line aml set partner_id=(select partner_id from account_move where id=aml.move_id) where partner_id is not null;
+```
+
+## Si je repasse en brouillon et valide une factue migrée, le montant dû compte 2 fois la TVA
+Il faut initialiser ces nouveaux champs : 
+```
+    update account_move set always_tax_exigible=false where always_tax_exigible is null;
+    update account_move set checked=false where checked is null;
+    update account_move set made_sequence_gap=false where made_sequence_gap is null;
+    update account_move set posted_before=true where posted_before is null;
+    update account_move set is_manually_modified=true where is_manually_modified is null;
+    update account_move set quick_edit_total_amount=0 where quick_edit_total_amount is null;
+    update account_move set is_storno=false where is_storno is null;
+    update account_move set invoice_currency_rate=1 where invoice_currency_rate is null;
+    update account_move set amount_untaxed_in_currency_signed=amount_untaxed_signed where amount_untaxed_in_currency_signed is null;
+```
+
+## Après avoir mis en brouillon et validé une facture, la TVA est compté en double (2 lignes de TVA dans les écrirures)
+Solution : 
+```
+   update account_move_line set tax_repartition_line_id=(select id 
+   from account_tax_repartition_line where tax_id=tax_line_id and repartition_type='tax' limit 1) 
+   where tax_line_id is not null
+```

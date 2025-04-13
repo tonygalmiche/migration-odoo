@@ -12,15 +12,10 @@ cnx,cr=GetCR(db_src)
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 debut=datetime.now()
-debut = Log(debut, "Début migration (Prévoir 2mn)")
+debut = Log(debut, "Début migration (Prévoir 3mn)")
 
 
 #TODO:
-
-#- Documenter le focntionnemnt des regelement et du raprochement des factues dans Odoo 18
-#- Finaliser la migration des facutres suite à la docuementation sur les raprochement et refaire une migration complète
-#- Vérfier tous les champs manqautat dans les factures et lignes de facture
-#- Si je passe en brouillon et que je vlaide une facure migrée payée, elle reste bien en payée mis son regelmen en bas à droite dispararait
 #- Il manque les champs persnalisés des factures
 #- Dans la vue liste des facues, les montants sont à 0
 #- Voir le sens des avoir (postiif ou nagtif)
@@ -32,119 +27,47 @@ debut = Log(debut, "Début migration (Prévoir 2mn)")
 #- Comparer toutes les tables
 #- Faire le controle d'intégrité de la base de donnée
 
+    # is_activites            = fields.Many2many('is.activite', 'is_account_invoice_activite_rel', 'invoice_id', 'activite_id')
+ 
 
-
-# Tentativ de reglement sur la facture 2025-00011
-#Vous ne pouvez pas enregistrer un paiement car il n'y a plus rien à payer sur les écritures comptables sélectionnées.
-
-
-# odoo@bookworm:/media/sf_dev_odoo$ cat migration-odoo/controle-integrite-bdd.sql | psql opta-s18
-# ERREUR:  une instruction insert ou update sur la table « account_payment_register_move_line_rel » viole la contrainte de clé
-# étrangère « account_payment_register_move_line_rel_line_id_fkey »
-# DÉTAIL : La clé (line_id)=(3028300) n'est pas présente dans la table « account_move_line ».
-# CONTEXTE : instruction SQL « UPDATE pg_constraint SET convalidated=false WHERE conname = 'account_payment_register_move_line_rel_line_id_fkey'; ALTER TABLE account_payment_register_move_line_rel VALIDATE CONSTRAINT account_payment_register_move_line_rel_line_id_fkey; »
-# fonction PL/pgSQL inline_code_block, ligne 22 à EXECUTE
-# odoo@bookworm:/media/sf_dev_odoo$ 
+    # is_dates_intervention = fields.Char("Dates d'intervention")
+    # is_activite_id        = fields.Many2one('is.activite', 'Activité')
+    # is_frais_id           = fields.Many2one('is.frais', 'Frais')
+    # is_frais_ligne_id     = fields.Many2one('is.frais.lignes', 'Ligne de frais')
+    # is_account_invoice_line_id = fields.Integer('Lien entre account_invoice_line et account_move_line pour la migration', index=True)
 
 
 
 
-# opta-s12=# select * from account_invoice_payment_rel limit 5 ;
-#  payment_id | invoice_id 
-# ------------+------------
-#      232057 |     320900
-#      232059 |     320902
-#      232070 |     320913
-#      232072 |     320915
-#      232074 |     320917
-# (5 lignes)
-
-
-
-
-
-
-# Dans la facture du regelment le champ 'memo' n'est pas renseigné
-# Mais c'est surtout le champ 'move_id' qui pose prolbème car il est relié à la facture client et non pas à la facture du regkement : 
-# => Du coup, le bouton 'Piece comptable' en haut du regelment affiche la factue client et non pas la facture du regelement 
-# opta-s18=# select  id,move_id,name,memo,create_date from account_payment where id=325132;
-#    id   | move_id |       name        | memo |        create_date        
-# --------+---------+-------------------+------+---------------------------
-#  325132 |  657951 | CUST.IN/2024/0344 |      | 2024-12-17 07:56:31.80769
-
-
-
-# Dans Odoo 12, j'ai le lien entre le reglement et la facture du reglement dans la table account_move_line
-# opta-s12=# select id,payment_id,move_id from account_move_line where id=3027041;
-#    id    | payment_id | move_id 
-# ---------+------------+---------
-#  3027041 |     325132 |  658026
-# (1 ligne)
-
-
-
-#** Lien entre les réglements et les factures de réglements *******************
-SQL="SELECT distinct payment_id,move_id FROM account_move_line WHERE payment_id is not null"
+#** account_move_line : champs opta-s *****************************************
+SQL="SELECT * FROM account_invoice_line"
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
-for row in rows:   
-    print(row['payment_id'], row['move_id']) 
-    SQL="UPDATE account_payment SET move_id=%s WHERE id=%s"
-    cr_dst.execute(SQL,[row['move_id'],row['payment_id']])
+champs=['is_dates_intervention','is_activite_id','is_frais_id','is_frais_ligne_id']
+for row in rows:
+    for champ in champs:
+        val = row[champ]
+        SQL="UPDATE account_move_line SET "+champ+"=%s WHERE is_account_invoice_line_id=%s"
+        cr_dst.execute(SQL,[val,row['id']])
 cnx_dst.commit()
 #******************************************************************************
 
 sys.exit()
 
 
-#** account_payment : recherche move_id ***************************************
-SQL="""
-    SELECT id,name,default_credit_account_id,default_debit_account_id
-    FROM account_journal
-    order by name
-"""
+#** account_move : champs opta-s **********************************************
+SQL="SELECT * FROM account_invoice"
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
-for row in rows:   
-    print(row['name']) 
-    default_account_id = row['default_credit_account_id'] or row['default_debit_account_id']
-    SQL="UPDATE account_journal SET default_account_id=%s WHERE id=%s"
-    cr_dst.execute(SQL,[default_account_id,row['id']])
-cnx_dst.commit()
-#******************************************************************************
-
-
-# pfp18=# select id,name->>'fr_FR',default_account_id,suspense_account_id,profit_account_id,loss_account_id,bank_account_id from account_journal;
-#  id |        ?column?         | default_account_id | suspense_account_id | profit_account_id | loss_account_id | bank_account_id 
-# ----+-------------------------+--------------------+---------------------+-------------------+-----------------+-----------------
-#   1 | Factures clients        |                567 |                     |                   |                 |                
-#   2 | Factures fournisseurs   |                394 |                     |                   |                 |                
-#   3 | Opérations diverses     |                    |                     |                   |                 |                
-#   4 | Différence de change    |                    |                     |                   |                 |                
-#   5 | TVA sur encaissements   |                    |                     |                   |                 |                
-#   6 | Banque                  |                649 |                 312 |               651 |             652 |                
-#   7 | Espèces                 |                650 |                 312 |               651 |             652 |                
-#   8 | Valorisation des stocks |                    |                     |                   |                 |                
-# (8 lignes)
-
-
-
-
-sys.exit()
-
-
-
-#** account_payment : recherche move_id ***************************************
-SQL="""
-    SELECT ai.move_id,rel.payment_id
-    FROM account_invoice_payment_rel rel join account_invoice ai on rel.invoice_id=ai.id
-    order by ai.id
-"""
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:    
-    SQL="UPDATE account_payment SET move_id=%s WHERE id=%s"
-    cr_dst.execute(SQL,[row['move_id'],row['payment_id']])
+champs=[
+    'is_affaire_id','is_detail_activite','is_phase','is_intervenant','is_prix_unitaire','is_frais','is_detail_frais',
+    'is_date_encaissement','is_montant_encaissement','is_code_service','is_ref_engagement'
+]
+for row in rows:
+    for champ in champs:
+        val = row[champ]
+        SQL="UPDATE account_move SET "+champ+"=%s WHERE id=%s"
+        cr_dst.execute(SQL,[val,row['move_id']])
 cnx_dst.commit()
 #******************************************************************************
 
@@ -152,14 +75,14 @@ cnx_dst.commit()
 
 
 
-sys.exit()
 
+
+sys.exit()
 
 
 #** res_company ***************************************************************
 MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
-
 
 
 #** ir_default ****************************************************************
@@ -175,10 +98,6 @@ default={
 }
 MigrationTable(db_src,db_dst,'res_partner',text2jsonb=True,default=default)
 #******************************************************************************
-
-
-
-
 
 
 #** res_users *****************************************************************
@@ -620,6 +539,48 @@ SQL="""
     update account_move_line set amount_currency=balance where amount_currency=0;
     update account_move_line set price_subtotal=(credit-debit) where price_subtotal is null;
     update account_move_line set price_total=(credit-debit) where price_total is null;
+    update account_move_line set invoice_date=date;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+#** Pour faire fonctionner les paiments ***************************************
+SQL="""
+    update account_move set always_tax_exigible=false where always_tax_exigible is null;
+    update account_move set checked=false where checked is null;
+    update account_move set made_sequence_gap=false where made_sequence_gap is null;
+    update account_move set posted_before=true where posted_before is null;
+    update account_move set is_manually_modified=true where is_manually_modified is null;
+    update account_move set quick_edit_total_amount=0 where quick_edit_total_amount is null;
+    update account_move set is_storno=false where is_storno is null;
+    update account_move set invoice_currency_rate=1 where invoice_currency_rate is null;
+    update account_move set amount_untaxed_in_currency_signed=amount_untaxed_signed where amount_untaxed_in_currency_signed is null;
+    update account_move set commercial_partner_id=partner_id where commercial_partner_id is null;
+    update account_move set amount_total_in_currency_signed=amount_total_signed;
+
+    update account_move_line set amount_residual_currency=amount_residual;
+    update account_move_line set parent_state=(select am.state from account_move am where move_id=am.id limit 1);
+    update account_move_line aml set partner_id=(select partner_id from account_move where id=aml.move_id) where partner_id is not null;
+    update account_move_line set discount=0 where discount is null;
+    update account_move_line set discount_amount_currency=0 where discount_amount_currency is null;
+    update account_move_line set discount_balance=0 where discount_balance is null;
+    update account_move_line set tax_tag_invert=true  where display_type!='payment_term';
+    update account_move_line set tax_tag_invert=false where display_type='payment_term';
+    update account_move_line set quantity=0, price_unit=0,price_subtotal=0, price_total=0  where display_type!='product';
+    update account_move_line set tax_group_id=3 where tax_line_id is not null;    
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+#** account_move_line / tax_repartition_line_id *******************************
+SQL="""
+    update account_move_line set tax_repartition_line_id=(select id 
+    from account_tax_repartition_line where tax_id=tax_line_id and repartition_type='tax' limit 1) 
+    where tax_line_id is not null
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -627,27 +588,6 @@ cnx_dst.commit()
 
 
 debut = Log(debut, "Fin account_move_line")
-
-
-#** account_invoice_payment_rel => account_move__account_payment **************
-SQL="delete from account_move__account_payment"
-cr_dst.execute(SQL)
-cnx_dst.commit()
-SQL="""
-    SELECT ai.move_id,rel.payment_id 
-    FROM account_invoice ai join account_invoice_payment_rel rel on ai.id=rel.invoice_id 
-    ORDER BY ai.id
-"""
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    SQL="""
-        INSERT INTO account_move__account_payment (invoice_id,payment_id)
-        VALUES (%s,%s)
-    """
-    cr_dst.execute(SQL,[row['move_id'],row['payment_id']])
-cnx_dst.commit()
-#******************************************************************************
 
 
 #** Migration des taxes sur les factures **************************************
@@ -672,6 +612,54 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** account_invoice_payment_rel => account_move__account_payment **************
+SQL="delete from account_move__account_payment"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="""
+    SELECT ai.move_id,rel.payment_id 
+    FROM account_invoice ai join account_invoice_payment_rel rel on ai.id=rel.invoice_id 
+    ORDER BY ai.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        INSERT INTO account_move__account_payment (invoice_id,payment_id)
+        VALUES (%s,%s)
+    """
+    cr_dst.execute(SQL,[row['move_id'],row['payment_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** Lien entre les réglements et les factures de réglements *******************
+SQL="SELECT distinct payment_id,move_id FROM account_move_line WHERE payment_id is not null"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:   
+    SQL="UPDATE account_payment SET move_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['move_id'],row['payment_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_journal : default_account_id **************************************
+SQL="""
+    SELECT id,name,default_credit_account_id,default_debit_account_id
+    FROM account_journal
+    order by name
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:   
+    default_account_id = row['default_credit_account_id'] or row['default_debit_account_id']
+    SQL="UPDATE account_journal SET default_account_id=%s WHERE id=%s"
+    cr_dst.execute(SQL,[default_account_id,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** account_partial_reconcile (widget en bas à droite des factures) ***********
 MigrationTable(db_src,db_dst,'account_partial_reconcile')
 SQL="""
@@ -683,6 +671,7 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
 
 
 #** product_category **********************************************************
@@ -839,13 +828,13 @@ cnx_dst.commit()
 
 
 
-#** Divers ********************************************************************
-SQL="""
-    delete from account_payment_register_move_line_rel;
-"""
-cr_dst.execute(SQL,[account_id])
-cnx_dst.commit()
-#******************************************************************************
+# #** Divers ********************************************************************
+# SQL="""
+#     delete from account_payment_register_move_line_rel;
+# """
+# cr_dst.execute(SQL,[account_id])
+# cnx_dst.commit()
+# #******************************************************************************
 
 
 

@@ -1,8 +1,6 @@
-Migration Odoo Opta-S de 12 vers 18
-====
+# Migration Odoo Opta-S de 12 vers 18
 
-A Faire
-===
+## A Faire
 
 * Facturation à faire fonctionner
 * Revoir les domain mis en commentaire dans les models
@@ -12,33 +10,22 @@ A Faire
 * Mettre un fond gris clair sur les champs et gris clair foncé sur les champs obligaoire
 
 
-
-
-
-Le widget de règlement en bas à droite affiche un account.move et non pas un account.payment
-===
+## Le widget de règlement en bas à droite affiche un account.move et non pas un account.payment
 De plus, sur le règlement, il manque le bouton en haut pour accéder à la pièce comptable même sur les nouvelles factures
 Il fallait renseigner le champ `default_account_id` dans `account_journal`
 
 
-Manque le widget pour le paiement en bas à droite de la facture
-===
+## Manque le widget pour le paiement en bas à droite de la facture
 cf ```account_partial_reconcile```
 
 
-
-Something went wrong... If you really are stuck, share the report with your friendly support service 
-===
+## Something went wrong... If you really are stuck, share the report with your friendly support service 
 Après avoir activé la migration de account_partial_reconcile, j'ai eu ce message.
 Pour le résoudre, il fallait initialiser ces champs dans ```account_partial_reconcile```:
 ```debit_currency_id, credit_currency_id,debit_amount_currency et  credit_amount_currency```
 
 
-
-
-
-L'écriture n'est pas équilibrée.
-===
+## L'écriture n'est pas équilibrée.
 J'ai eu ce message en voulant remettre en brouillon la facture 2025-00061 (2025-00061/61)
 Et en voulant payer cette même facture, j'ai eu ce message :
 ```Vous ne pouvez pas enregistrer un paiement car il n'y a plus rien à payer sur les écritures comptables sélectionnées.```
@@ -46,8 +33,7 @@ Pour résoudre cela, il fallait corriger la migration du champ ```display_type``
 
 
 
-Lien entre les factures et les règlements
-===
+## Lien entre les factures et les règlements
 ```
 Dans Odoo 12
 opta-s12=# select * from account_invoice_payment_rel limit 2 ;
@@ -65,8 +51,7 @@ opta-s18=# select * from account_move__account_payment limit 2 ;
 ```
 
 
-Mode de paiement invalide
-===
+## Mode de paiement invalide
 En voulant afficher la facture reliée au réglement. Solution : 
 ```
 rename={
@@ -74,22 +59,21 @@ rename={
 }
 ```
 
-Le compte 512001 Banque ne permet pas le lettrage
-===
+
+## Le compte 512001 Banque ne permet pas le lettrage
 Modifiez sa configuration pour pouvoir lettrer des écritures. Solution : 
 ```
 cr_dst.execute("update account_account set reconcile=true where code_store->>'1' like '512001%'") 
 ```
 
-Erreur, un partenaire ne peut pas suivre deux fois le même objet
-===
+
+## Erreur, un partenaire ne peut pas suivre deux fois le même objet
 Message en validant une facture. Solution : 
 ```
 MigrationTable(db_src,db_dst,'mail_followers', where="partner_id is not null")
 ```
 
-Mettre le compte 512xxx par défaut
-===
+## Mettre le compte 512xxx par défaut
 ```
 cf _get_outstanding_account et _setup_utility_bank_accounts pour avoir le compte 512xxx
 Cela fait appel à l'identifiant account_journal_payment_debit_account_id
@@ -107,24 +91,25 @@ select id,code_store from account_account where id=654;
 ```
 
 
-
-
-Montant du à 0 
-===
+## Montant du à 0 
 Une facture est considérée comme réglée dés sa validation ce qui n'est pas normal 
 => Montant du à 0 
 => Il faut configurer property_account_payable_id et property_account_receivable_id dans res_partner
+=> Cela ne fonctionne pas avec la facture 2025-00081. Mais si je la duplique, cela fonctionne
+
+Pour résoudre ce problème, il faut initialiser le champ 'parnet_id' dans account_move_line:
+```opta-s18=# update account_move_line aml set partner_id=(select partner_id from account_move where id=aml.move_id) where partner_id is not null;```
 
 
-def create
-===
+
+
+## def create
 ```
 2025-03-17 13:47:38,304 1725 WARNING opta-s18 py.warnings: /opt/odoo18/odoo/api.py:466: DeprecationWarning: 
 The model odoo.addons.is_opta_s18.models.is_frais is not overriding the create method in batch
 ```
 
-Since 17.0, the "attrs" and "states" attributes are no longer used.
-===
+## Since 17.0, the "attrs" and "states" attributes are no longer used.
 Exemples pour remplacer states : 
 ```
 invisible="state not in ['done', 'cancel']" 
@@ -137,24 +122,23 @@ invisible="is_type_intervenant != 'consultant'"
 required="is_type_intervenant == 'consultant'"
 ```
 
-Deprecated call to decimal_precision.get_precision(<application>), use digits=<application> instead 
-===
+## Deprecated call to decimal_precision.get_precision(<application>), use digits=<application> instead 
 ```
 digits=(16, 4),
 digits='Product Price'
 ```
 
-XML
-===
+## XML
 ```
 tree => list
 <graph type="bar" orientation="vertical" stacked="False"> => remove orientation => <graph type="bar" stacked="False">
 ```
 
-Autres points à revoir
-===
+## Autres points à revoir
 ```
 context="{'default_activite_id': active_id}"  => A revoir
 <div class="oe_chatter"> =>  <chatter open_attachments="True"/>
 ```
+
+
 
