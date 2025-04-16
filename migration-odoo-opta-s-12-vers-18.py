@@ -12,13 +12,10 @@ cnx,cr=GetCR(db_src)
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 debut=datetime.now()
-debut = Log(debut, "Début migration (Prévoir 3mn)")
+debut = Log(debut, "Début migration (Prévoir 6mn)")
 
 
 #TODO:
-#- Il manque les champs persnalisés des factures
-#- Dans la vue liste des facues, les montants sont à 0
-#- Voir le sens des avoir (postiif ou nagtif)
 #- Compteur
 #- mail_mail et mail_message à revoir
 #- ir_filters
@@ -26,59 +23,11 @@ debut = Log(debut, "Début migration (Prévoir 3mn)")
 #- Comparer le montant totla des factures avant et après migration
 #- Comparer toutes les tables
 #- Faire le controle d'intégrité de la base de donnée
-
-    # is_activites            = fields.Many2many('is.activite', 'is_account_invoice_activite_rel', 'invoice_id', 'activite_id')
- 
-
-    # is_dates_intervention = fields.Char("Dates d'intervention")
-    # is_activite_id        = fields.Many2one('is.activite', 'Activité')
-    # is_frais_id           = fields.Many2one('is.frais', 'Frais')
-    # is_frais_ligne_id     = fields.Many2one('is.frais.lignes', 'Ligne de frais')
-    # is_account_invoice_line_id = fields.Integer('Lien entre account_invoice_line et account_move_line pour la migration', index=True)
-
-
-
-
-#** account_move_line : champs opta-s *****************************************
-SQL="SELECT * FROM account_invoice_line"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-champs=['is_dates_intervention','is_activite_id','is_frais_id','is_frais_ligne_id']
-for row in rows:
-    for champ in champs:
-        val = row[champ]
-        SQL="UPDATE account_move_line SET "+champ+"=%s WHERE is_account_invoice_line_id=%s"
-        cr_dst.execute(SQL,[val,row['id']])
-cnx_dst.commit()
-#******************************************************************************
-
-sys.exit()
-
-
-#** account_move : champs opta-s **********************************************
-SQL="SELECT * FROM account_invoice"
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-champs=[
-    'is_affaire_id','is_detail_activite','is_phase','is_intervenant','is_prix_unitaire','is_frais','is_detail_frais',
-    'is_date_encaissement','is_montant_encaissement','is_code_service','is_ref_engagement'
-]
-for row in rows:
-    for champ in champs:
-        val = row[champ]
-        SQL="UPDATE account_move SET "+champ+"=%s WHERE id=%s"
-        cr_dst.execute(SQL,[val,row['move_id']])
-cnx_dst.commit()
-#******************************************************************************
-
-
-
-
-
+#- La connexion avec un utilsateur ne fonctione pas  => res_group à revoir
+#- PDF de la facure à faire
 
 
 sys.exit()
-
 
 #** res_company ***************************************************************
 MigrationDonneesTable(db_src,db_dst,'res_company')
@@ -104,6 +53,11 @@ MigrationTable(db_src,db_dst,'res_partner',text2jsonb=True,default=default)
 table = 'res_users'
 default = {'notification_type': 'email'}
 MigrationTable(db_src,db_dst,table,default=default)
+#******************************************************************************
+
+#** res_users : chatter_position **********************************************
+cr_dst.execute("update res_users set chatter_position='bottom'" )
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -304,9 +258,6 @@ default={
 MigrationTable(db_src,db_dst,table,rename=rename,default=default,text2jsonb=True)
 #******************************************************************************
 
-
-
-
 #** Ajouter les comptes sur les taxes *****************************************    
 SQL="""
     ALTER TABLE account_tax_repartition_line DISABLE TRIGGER ALL;
@@ -344,23 +295,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #** account_move_line *********************************************************
 debut = Log(debut, "Début account_move_line (40s)")
 rename={
@@ -394,11 +328,7 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-
-
-
 MigrationTable(db_src,db_dst,'account_full_reconcile')
-
 
 
 #** account_invoice_line => account_move **************************************
@@ -437,8 +367,6 @@ for row in rows:
         'open': 'not_paid',
     }
     payment_state = payment_states.get(row['state'], None)
-
-
     ct+=1
     move_id = row['move_id']
     if move_id:
@@ -546,7 +474,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-
 #** Pour faire fonctionner les paiments ***************************************
 SQL="""
     update account_move set always_tax_exigible=false where always_tax_exigible is null;
@@ -575,6 +502,21 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
+#** Mettre les avoir en négatif ***********************************************
+SQL="""
+    update account_move set  amount_untaxed_signed=-amount_untaxed where move_type='out_refund';
+    update account_move set  amount_untaxed_in_currency_signed=-amount_untaxed where move_type='out_refund';
+    update account_move set  amount_total_signed=-amount_total where move_type='out_refund';
+    update account_move set  amount_tax_signed=-amount_tax where move_type='out_refund';
+    update account_move set  amount_total_in_currency_signed=-amount_total where move_type='out_refund';
+    update account_move set  amount_residual_signed=-amount_residual where move_type='out_refund';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
 
 #** account_move_line / tax_repartition_line_id *******************************
 SQL="""
@@ -673,7 +615,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-
 #** product_category **********************************************************
 MigrationTable(db_src,db_dst,'product_category')
 property_account_income_categ_id  = JsonAccountCode2Id(cr_dst,'707100')
@@ -762,6 +703,56 @@ for table in tables:
 #******************************************************************************
 
 
+#** is_account_invoice_activite_rel *******************************************
+SQL="delete from is_account_invoice_activite_rel"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT ai.id,ai.move_id,rel.activite_id FROM is_account_invoice_activite_rel rel join account_invoice ai on rel.invoice_id=ai.id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:  
+    #print(row)
+    if row['move_id']:
+        SQL="""
+            INSERT INTO is_account_invoice_activite_rel (invoice_id,activite_id)
+            VALUES (%s,%s)
+        """
+        cr_dst.execute(SQL,[row['move_id'],row['activite_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_move_line : champs opta-s *****************************************
+SQL="SELECT * FROM account_invoice_line"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+champs=['is_dates_intervention','is_activite_id','is_frais_id','is_frais_ligne_id']
+for row in rows:
+    for champ in champs:
+        val = row[champ]
+        SQL="UPDATE account_move_line SET "+champ+"=%s WHERE is_account_invoice_line_id=%s"
+        cr_dst.execute(SQL,[val,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_move : champs opta-s **********************************************
+SQL="SELECT * FROM account_invoice"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+champs=[
+    'is_createur_id','is_affaire_id','is_detail_activite','is_phase','is_intervenant','is_prix_unitaire','is_frais',
+    'is_detail_frais','is_date_encaissement','is_montant_encaissement','is_code_service','is_ref_engagement'
+]
+for row in rows:
+    for champ in champs:
+        val = row[champ]
+        SQL="UPDATE account_move SET "+champ+"=%s WHERE id=%s"
+        cr_dst.execute(SQL,[val,row['move_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** is_export_compta_ana_ligne : invoice_id => move_id ************************
 SQL="""
     SELECT ana.id,ai.move_id
@@ -794,7 +785,6 @@ cnx_dst.commit()
 
 #** Pièces jointes ************************************************************
 MigrationTable(db_src,db_dst,'ir_attachment')
-#MigrationTable(db_src,db_dst,'sale_order_piece_jointe_attachment_rel')
 #******************************************************************************
 
 
@@ -826,15 +816,61 @@ cr_dst.execute(SQL)
 cnx_dst.commit()
 
 
-
-
-# #** Divers ********************************************************************
-# SQL="""
-#     delete from account_payment_register_move_line_rel;
-# """
-# cr_dst.execute(SQL,[account_id])
-# cnx_dst.commit()
+# #** Wizard création de facture ************************************************
+SQL="""
+    delete from account_payment_register_move_line_rel;
+"""
+cr_dst.execute(SQL,[account_id])
+cnx_dst.commit()
 # #******************************************************************************
+
+
+#** is_activite : rec_name ***********************************************
+SQL="""
+    SELECT act.id,act.nature_activite,aff.code_long
+    FROM is_activite act join is_affaire aff  on act.affaire_id=aff.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name="[%s] %s"%(row['code_long'],row['nature_activite'])
+    SQL="UPDATE is_activite SET rec_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** is_affaire : rec_name ***********************************************
+SQL="""
+    SELECT ia.id,ia.code_long,ia.nature_affaire,rp.name 
+    FROM is_affaire ia left outer join res_partner rp on ia.partner_id=rp.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name="[%s] %s (%s)"%(row['code_long'],row['nature_affaire'],row['name'])
+    SQL="UPDATE is_affaire SET rec_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** res_partner : complete_name ***********************************************
+SQL="SELECT rp1.id,rp1.name,rp2.name as parent_name FROM res_partner rp1 left outer join res_partner rp2 on  rp1.parent_id=rp2.id" 
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name=row['name'] or ''
+    parent_name=row['parent_name']
+    if parent_name:
+        name="%s, %s"%(parent_name,name)
+    SQL="UPDATE res_partner SET complete_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
 
 
 
