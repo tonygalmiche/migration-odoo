@@ -1,13 +1,20 @@
 # Migration Odoo Opta-S de 12 vers 18
 
 ## A Faire
-
-* Facturation à faire fonctionner
 * Revoir les domain mis en commentaire dans les models
 * Revoir le champ active_id / context dans les vues XML
 * Rapport PDF
-* Migrer les données
-* Mettre un fond gris clair sur les champs et gris clair foncé sur les champs obligaoire
+
+
+# Si je crée un utilisateur ensuite, j'ai plein de problèmes d’intégrité ce qui est normal : 
+Dans ce cas, il faut repartir sur une base viergeou vider ces tables et probablement d'autres : 
+```
+delete from res_users_log ;
+delete from change_password_user;
+delete from res_device_log
+delete from res_users_settings where user_id not in (select id from res_users);
+delete from discuss_channel_member ;
+```
 
 
 ## Le widget de règlement en bas à droite affiche un account.move et non pas un account.payment
@@ -141,4 +148,13 @@ context="{'default_activite_id': active_id}"  => A revoir
 ```
 
 
+## INSERT INTO ir_model_data (module,name,model,res_id,noupdate)\n            
+Message lors de l'instalation du module sur base vierges : 
+```
+  2025-04-26 08:43:59,849 7736 ERROR sgp18 odoo.sql_db: bad query: b"\n            
+  INSERT INTO ir_model_data (module,name,model,res_id,noupdate)\n            
+  ERROR: ERREUR:  ON CONFLICT DO UPDATE command cannot affect row a second time
+  ASTUCE : S'assure qu'aucune ligne proposée à l'insertion dans la même commande n'a de valeurs contraintes dupliquées.
+```
+Il n'y a pas de problème lors de la mise à jour du module => Ne pas en tenir compte
 

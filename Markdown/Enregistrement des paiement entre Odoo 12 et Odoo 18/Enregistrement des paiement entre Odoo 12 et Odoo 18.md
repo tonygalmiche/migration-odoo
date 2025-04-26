@@ -53,6 +53,15 @@
 ```
 
 
+## Lien entre le paiement et la facture de paiment
+Le paiement est bien bien enregistré, mais depuis celui-ci, il n'y a pas d'accès à la facture du paiement mais uniquement à la facture de base
+Pour résoudre cela, il faut corriger le compte `471000` => `Actif circulant` (`asset_current`) et affecter ce compte au champ `Compte d'attente` du journal de banque
+```
+   update account_account set account_type='asset_current' where code_store->>'1'='471000';
+   update account_journal set suspense_account_id=(select id from account_account where code_store->>'1'='471000' limit 1) where  type='bank';
+```
+
+
 ## ***Analyse de la facture 2024-00315 (id=657951)***
    Le bouton `Paiement` en haut permet bien d’arriver sur la paiement `CUST.IN/2024/0344` (id=325132)
    Le widget du paiement en bas également. La table est correcte :
@@ -66,7 +75,7 @@
    Mais c'est surtout le champ `move_id` qui pose problème car il est relié à la facture client et non pas à la facture du paiement.
    Du coup, le bouton `Pièce comptable` en haut du paiement affiche la facture client et non pas la facture du paiement.
 ```
-   opta-s18=# select  id,move\_id,name,memo,create\_date from account\_payment where id=325132;
+   opta-s18=# select  id,move_id,name,memo,create_date from account_payment where id=325132;
    id      | move_id     |       name        | memo |        create_date        
    --------+-------------+-------------------+------+---------------------------
    325132  |  **657951** | CUST.IN/2024/0344 |      | 2024-12-17 07:56:31.80769
@@ -200,6 +209,7 @@ update account_move_line set invoice_date=date;
 update account_move_line aml set partner_id=(select partner_id from account_move where id=aml.move_id) where partner_id is not null;
 ```
 
+
 ## Si je repasse en brouillon et valide une factue migrée, le montant dû compte 2 fois la TVA
 Il faut initialiser ces nouveaux champs : 
 ```
@@ -214,10 +224,57 @@ Il faut initialiser ces nouveaux champs :
     update account_move set amount_untaxed_in_currency_signed=amount_untaxed_signed where amount_untaxed_in_currency_signed is null;
 ```
 
+
 ## Après avoir mis en brouillon et validé une facture, la TVA est compté en double (2 lignes de TVA dans les écrirures)
 Solution : 
 ```
    update account_move_line set tax_repartition_line_id=(select id 
    from account_tax_repartition_line where tax_id=tax_line_id and repartition_type='tax' limit 1) 
    where tax_line_id is not null
+```
+
+
+## Impossible de trouver un plan comptable pour cette société.
+Si je crée une facture juste après la migration sur une base vierge, j’ai ce message au moment de sélectionner un client : 
+```
+  Impossible de trouver un plan comptable pour cette société. Il vous faut le configurer.
+  Veuillez aller dans les configurations comptables
+```
+
+La duplication d'une facture fonctionne ou la repasser en brouillon également. 
+Mais impossible de créer une nouvelle facture même après avoir rechargé le plan comptable et enregistré des données dans la société
+Après avoir fait une deuxième migration le problème a disparu...
+
+
+## Montrer les fonctions de comptabilité complètes
+Ajouter des personnes automatiquement dans le groupe pour voir la compta en entier
+Les personnes y sont, mais tant que je ne modifie pas le groupe manuellement, cela ne fonctionne pas
+
+
+## Devise en $ sur les factures
+Avec une base vierge, la devise par défaut est en $
+Mais elle passe en € toute seule en faisant je ne sais pas quoi
+En repartant sur une nouvelle base, je n’ai pas rencontré ce problème
+
+
+## L'opération ne peut pas être terminée : Une autre écriture avec le même nom existe déjà
+En voulant créer une nouvelle facture, j'ai eu ce message : 
+```
+  L'opération ne peut pas être terminée : Une autre écriture avec le même nom existe déjà.
+  ERROR: ERREUR:  la valeur d'une clé dupliquée rompt la contrainte unique « account_move_unique_name »
+```
+Problème avec le numéro de la prochaine facture
+Il faut revoir les champs `sequence_prefix` et `sequence_number` dans `account_move`
+
+
+## Le compte 467100 est de type créditeur, mais est utilisé dans une opération de vente
+J’ai eu ce message en voulant dupliquer une facture avec des frais re-facturable sur le compte `467xxx` (ex : `2025-00120`):
+```
+ Opération invalide
+ Le compte 467100 est de type créditeur, mais est utilisé dans une opération de vente.
+```
+
+Pour le résoudre, il faut changer le type du compte : 
+```
+  update account_account set account_type='liability_current' where code_store->>'1' like '467%';
 ```

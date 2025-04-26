@@ -3,31 +3,43 @@
 from migration_fonction import *
 import os
 
+#** Traitements des arguments pour indique la base à traiter ******************
+if len(sys.argv)!=2:
+    print("Indiquez en argument la base à traiter (opta-s ou sgp)")
+    sys.exit()
+soc = sys.argv[1]
+if soc not in ["opta-s","sgp"]:
+    print("LA base à traiter doit-être opta-s ou sgp")
+    sys.exit()
+base=sys.argv[1]
+#******************************************************************************
+
+
 #** Paramètres ****************************************************************
-db_src = "opta-s12"
-db_dst = "opta-s18"
+db_src = "%s12"%base
+db_dst = "%s18"%base
 #******************************************************************************
 
 cnx,cr=GetCR(db_src)
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 debut=datetime.now()
-debut = Log(debut, "Début migration (Prévoir 6mn)")
+debut = Log(debut, "Début migration (Prévoir 7mn)")
 
 
 #TODO:
-#- Compteur
-#- mail_mail et mail_message à revoir
-#- ir_filters
-#- Pieces jointes et liens entre les différentes tables et les pieces jointes
-#- Comparer le montant totla des factures avant et après migration
+#- Mettre en place script pour migrer automatique sur le serveur de prod
+#- Comparer le montant total des factures avant et après migration
 #- Comparer toutes les tables
-#- Faire le controle d'intégrité de la base de donnée
-#- La connexion avec un utilsateur ne fonctione pas  => res_group à revoir
-#- PDF de la facure à faire
+#- PDF de la facture à faire
+#- La génération du PDF ne fonctionne pas probabkment à cause de la feuille de style qui manque (cf ci-dessous)
+
+#Problème avec cette pièce jointe manquante (opta-s)
+#FileNotFoundError: [Errno 2] Aucun fichier ou dossier de ce type: 
+# '/media/sf_dev_odoo/home/odoo/filestore/opta-s18/6a/6a5083dabfc1c7e486f8b5c49bda572c8633fd22'
 
 
-sys.exit()
+
 
 #** res_company ***************************************************************
 MigrationDonneesTable(db_src,db_dst,'res_company')
@@ -60,10 +72,34 @@ cr_dst.execute("update res_users set chatter_position='bottom'" )
 cnx_dst.commit()
 #******************************************************************************
 
+#** res_groups ****************************************************************
+MigrationTable(db_src,db_dst,'res_company_users_rel')
+MigrationResGroups(db_src,db_dst)
+# #****************************************************************************
 
 #** res_currency ***************************************************************
 MigrationTable(db_src,db_dst,'res_currency',text2jsonb=True)
 SQL="update res_currency set full_name=currency_unit_label->>'fr_FR'"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** product *******************************************************************
+default={
+    "service_tracking": "no",
+}
+MigrationTable(db_src,db_dst,'product_template',text2jsonb=True, default=default)
+MigrationTable(db_src,db_dst,'product_product')
+#******************************************************************************
+
+
+# account_tag => Tables inutilisées => A purger
+SQL="""
+    delete from account_account_account_tag;
+    delete from account_account_tag_account_tax_repartition_line_rel;
+    delete from account_account_tag_account_move_line_rel;
+"""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
@@ -82,29 +118,6 @@ default={
 }
 MigrationTable(db_src,db_dst,table,rename=rename,default=default,text2jsonb=True)
 #******************************************************************************
-
-
-# #** Correction champ 'type' dans account_journal ******************************
-# journal_type={
-#     'sale'           : 'sale',
-#     'sale_refund'    : 'sale',
-#     'purchase'       : 'purchase',
-#     'purchase_refund': 'purchase',
-#     'cash'           : 'cash',
-#     'bank'           : 'bank',
-#     'general'        : 'general',
-#     'situation'      : 'general',
-# }
-# SQL="select id,type from account_journal"
-# cr_src.execute(SQL)
-# rows = cr_src.fetchall()
-# for row in rows:
-#     type8  = row["type"]         # Champ type dans Odoo 8
-#     type16 = journal_type[type8] # Champ type dans Odoo 16
-#     SQL="update account_journal set type=%s where id=%s"
-#     cr_dst.execute(SQL,[type16, row["id"]])
-# cnx_dst.commit()
-# #******************************************************************************
 
 
 #** account_payment *************************************************************
@@ -148,7 +161,7 @@ cnx_dst.commit()
 
 #** Position fiscale **********************************************************
 default={
-#    'company_id': 1,
+    'company_id': 1,
 }
 MigrationTable(db_src,db_dst,'account_fiscal_position',default=default,text2jsonb=True)
 MigrationTable(db_src,db_dst,'account_fiscal_position_tax')
@@ -225,18 +238,22 @@ cr_dst.execute("update account_account set reconcile=true where code_store->>'1'
 cnx_dst.commit()
 #******************************************************************************
 
+#** Pour faire fonctionner le lien entre le paiment et la facture de paiement *
+SQL="""
+   update account_account set account_type='asset_current' where code_store->>'1'='471000';
+   update account_journal set suspense_account_id=(select id from account_account where code_store->>'1'='471000' limit 1) where  type='bank';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
 
-
-#L'ccès aux facures payées ne fonctione plus depuis que j'ai fait ces requetes
-# # account_tag
-# SQL="""
-#     delete from account_account_account_tag;
-#     delete from account_account_tag_account_tax_repartition_line_rel;
-#     delete from account_account_tag_account_move_line_rel;
-# """
-# cr_dst.execute(SQL)
-# cnx_dst.commit()
-# #******************************************************************************
+#** Pour faire fonctionner les frais refacturable avec les comptes 467xxx *******
+SQL="""
+  update account_account set account_type='liability_current' where code_store->>'1' like '467%';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
 
 #** account_tax_group *********************************************************
 rename={
@@ -296,7 +313,7 @@ cnx_dst.commit()
 
 
 #** account_move_line *********************************************************
-debut = Log(debut, "Début account_move_line (40s)")
+debut = Log(debut, "Début account_move_line (2mn)")
 rename={
     'amount': 'amount_total'
 }
@@ -328,7 +345,22 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** account_full_reconcile ****************************************************
 MigrationTable(db_src,db_dst,'account_full_reconcile')
+#******************************************************************************
+
+
+#** account_partial_reconcile (widget en bas à droite des factures) ***********
+MigrationTable(db_src,db_dst,'account_partial_reconcile')
+SQL="""
+    update account_partial_reconcile set debit_currency_id=1;
+    update account_partial_reconcile set credit_currency_id=1;
+    update account_partial_reconcile set debit_amount_currency=amount;
+    update account_partial_reconcile set credit_amount_currency=amount;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
 
 
 #** account_invoice_line => account_move **************************************
@@ -518,6 +550,8 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+
+
 #** account_move_line / tax_repartition_line_id *******************************
 SQL="""
     update account_move_line set tax_repartition_line_id=(select id 
@@ -561,6 +595,7 @@ cnx_dst.commit()
 SQL="""
     SELECT ai.move_id,rel.payment_id 
     FROM account_invoice ai join account_invoice_payment_rel rel on ai.id=rel.invoice_id 
+    WHERE move_id is not null
     ORDER BY ai.id
 """
 cr_src.execute(SQL)
@@ -571,7 +606,7 @@ for row in rows:
         VALUES (%s,%s)
     """
     cr_dst.execute(SQL,[row['move_id'],row['payment_id']])
-cnx_dst.commit()
+    cnx_dst.commit()
 #******************************************************************************
 
 
@@ -602,19 +637,6 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-#** account_partial_reconcile (widget en bas à droite des factures) ***********
-MigrationTable(db_src,db_dst,'account_partial_reconcile')
-SQL="""
-    update account_partial_reconcile set debit_currency_id=1;
-    update account_partial_reconcile set credit_currency_id=1;
-    update account_partial_reconcile set debit_amount_currency=amount;
-    update account_partial_reconcile set credit_amount_currency=amount;
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-#******************************************************************************
-
-
 #** product_category **********************************************************
 MigrationTable(db_src,db_dst,'product_category')
 property_account_income_categ_id  = JsonAccountCode2Id(cr_dst,'707100')
@@ -625,15 +647,6 @@ rows = cr_dst.fetchall()
 for row in rows:
     set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_income_categ_id' , 1, property_account_income_categ_id)
     set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_expense_categ_id', 1, property_account_expense_categ_id)
-#******************************************************************************
-
-
-#** product *******************************************************************
-default={
-    "service_tracking": "no",
-}
-MigrationTable(db_src,db_dst,'product_template',text2jsonb=True, default=default)
-MigrationTable(db_src,db_dst,'product_product')
 #******************************************************************************
 
 
@@ -753,6 +766,21 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** Sequence des factures et des avoirs ***************************************
+SQL="select id,name,sequence_number,sequence_prefix,move_type from account_move where move_type in ('out_refund','out_invoice') order by id"
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    name = row['name'].split('-')
+    if len(name)==2:
+        sequence_number = int(name[1])
+        sequence_prefix = '%s-'%name[0]
+        SQL="UPDATE account_move SET sequence_prefix=%s, sequence_number=%s WHERE id=%s"
+        cr_dst.execute(SQL,[sequence_prefix,sequence_number,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** is_export_compta_ana_ligne : invoice_id => move_id ************************
 SQL="""
     SELECT ana.id,ai.move_id
@@ -787,32 +815,7 @@ cnx_dst.commit()
 MigrationTable(db_src,db_dst,'ir_attachment')
 #******************************************************************************
 
-
-#TODO : A revoir
-
-# #** mail **********************************************************************
-# MigrationTable(db_src,db_dst,'mail_message_subtype',text2jsonb=True)
-# MigrationTable(db_src,db_dst,'mail_alias')
-# MigrationTable(db_src,db_dst,'mail_followers', where="partner_id is not null")
-# MigrationTable(db_src,db_dst,'mail_followers_mail_message_subtype_rel')
-# default={
-#     'message_type'  : 'notification',
-# }
-# MigrationTable(db_src,db_dst,'mail_message', default=default)
-# cr_dst.execute("update mail_message set body='' where body is null") # Sans cela, l'affichage de la facture plante
-# cnx_dst.commit()
-# #******************************************************************************
-
-SQL="""
-    update account_journal set alias_id=Null;
-    delete from mail_alias;
-    delete from mail_followers;
-    delete from mail_followers_mail_message_subtype_rel;
-    delete from mail_tracking_value;
-    delete from discuss_channel_member;
-    delete from account_account_tag_account_tax_repartition_line_rel;
-"""
-cr_dst.execute(SQL)
+cr_dst.execute("update account_journal set alias_id=Null")
 cnx_dst.commit()
 
 
@@ -870,8 +873,121 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+#** ir_sequence ***************************************************************
+SQL="SELECT id,code,implementation,prefix,padding,number_next FROM ir_sequence WHERE code is not null"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    code=row["code"]
+    if row["implementation"]=="standard":
+        SQL="SELECT id FROM ir_sequence WHERE code='"+code+"'"
+        cr_dst.execute(SQL)
+        rows2 = cr_dst.fetchall()
+        for row2 in rows2:
+            seq_id = "%03d" % row["id"]
+            ir_sequence = "ir_sequence_"+seq_id
+            SQL="SELECT last_value FROM "+ir_sequence
+            cr_src.execute(SQL)
+            rows3 = cr_src.fetchall()
+            for row3 in rows3:
+                seq_id = "%03d" % row2["id"]
+                ir_sequence = "ir_sequence_"+seq_id
+                last_value = row3["last_value"]+1
+                SQL="ALTER SEQUENCE "+ir_sequence+" RESTART WITH %s"
+                cr_dst.execute(SQL,[last_value])
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** ir_filters ***************************************************************
+# ** Si le filtre n'a pas d'action associée il sera visible dans tous les menus du modèle
+# ** Et comme l'id de l'action change lors du changement de version, il est préférable de vider ce champ
+default = {'sort': []}
+MigrationTable(db_src,db_dst,"ir_filters", default=default)
+SQL="""
+    update ir_filters set action_id=NULL, active='t';
+    update ir_filters set user_id=2 where user_id=1;
+    update ir_filters set model_id='account.move' where model_id='account.invoice';
+
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT id,model_id,domain,context FROM ir_filters"
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    if row['model_id']=='account.move':
+        domain  = row['domain'].replace('date_invoice','invoice_date')
+        context = row['context'].replace('date_invoice','invoice_date')
+        SQL="UPDATE ir_filters set domain=%s, context=%s WHERE id=%s"
+        cr_dst.execute(SQL,(domain, context,row['id']))
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** Pièces jointes des factures ***********************************************
+SQL="""
+    SELECT 
+        id,
+        move_id
+     from account_invoice
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="update ir_attachment set res_model='account.move', res_id=%s where res_id=%s and res_model='account.invoice'"
+    cr_dst.execute(SQL,[row["move_id"], row["id"]])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** mail **********************************************************************
+SQL="""
+    delete from discuss_channel_member;
+    delete from mail_tracking_value;
+    delete from mail_followers;
+    delete from mail_mail where mail_message_id not in (select id from mail_message);
+    delete from mail_alias;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'mail_mail') #,text2jsonb=True)
+MigrationTable(db_src,db_dst,'mail_message_subtype',text2jsonb=True)
+#MigrationTable(db_src,db_dst,'mail_alias') #TODO : Je ne sais pas à quoi sert cette table => Je la vide et ne la migre pas
+
+default = {'partner_id': 1}
+MigrationTable(db_src,db_dst,'mail_followers', default=default ) #, where="partner_id is not null")
+MigrationTable(db_src,db_dst,'mail_followers_mail_message_subtype_rel')
+default={
+    'message_type'  : 'notification',
+}
+MigrationTable(db_src,db_dst,'mail_message', default=default)
+
+SQL="""
+    delete from mail_mail mail where mail.mail_message_id not in (select id from mail_message);
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** Liens entre mail_message et account_invoice *******************************
+ids=InvoiceIds2MoveIds(cr_src)
+SQL="SELECT id, res_id from mail_message where model='account.invoice' order by id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    invoice_id = row["res_id"]
+    if invoice_id in ids:
+        move_id = ids[invoice_id]
+        SQL="update mail_message set res_id=%s, model='account.move' where id=%s"
+        cr_dst.execute(SQL, [move_id, row["id"]])
+cnx_dst.commit()
+#******************************************************************************
 
 
 
 
+
+ 
 debut = Log(debut, "Fin migration")
