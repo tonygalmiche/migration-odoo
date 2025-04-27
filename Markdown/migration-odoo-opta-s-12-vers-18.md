@@ -158,3 +158,24 @@ Message lors de l'instalation du module sur base vierges :
 ```
 Il n'y a pas de problème lors de la mise à jour du module => Ne pas en tenir compte
 
+
+
+## Problèmes avec wkhtmltopdf
+Le PDF sort avec une page blanche ou le pied de page n'apparait pas
+En voulant changer de module PDF dans la configuration tout est blanc
+Message dans les logs : 
+```
+2025-04-27 07:27:51,990 1163 WARNING opta-s18 odoo.addons.base.models.ir_actions_report: wkhtmltopdf: Exit with code 1 due to network error: ProtocolUnknownError
+```
+
+A faire en cas de problème:
+* Ne pas récupérer les pièces jointes de la base vierge avec rsync => Cela n’est plus necessaire
+* Ne pas insérer l'attachment res.company.scss => Apparemment, il faut tout de même le faire
+* Mettre à jour manuellement le module 'web' pour remettre en place les attachment des feuilles de styles
+* Changer le modèle dans la confiugration et enregistrer les changements
+* Redémarrer Odoo
+* Rafraîchir le navigateur
+* Ajouter le nouveau paramètre `report.url` avec `http://127.0.0.1:8069`
+* Passer en mode développeur avec les assets
+* Sortir du mode développeur pour arriver à afficher le pied de page
+

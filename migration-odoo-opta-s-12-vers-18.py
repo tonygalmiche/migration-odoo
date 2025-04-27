@@ -28,27 +28,15 @@ debut = Log(debut, "Début migration (Prévoir 7mn)")
 
 
 #TODO:
-#- Mettre en place script pour migrer automatique sur le serveur de prod
 #- Comparer le montant total des factures avant et après migration
 #- Comparer toutes les tables
-#- PDF de la facture à faire
-#- La génération du PDF ne fonctionne pas probabkment à cause de la feuille de style qui manque (cf ci-dessous)
-
-#Problème avec cette pièce jointe manquante (opta-s)
-#FileNotFoundError: [Errno 2] Aucun fichier ou dossier de ce type: 
-# '/media/sf_dev_odoo/home/odoo/filestore/opta-s18/6a/6a5083dabfc1c7e486f8b5c49bda572c8633fd22'
 
 
+#sys.exit()
 
 
 #** res_company ***************************************************************
 MigrationDonneesTable(db_src,db_dst,'res_company')
-#******************************************************************************
-
-
-#** ir_default ****************************************************************
-SetDefaultValue(db_dst, 'res.partner', 'property_account_payable_id'   , '401000')
-SetDefaultValue(db_dst, 'res.partner', 'property_account_receivable_id', '411000')
 #******************************************************************************
 
 
@@ -94,11 +82,13 @@ MigrationTable(db_src,db_dst,'product_product')
 #******************************************************************************
 
 
-# account_tag => Tables inutilisées => A purger
+# account_tag => Tables inutilisées => A purger *******************************
 SQL="""
     delete from account_account_account_tag;
     delete from account_account_tag_account_tax_repartition_line_rel;
     delete from account_account_tag_account_move_line_rel;
+    delete from account_move_reversal_move;
+    delete from account_move_reversal_new_move;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -873,6 +863,15 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+
+#** ir_default ****************************************************************
+SetDefaultValue(db_dst, 'res.partner', 'property_account_payable_id'   , '401000')
+SetDefaultValue(db_dst, 'res.partner', 'property_account_receivable_id', '411000')
+#******************************************************************************
+
+
+
+
 #** ir_sequence ***************************************************************
 SQL="SELECT id,code,implementation,prefix,padding,number_next FROM ir_sequence WHERE code is not null"
 cr_src.execute(SQL)
@@ -988,6 +987,23 @@ cnx_dst.commit()
 
 
 
+#** Récupérer la ligne de ir_attachment pour faire fonctionner les PDF ********
+db_vierge = 'opta-s-vierge'
+table="ir_attachment"
+where="name='res.company.scss'"
+CopieTable(db_vierge,db_dst,table,where)
+#******************************************************************************
 
- 
+# wkhtmltopdf *****************************************************************
+SQL="""
+  update ir_config_parameter set value='http://127.0.0.1:8069'  where key='web.base.url';
+  update ir_config_parameter set value='True'                   where key='web.base.url.freeze';
+  INSERT INTO ir_config_parameter (key, value) VALUES ('web.base.url.freeze', 'True')                  ON CONFLICT DO NOTHING;
+  INSERT INTO ir_config_parameter (key, value) VALUES ('report.url'         , 'http://127.0.0.1:8069') ON CONFLICT DO NOTHING;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
 debut = Log(debut, "Fin migration")
