@@ -420,19 +420,25 @@ def GetChampsCommuns(cr_src,cr_dst,table):
     return(communs)
 
 
-def MigrationDonneesTable(db_src,db_dst,table):
+def MigrationDonneesTable(db_src,db_dst,table): # ,text2jsonb=False):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     champs = GetChampsCommuns(cr_src,cr_dst,table)
     for champ in champs:
-        SQL="SELECT id,"+champ+" FROM "+table
-        cr_src.execute(SQL)
-        rows = cr_src.fetchall()
-        for row in rows:
-            v = row[champ]
-            if v:
-                SQL="UPDATE "+table+" SET "+champ+"=%s WHERE id=%s"
-                cr_dst.execute(SQL,[v,row['id']])
+        json=False
+        type_champ = GetChampsTable(cr_dst,table,champ)
+        if type_champ:
+            if type_champ[0][1]=="jsonb":
+                json=True
+        if not json:
+            SQL="SELECT id,"+champ+" FROM "+table
+            cr_src.execute(SQL)
+            rows = cr_src.fetchall()
+            for row in rows:
+                v = row[champ]
+                if v:
+                    SQL="UPDATE "+table+" SET "+champ+"=%s WHERE id=%s"
+                    cr_dst.execute(SQL,[v,row['id']])
     cnx_dst.commit()
 
 

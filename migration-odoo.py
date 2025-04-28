@@ -3,8 +3,13 @@
 from migration_fonction import *
 
 #** Paramètres *****************************************************************
-db_src = "opta-s12"
-db_dst = "opta-s18"
+#db_src = "opta-s12"
+#db_dst = "opta-s18"
+
+
+db_src = "clair-sarl15"
+db_dst = "clair-sarl18"
+
 #*******************************************************************************
 
 
