@@ -16,82 +16,22 @@ debut=datetime.now()
 debut = Log(debut, "Début migration")
 
 
+#TODO : 
+#- La création d'une facture depuis une commande de vente ne fonctionne pas
+#- En allant dans les pramètres généraux => Vous êtes sur le point de désactiver la fonctionnalité liste de prix. Toutes les listes de prix actives seront archivées.
+
+
 #TODO:
+#- Migrzation ResCompany à revoir
+#- Test le fonctionnement des modules
+#- Revoir la fonction _create_payment_vals_from_wizard que j'ai désactivée
+#- Les boutons depuis une affaire ne fonctionnent pas
 #- "service_to_purchase": None, # A revoir car le champ est passé en json
 #- Comparer le montant total des factures avant et après migration
 #- Comparer toutes les tables
 
 
-
-#** product_supplierinfo ******************************************************
-rename={
-    'name': ' partner_id',
-}
-MigrationTable(db_src,db_dst,'product_supplierinfo',rename=rename)
-#******************************************************************************
-
 sys.exit()
-
-
-
-# ** Tables diverses **********************************************************
-tables=[
-
-    'purchase_order_is_import_pdf_ids_rel',
-
-    'sale_order_is_import_excel_ids_rel',
-    'sale_order_line_invoice_rel',
-    'sale_order_is_pv_ids_rel',
-
-
-    'product_pricelist',
-    'product_pricelist_item',
-
-    'account_account_account_tag',
-    'account_account_tag',
-    'account_account_tag_account_move_line_rel',
-    'account_account_tag_account_tax_repartition_line_rel',
-    'account_account_tax_default_rel',
-    'account_group',
-    'account_move_purchase_order_rel',
-    'account_reconcile_model',
-    'account_reconcile_model_line',
-    'account_tax_sale_order_line_rel', 
-]
-for table in tables:
-    MigrationTable(db_src,db_dst,table,text2jsonb=True)
-#******************************************************************************
-
-sys.exit()
-
-
-
-SQL="""
-    update account_journal set alias_id=Null;
-    delete from mail_alias;
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
-
-sys.exit()
-
-   
-#** uom  **********************************************************************
-MigrationTable(db_src,db_dst, "uom_category",text2jsonb=True)
-MigrationTable(db_src,db_dst, "uom_uom",text2jsonb=True)
-#******************************************************************************
-
-
-sys.exit()
-
-
-
-
-sys.exit()
-
-
-
-
 
 
 
@@ -143,22 +83,12 @@ default={
     'invoice_reference_model': 'odoo',
 }
 MigrationTable(db_src,db_dst,table,rename=rename,default=default,text2jsonb=True)
+SQL="update account_journal set alias_id=Null;"
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
 
-#** account_payment *************************************************************
-table="account_payment"
-default = {
-    'company_id': 1,
-    'journal_id': 1,            # TODO : A revoir pour mettre le bon journal
-    'state'     : 'paid',
-    'date'      : '2000-01-01', # TODO  : A revoir
-}
-rename={
-    "payment_date": "date",
-}
-MigrationTable(db_src,db_dst,table,default=default,rename=rename,text2jsonb=True)
-
-
+#account_payment_term *********************************************************
 table="account_payment_term"
 default = {
 }
@@ -188,16 +118,57 @@ MigrationTable(db_src,db_dst,'account_fiscal_position_tax')
 MigrationTable(db_src,db_dst,'account_fiscal_position_account')
 #******************************************************************************
 
+
 #** account_account ***********************************************************
 table='account_account'
 rename={
     'user_type': 'user_type_id',
 }
 default={
-    'account_type': 'income',
+   'account_type': 'income',
 }
 MigrationTable(db_src,db_dst,table,rename=rename,default=default,text2jsonb=True)
 #******************************************************************************
+
+
+#** account_account : code => code_store **************************************
+SQL="SELECT id,code FROM account_account order by code"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    code = row['code']
+    val=json.dumps({'1': code})
+    SQL="UPDATE account_account SET code_store=%s WHERE id=%s"
+    cr_dst.execute(SQL,[val,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_account : internal_group => account_type **************************
+mydict={
+    'liability': 'liability_payable',
+    'equity'   : 'equity',
+    'expense'  : 'expense',
+    'income'   : 'income',
+    'asset'    : 'asset_receivable',
+}
+SQL="SELECT id,internal_group FROM account_account order by internal_group"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:    
+    internal_group = row['internal_group']
+    account_type = mydict.get(internal_group)
+    if internal_group:
+        SQL="UPDATE account_account SET account_type=%s WHERE id=%s"
+        cr_dst.execute(SQL,[account_type,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+# account_account account_type ************************************************
+cr_dst.execute("update account_account set account_type='asset_current' where code_store->>'1' like '445%'") # Dette à court terme pour la TVA
+cnx_dst.commit()
+#******************************************************************************
+
 
 #** account_tax_group *********************************************************
 rename={
@@ -220,7 +191,11 @@ MigrationTable(db_src,db_dst,table,rename=rename,default=default,text2jsonb=True
 #******************************************************************************
 
 #** account_move_line *********************************************************
-SQL="DROP INDEX  IF EXISTS account_move_unique_name" # Il est necessaire de supprimer cet index, car il y a des numéros de factures en double
+#**  Il est necessaire de désativer cet index, car il y a des numéros de factures en double
+SQL="""
+    DROP INDEX IF EXISTS account_move_unique_name;
+    CREATE UNIQUE INDEX account_move_unique_name ON account_move(name, journal_id) WHERE id=0;
+"""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 debut = Log(debut, "Début account_move_line (2mn)")
@@ -234,15 +209,28 @@ default={
 }
 MigrationTable(db_src,db_dst,'account_move'     , table_dst='account_move'     , rename=rename,default=default)
 default={
-    'currency_id': 1,
-    'debit': 0,
-    'credit': 0,
-    'amount_currency': 0,
-    'display_type': 'payment_term',
+    'display_type': 'product',
 }
 rename={}
 MigrationTable(db_src,db_dst,'account_move_line', table_dst='account_move_line', rename=rename,default=default)
+debut = Log(debut, "Fin account_move_line")
 #******************************************************************************
+
+
+#** Enlever les écritures de TVA des lignes de factures ***********************
+SQL="""
+    update account_move_line set display_type='payment_term' where date_maturity is not null;
+    update account_move_line set display_type='tax'          where tax_line_id is not null;
+    update account_move_line set display_type='product'      where product_id is not null;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+
+
 
 #** account *******************************************************************
 MigrationTable(db_src,db_dst,'account_full_reconcile')
@@ -255,12 +243,137 @@ default={
 MigrationTable(db_src,db_dst,'account_tax_repartition_line',default=default)
 #******************************************************************************
 
-debut = Log(debut, "Fin account_move_line")
+# account_tax_repartition_line ************************************************
+SQL="select id,invoice_tax_id,refund_tax_id from account_tax_repartition_line"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    tax_id=False
+    if row['invoice_tax_id']:
+        tax_id= row['invoice_tax_id']
+        document_type = 'invoice'
+    if row['refund_tax_id']:
+        tax_id= row['refund_tax_id']
+        document_type = 'refund'
+    tax_id = row['invoice_tax_id'] or row['refund_tax_id']
+    SQL="UPDATE account_tax_repartition_line SET tax_id=%s, document_type=%s WHERE id=%s"
+    cr_dst.execute(SQL,[tax_id,document_type,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+#** account_payment *************************************************************
+table="account_payment"
+default = {
+    'company_id': 1,
+    'journal_id': 1,            # TODO : A revoir pour mettre le bon journal
+    'state'     : 'paid',
+    'date'      : '2000-01-01', # TODO  : A revoir
+}
+MigrationTable(db_src,db_dst,table,default=default)
+
+
+# account_payment => Champs name, journal_id et date **************************
+SQL="select ap.id, am.name, am.journal_id, am.date from account_payment ap join account_move am on ap.move_id=am.id order by ap.id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE account_payment SET name=%s, journal_id=%s, date=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['name'],row['journal_id'],row['date'],row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+# account_payment : amount_company_currency_signed ****************************
+SQL="""
+    select ap.id, ap.payment_type, am.amount_total_signed 
+    from account_payment ap join account_move am on ap.move_id=am.id order by ap.id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    payment_type = row['payment_type']
+    if payment_type=='outbound':
+        amount = - row['amount_total_signed']
+    else:
+        amount = row['amount_total_signed']   
+    SQL="UPDATE account_payment SET amount_company_currency_signed=%s WHERE id=%s"
+    cr_dst.execute(SQL,[amount,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_account_res_company_rel *******************************************
+SQL="delete from account_account_res_company_rel"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT id FROM account_account"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:  
+    SQL="""
+        INSERT INTO account_account_res_company_rel (account_account_id,res_company_id)
+        VALUES (%s,1)
+    """
+    cr_dst.execute(SQL,[row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** account_invoice_payment_rel => lien entre facture et facture de paiment ***
+SQL="delete from account_move__account_payment"
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="""
+    select aml1.move_id invoice_id, aml2.move_id facture_paiment_id, am.payment_id
+    from account_partial_reconcile apr join account_move_line aml1 on apr.debit_move_id=aml1.id 
+                                       join account_move_line aml2 on apr.credit_move_id=aml2.id 
+                                       join account_move am on aml2.move_id=am.id
+    where am.payment_id is not null
+    order by am.payment_id
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        INSERT INTO account_move__account_payment (invoice_id,payment_id)
+        VALUES (%s,%s)
+    """
+    cr_dst.execute(SQL,[row['invoice_id'],row['payment_id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+#Le compte 512001 Banque ne permet pas le lettrage. Modifiez sa configuration pour pouvoir lettrer des écritures.
+cr_dst.execute("update account_account set reconcile=true where code_store->>'1' like '512001%'") 
+cnx_dst.commit()
+#******************************************************************************
+
+#** ir_default ****************************************************************
+SetDefaultValue(db_dst, 'res.partner', 'property_account_payable_id'   , '40110000')
+SetDefaultValue(db_dst, 'res.partner', 'property_account_receivable_id', '411101')
+#******************************************************************************
+
+#** ir_property n'existe plus. Les champs sont de type jsonb maintenant *******
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_account_receivable_id'   , field_dst="property_account_receivable_id")
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_account_payable_id'      , field_dst="property_account_payable_id")
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_payment_term_id'         , field_dst="property_payment_term_id")
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_supplier_payment_term_id', field_dst="property_supplier_payment_term_id")
+#******************************************************************************
 
 
 #** product_category **********************************************************
 MigrationTable(db_src,db_dst,'product_category')
+property_account_income_categ_id  = JsonAccountCode2Id(cr_dst,'70400100')
+property_account_expense_categ_id = JsonAccountCode2Id(cr_dst,'60100000')
+SQL="SELECT id FROM product_category"
+cr_dst.execute(SQL)
+rows = cr_dst.fetchall()
+for row in rows:
+    set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_income_categ_id' , 1, property_account_income_categ_id)
+    set_json_property(cr_dst,cnx_dst,'product_category', row['id'], 'property_account_expense_categ_id', 1, property_account_expense_categ_id)
 #******************************************************************************
+
 
 #** Taxes à la vente et taxe fournisseur sur les articles *********************
 MigrationTable(db_src,db_dst,'product_taxes_rel')
@@ -350,10 +463,6 @@ cnx_dst.commit()
 # #******************************************************************************
 
 
-#** ir_default ****************************************************************
-SetDefaultValue(db_dst, 'res.partner', 'property_account_payable_id'   , '401000')
-SetDefaultValue(db_dst, 'res.partner', 'property_account_receivable_id', '411000')
-#******************************************************************************
 
 
 #** ir_sequence ***************************************************************
@@ -414,7 +523,7 @@ SQL="""
     delete from mail_tracking_value;
     delete from mail_followers;
     delete from mail_mail where mail_message_id not in (select id from mail_message);
-    -- delete from mail_alias;
+    delete from mail_alias;
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -484,6 +593,60 @@ MigrationTable(db_src,db_dst,'sale_order_line')
 #******************************************************************************
 
 
+
+
+
+# ** Tables diverses **********************************************************
+tables=[
+
+    'purchase_order_is_import_pdf_ids_rel',
+
+    'sale_order_is_import_excel_ids_rel',
+    'sale_order_line_invoice_rel',
+    'sale_order_is_pv_ids_rel',
+
+
+    'product_pricelist',
+    'product_pricelist_item',
+
+    'account_account_account_tag',
+    'account_account_tag',
+    'account_account_tag_account_move_line_rel',
+    'account_account_tag_account_tax_repartition_line_rel',
+    'account_account_tax_default_rel',
+    'account_group',
+    'account_move_purchase_order_rel',
+    'account_reconcile_model',
+    'account_reconcile_model_line',
+    'account_tax_sale_order_line_rel', 
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table,text2jsonb=True)
+#******************************************************************************
+
+
+
+#** product_supplierinfo ******************************************************
+rename={
+    'name': ' partner_id',
+}
+MigrationTable(db_src,db_dst,'product_supplierinfo',rename=rename)
+#******************************************************************************
+
+
+
+   
+#** uom  **********************************************************************
+MigrationTable(db_src,db_dst, "uom_category",text2jsonb=True)
+MigrationTable(db_src,db_dst, "uom_uom",text2jsonb=True)
+#******************************************************************************
+
+
+
+
+
+
+
 #** res_company ***************************************************************
 # Données de res_company en json à revoir : 
 # company_details [['company_details', 'jsonb', 1]]
@@ -496,6 +659,16 @@ MigrationTable(db_src,db_dst,'sale_order_line')
 # }
 MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
+
+
+
+
+
+
+
+
+
+
 
 
 
