@@ -179,3 +179,44 @@ A faire en cas de problème:
 * Passer en mode développeur avec les assets
 * Sortir du mode développeur pour arriver à afficher le pied de page
 
+
+
+
+## Problème pour accéder aux pièces jointes
+
+Message en ouvrant une affaire avec des pièces jointes : 
+```
+Désolé, TATU Caroline (id=5777) n'a pas d'accès 'lire' à :
+- Pièce jointe (ir.attachment)
+Oups ! On dirait que vous êtes tombé sur des enregistrements top secrets.
+La faute aux règles suivantes :
+```
+
+Aucun règle n'est indiquée dans le message ce qui est curieux et en après vérification, il n'y a aucune règle qui pose problème
+
+Ce problème apparait uniquement si le tchat est activié dans le model et il vient de cette fonction Python dans `ir.attachment`
+```python
+@api.model
+
+def check(self, mode, values=None): 
+```
+
+Et de ces lignes en particulier:
+```python
+if not res_id and create_uid != self.env.uid:
+    raise AccessError(_("Sorry, you are not allowed to access this document."))
+```
+
+Donc si le res_id n'est pas renseigné dans le `ir.attachment` et que le create_uid est différent de l'utilisateur, cela bloque
+
+La première solution simple mais non sécurisé est de passer les pièces jointes en public
+```update ir_attachment set public=True```
+
+La deuxième est de revoir le script de migration pour renseigner le `res_id` dans le cas des champ `Many2many` comme celui-ci:
+```python 
+proposition_ids = fields.Many2many('ir.attachment', 'is_affaire_propositions_rel', 'doc_id', 'file_id', 'Propositions commerciales')
+```
+
+cf `init_res_id_ir_attachment_Many2many` pour résoudre ce problème
+
+

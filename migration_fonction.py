@@ -1081,3 +1081,19 @@ def parent_store_compute(cr,cnx,table,parent):
     cr.execute(query)
     cnx.commit()
 
+
+def init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation,doc_field,attachment_field):
+    """
+        Initialiser le res_id de ir_attachment pour les champs Many2many avec chat ('mail.thread') 
+        pour résoudre le problème d'accès aux pieces jointes
+    """
+    SQL="SELECT %s, %s from %s"%(doc_field,attachment_field,table_relation)
+    cr_dst.execute(SQL)
+    rows = cr_dst.fetchall()
+    for row in rows:
+        SQL="UPDATE ir_attachment SET res_id=%s WHERE id=%s and res_id=0 and res_model is not null"
+        cr_dst.execute(SQL,[row[doc_field],row[attachment_field]])
+    cnx_dst.commit()
+
+
+

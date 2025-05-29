@@ -32,7 +32,89 @@ debut = Log(debut, "Début migration (Prévoir 7mn)")
 #- Comparer toutes les tables
 
 
-#sys.exit()
+
+#rec_name à calculer pour : 
+#    _name = 'is.frais'
+
+
+            # name = '%s-%s-%s'%(obj.login,obj.mois_creation,obj.chrono)
+
+
+
+
+#** is_frais : rec_name ***********************************************
+SQL="""
+    SELECT id,login,mois_creation,chrono
+    FROM is_frais
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name="%s-%s-%s"%(row['login'],row['mois_creation'],row['chrono'])
+    SQL="UPDATE is_frais SET rec_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+
+
+
+#** is_affaire_taux_journalier : rec_name ***********************************************
+SQL="""
+    SELECT id,montant,unite,commentaire
+    FROM is_affaire_taux_journalier
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name="%s€ / %s"%(row['montant'],row['unite'])
+    if row['commentaire']:
+        name = '%s - %s'%(name,row['commentaire'])
+    SQL="UPDATE is_affaire_taux_journalier SET rec_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** is_affaire_forfait_jour : rec_name ***********************************************
+SQL="""
+    SELECT id,montant,commentaire
+    FROM is_affaire_forfait_jour
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name="%s€"%(row['montant'])
+    if row['commentaire']:
+        name = '%s - %s'%(name,row['commentaire'])
+    SQL="UPDATE is_affaire_forfait_jour SET rec_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#    name="%s€"%(obj.montant)
+#             if obj.commentaire:
+#                 name = '%s - %s'%(name,obj.commentaire)
+
+
+sys.exit()
+
+
+
+#** res_id dans ir_attachment *************************************************
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_activite_pieces_jointes_rel',doc_field='doc_id',attachment_field='file_id')
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_affaire_propositions_rel'   ,doc_field='doc_id',attachment_field='file_id')
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_affaire_convention_rel'     ,doc_field='doc_id',attachment_field='file_id')
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_frais_justificatif_rel'     ,doc_field='doc_id',attachment_field='file_id')
+#******************************************************************************
+
+
+
+
+
+sys.exit()
 
 
 #** res_company ***************************************************************
