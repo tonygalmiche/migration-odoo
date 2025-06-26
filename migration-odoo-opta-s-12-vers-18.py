@@ -32,94 +32,24 @@ debut = Log(debut, "Début migration (Prévoir 7mn)")
 #- Comparer toutes les tables
 
 
-
-#rec_name à calculer pour : 
-#    _name = 'is.frais'
-
-
-            # name = '%s-%s-%s'%(obj.login,obj.mois_creation,obj.chrono)
-
-
-
-
-#** is_frais : rec_name ***********************************************
-SQL="""
-    SELECT id,login,mois_creation,chrono
-    FROM is_frais
-"""
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    name="%s-%s-%s"%(row['login'],row['mois_creation'],row['chrono'])
-    SQL="UPDATE is_frais SET rec_name=%s WHERE id=%s"
-    cr_dst.execute(SQL,[name,row['id']])
-cnx_dst.commit()
-#******************************************************************************
+# base.group_user
+# account.group_account_manager
+# account.group_account_readonly
+# account.group_account_user
+#base.group_allow_export
 
 
 
 
-
-#** is_affaire_taux_journalier : rec_name ***********************************************
-SQL="""
-    SELECT id,montant,unite,commentaire
-    FROM is_affaire_taux_journalier
-"""
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    name="%s€ / %s"%(row['montant'],row['unite'])
-    if row['commentaire']:
-        name = '%s - %s'%(name,row['commentaire'])
-    SQL="UPDATE is_affaire_taux_journalier SET rec_name=%s WHERE id=%s"
-    cr_dst.execute(SQL,[name,row['id']])
-cnx_dst.commit()
-#******************************************************************************
+#sys.exit()
 
 
-#** is_affaire_forfait_jour : rec_name ***********************************************
-SQL="""
-    SELECT id,montant,commentaire
-    FROM is_affaire_forfait_jour
-"""
-cr_src.execute(SQL)
-rows = cr_src.fetchall()
-for row in rows:
-    name="%s€"%(row['montant'])
-    if row['commentaire']:
-        name = '%s - %s'%(name,row['commentaire'])
-    SQL="UPDATE is_affaire_forfait_jour SET rec_name=%s WHERE id=%s"
-    cr_dst.execute(SQL,[name,row['id']])
-cnx_dst.commit()
-#******************************************************************************
-
-
-#    name="%s€"%(obj.montant)
-#             if obj.commentaire:
-#                 name = '%s - %s'%(name,obj.commentaire)
-
-
-sys.exit()
-
-
-
-#** res_id dans ir_attachment *************************************************
-init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_activite_pieces_jointes_rel',doc_field='doc_id',attachment_field='file_id')
-init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_affaire_propositions_rel'   ,doc_field='doc_id',attachment_field='file_id')
-init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_affaire_convention_rel'     ,doc_field='doc_id',attachment_field='file_id')
-init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_frais_justificatif_rel'     ,doc_field='doc_id',attachment_field='file_id')
-#******************************************************************************
-
-
-
-
-
-sys.exit()
 
 
 #** res_company ***************************************************************
 MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
+
 
 
 #** res_partner ***************************************************************
@@ -129,6 +59,23 @@ default={
 }
 MigrationTable(db_src,db_dst,'res_partner',text2jsonb=True,default=default)
 #******************************************************************************
+
+
+
+#** res_partner : complete_name ***********************************************
+SQL="SELECT rp1.id,rp1.name,rp2.name as parent_name FROM res_partner rp1 left outer join res_partner rp2 on  rp1.parent_id=rp2.id" 
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name=row['name'] or ''
+    parent_name=row['parent_name']
+    if parent_name:
+        name="%s, %s"%(parent_name,name)
+    SQL="UPDATE res_partner SET complete_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
 
 
 #** res_users *****************************************************************
@@ -146,6 +93,13 @@ cnx_dst.commit()
 MigrationTable(db_src,db_dst,'res_company_users_rel')
 MigrationResGroups(db_src,db_dst)
 # #****************************************************************************
+
+#** res_groups_users_rel : Ajoute des utilisateurs dans les nouveaux groupes **
+AddUserGroupToOtherGroup(db_dst, "group_user"           , "group_allow_export")     # Export pour employés
+AddUserGroupToOtherGroup(db_dst, "group_account_manager", "group_account_readonly") # Compta complète pour comptable
+AddUserGroupToOtherGroup(db_dst, "group_account_manager", "group_account_user")     # Compta complète pour comptable
+#******************************************************************************
+
 
 #** res_currency ***************************************************************
 MigrationTable(db_src,db_dst,'res_currency',text2jsonb=True)
@@ -326,6 +280,15 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
+#** ir_property n'existe plus. Les champs sont de type jsonb maintenant *******
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_account_receivable_id'   , field_dst="property_account_receivable_id")
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_account_payable_id'      , field_dst="property_account_payable_id")
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_payment_term_id'         , field_dst="property_payment_term_id")
+MigrationIrProperty2JsonField(db_src,db_dst,'res.partner', property_src='property_supplier_payment_term_id', field_dst="property_supplier_payment_term_id")
+#******************************************************************************
+
 
 #** account_tax_group *********************************************************
 rename={
@@ -887,11 +850,19 @@ cnx_dst.commit()
 MigrationTable(db_src,db_dst,'ir_attachment')
 #******************************************************************************
 
+#** res_id dans ir_attachment *************************************************
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_activite_pieces_jointes_rel',doc_field='doc_id',attachment_field='file_id')
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_affaire_propositions_rel'   ,doc_field='doc_id',attachment_field='file_id')
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_affaire_convention_rel'     ,doc_field='doc_id',attachment_field='file_id')
+init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation='is_frais_justificatif_rel'     ,doc_field='doc_id',attachment_field='file_id')
+#******************************************************************************
+
+#** account_journal ***********************************************************
 cr_dst.execute("update account_journal set alias_id=Null")
 cnx_dst.commit()
+#******************************************************************************
 
-
-# #** Wizard création de facture ************************************************
+# #** Wizard création de facture **********************************************
 SQL="""
     delete from account_payment_register_move_line_rel;
 """
@@ -930,28 +901,59 @@ cnx_dst.commit()
 #******************************************************************************
 
 
-#** res_partner : complete_name ***********************************************
-SQL="SELECT rp1.id,rp1.name,rp2.name as parent_name FROM res_partner rp1 left outer join res_partner rp2 on  rp1.parent_id=rp2.id" 
+#** is_affaire_taux_journalier : rec_name ***********************************************
+SQL="""
+    SELECT id,montant,unite,commentaire
+    FROM is_affaire_taux_journalier
+"""
 cr_src.execute(SQL)
 rows = cr_src.fetchall()
 for row in rows:
-    name=row['name'] or ''
-    parent_name=row['parent_name']
-    if parent_name:
-        name="%s, %s"%(parent_name,name)
-    SQL="UPDATE res_partner SET complete_name=%s WHERE id=%s"
+    name="%s€ / %s"%(row['montant'],row['unite'])
+    if row['commentaire']:
+        name = '%s - %s'%(name,row['commentaire'])
+    SQL="UPDATE is_affaire_taux_journalier SET rec_name=%s WHERE id=%s"
     cr_dst.execute(SQL,[name,row['id']])
 cnx_dst.commit()
 #******************************************************************************
 
+
+#** is_affaire_forfait_jour : rec_name ***********************************************
+SQL="""
+    SELECT id,montant,commentaire
+    FROM is_affaire_forfait_jour
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name="%s€"%(row['montant'])
+    if row['commentaire']:
+        name = '%s - %s'%(name,row['commentaire'])
+    SQL="UPDATE is_affaire_forfait_jour SET rec_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+#** is_frais : rec_name ***********************************************
+SQL="""
+    SELECT id,login,mois_creation,chrono
+    FROM is_frais
+"""
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    name="%s-%s-%s"%(row['login'],row['mois_creation'],row['chrono'])
+    SQL="UPDATE is_frais SET rec_name=%s WHERE id=%s"
+    cr_dst.execute(SQL,[name,row['id']])
+cnx_dst.commit()
+#******************************************************************************
 
 
 #** ir_default ****************************************************************
 SetDefaultValue(db_dst, 'res.partner', 'property_account_payable_id'   , '401000')
 SetDefaultValue(db_dst, 'res.partner', 'property_account_receivable_id', '411000')
 #******************************************************************************
-
-
 
 
 #** ir_sequence ***************************************************************
