@@ -6,9 +6,14 @@ from migration_fonction import *
 #db_src = "opta-s12"
 #db_dst = "opta-s18"
 
+# db_src = "clair-sarl15"
+# db_dst = "clair-sarl18"
 
-db_src = "clair-sarl15"
-db_dst = "clair-sarl18"
+# db_src = "france-filets-communication13"
+# db_dst = "france-filets-communication18"
+
+db_src = "coheliance14"
+db_dst = "coheliance18"
 
 #*******************************************************************************
 
