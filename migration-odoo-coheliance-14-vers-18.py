@@ -18,7 +18,7 @@ debut = Log(debut, "Début migration")
 
 
 #TODO:
-#- Rapport PDF
+#- Les montant HT et TTC des factures dans la vue liste sont à 0
 #- Mettre des couleurs (res.users et state)
 #- Migrer les tables du moduule CRM
 #- Création de fiches
