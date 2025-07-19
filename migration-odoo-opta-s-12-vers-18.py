@@ -27,29 +27,9 @@ debut=datetime.now()
 debut = Log(debut, "Début migration (Prévoir 7mn)")
 
 
-#TODO:
-#- Comparer le montant total des factures avant et après migration
-#- Comparer toutes les tables
-
-
-# base.group_user
-# account.group_account_manager
-# account.group_account_readonly
-# account.group_account_user
-#base.group_allow_export
-
-
-
-
-#sys.exit()
-
-
-
-
 #** res_company ***************************************************************
 MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
-
 
 
 #** res_partner ***************************************************************
@@ -59,7 +39,6 @@ default={
 }
 MigrationTable(db_src,db_dst,'res_partner',text2jsonb=True,default=default)
 #******************************************************************************
-
 
 
 #** res_partner : complete_name ***********************************************
@@ -173,6 +152,8 @@ MigrationTable(db_src,db_dst,table,default=default,rename=rename)
 SQL="""
     update account_payment set state='canceled' where state='cancelled';
     update account_payment set state='paid' where state='posted';
+    update account_payment set amount_company_currency_signed=amount where payment_type='inbound';
+    update account_payment set amount_company_currency_signed=-amount where payment_type='outbound';
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
@@ -1005,6 +986,12 @@ for row in rows:
         SQL="UPDATE ir_filters set domain=%s, context=%s WHERE id=%s"
         cr_dst.execute(SQL,(domain, context,row['id']))
 cnx_dst.commit()
+#******************************************************************************
+
+
+#** ir_exports ****************************************************************
+MigrationTable(db_src,db_dst,'ir_exports')
+MigrationTable(db_src,db_dst,'ir_exports_line')
 #******************************************************************************
 
 
