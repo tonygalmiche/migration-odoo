@@ -4,10 +4,23 @@ from migration_fonction import *
 import os
 
 
-#** Paramètres ****************************************************************
-db_src = "coheliance14"
-db_dst = "coheliance18"
+#** Traitements des arguments pour indiquer la base à traiter *****************
+if len(sys.argv)!=2:
+    print("Indiquez en argument la base à traiter (coheliance ou coheliance-formation)")
+    sys.exit()
+soc = sys.argv[1]
+if soc not in ["coheliance","coheliance-formation"]:
+    print("LA base à traiter doit-être coheliance ou coheliance-formation")
+    sys.exit()
+base=sys.argv[1]
 #******************************************************************************
+
+#** Paramètres ****************************************************************
+db_src = "%s14"%base
+db_dst = "%s18"%base
+print(db_src,'=>',db_dst)
+#******************************************************************************
+
 
 cnx,cr=GetCR(db_src)
 cnx_src,cr_src=GetCR(db_src)
@@ -16,17 +29,13 @@ debut=datetime.now()
 debut = Log(debut, "Début migration")
 
 
-
 #TODO:
 #- Les montant HT et TTC des factures dans la vue liste sont à 0
 #- Mettre des couleurs (res.users et state)
 #- Migrer les tables du moduule CRM
 #- Création de fiches
-#- Migrer les 2 bases
 #- Mettre en place sur nouveau serveur
 #- Comparer les tables des 2 bases pour rechercher des oublis
-
-
 
 
 
@@ -628,8 +637,6 @@ rename={
 MigrationTable(db_src,db_dst,'product_supplierinfo',rename=rename)
 #******************************************************************************
 
-
-
    
 #** uom  **********************************************************************
 MigrationTable(db_src,db_dst, "uom_category",text2jsonb=True)
@@ -637,24 +644,14 @@ MigrationTable(db_src,db_dst, "uom_uom",text2jsonb=True)
 #******************************************************************************
 
 
-
-
-
-
-
 #** res_company ***************************************************************
-# Données de res_company en json à revoir : 
-# company_details [['company_details', 'jsonb', 1]]
-# invoice_terms [['invoice_terms', 'jsonb', 1]]
-# invoice_terms_html [['invoice_terms_html', 'jsonb', 1]]
-# report_footer [['report_footer', 'jsonb', 1]]
-# report_header [['report_header', 'jsonb', 1]]
-# default={
-#     'company_details': None,
-# }
+SQL="""
+    update res_company set account_sale_tax_id=null;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
-
 
 
 #** Requetes diverses *********************************************************
@@ -669,14 +666,6 @@ SQL="""
 cr_dst.execute(SQL,[name,row['id']])
 cnx_dst.commit()
 #******************************************************************************
-
-
-
-
-
-
-
-
 
 
 debut = Log(debut, "Fin migration")

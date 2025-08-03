@@ -32,9 +32,26 @@ debut = Log(debut, "Début migration")
 
 
 
+# wkhtmltopdf *****************************************************************
+SQL="""
+  INSERT INTO ir_config_parameter (key, value) VALUES ('web_m2x_options.create', 'False')      ON CONFLICT DO NOTHING;
+  INSERT INTO ir_config_parameter (key, value) VALUES ('web_m2x_options.create_edit', 'False') ON CONFLICT DO NOTHING;
+  INSERT INTO ir_config_parameter (key, value) VALUES ('web_m2x_options.limit', '10')          ON CONFLICT DO NOTHING;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+# clair-sarl15=# select * from ir_config_parameter where key like 'web_m2%';
+#  id |             key             | value | create_uid |        create_date         | write_uid |         write_date         
+# ----+-----------------------------+-------+------------+----------------------------+-----------+----------------------------
+#  25 | web_m2x_options.create      | False |          2 | 2023-11-24 12:03:28.628196 |         2 | 2023-11-24 12:03:28.628196
+#  26 | web_m2x_options.create_edit | False |          2 | 2023-11-24 12:03:41.964668 |         2 | 2023-11-24 12:03:41.964668
+#  27 | web_m2x_options.limit       | 10    |          2 | 2023-11-24 12:03:57.879269 |         2 | 2023-11-24 12:03:57.879269
 
 
-#sys.exit()
+
+sys.exit()
 
 
 
