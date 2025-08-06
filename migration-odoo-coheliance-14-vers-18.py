@@ -29,17 +29,6 @@ debut=datetime.now()
 debut = Log(debut, "Début migration")
 
 
-#TODO:
-#- Les montant HT et TTC des factures dans la vue liste sont à 0
-#- Mettre des couleurs (res.users et state)
-#- Migrer les tables du moduule CRM
-#- Création de fiches
-#- Mettre en place sur nouveau serveur
-#- Comparer les tables des 2 bases pour rechercher des oublis
-
-
-
-
 #** res_partner ***************************************************************
 MigrationTable(db_src,db_dst,'res_partner_title',text2jsonb=True)
 default={
@@ -540,7 +529,6 @@ cnx_dst.commit()
 
 #** mail **********************************************************************
 SQL="""
-    delete from crm_team;
     delete from discuss_channel_member;
     delete from mail_tracking_value;
     delete from mail_followers;
@@ -654,6 +642,17 @@ MigrationDonneesTable(db_src,db_dst,'res_company')
 #******************************************************************************
 
 
+#** res_company : company_registry => is_company_registry *********************
+SQL="SELECT id,company_registry FROM res_company" 
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="UPDATE res_company SET is_company_registry=%s WHERE id=%s"
+    cr_dst.execute(SQL,[row['company_registry'],row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
 #** Requetes diverses *********************************************************
 SQL="""
     update sale_order set team_id=null;
@@ -666,6 +665,77 @@ SQL="""
 cr_dst.execute(SQL,[name,row['id']])
 cnx_dst.commit()
 #******************************************************************************
+
+
+#** account_move => Nouveaux champs xx_in_currency_signed *********************
+SQL="""
+    update account_move set amount_untaxed_in_currency_signed=amount_untaxed_signed;
+    update account_move set amount_total_in_currency_signed=amount_total_signed;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+# #** crm_phonecall => mail_activity ******************************************
+SQL="""
+    update mail_activity_type set keep_done=True;
+    DELETE FROM mail_activity;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+SQL="SELECT date,name,partner_id,user_id FROM crm_phonecall WHERE  partner_id is not null order by id"
+cr_src.execute(SQL)
+rows = cr_src.fetchall()
+for row in rows:
+    SQL="""
+        INSERT INTO mail_activity (
+            res_model_id, 
+            res_id, 
+            is_partner_id,
+            activity_type_id, 
+            user_id, 
+            res_model, 
+            res_name, 
+            summary, 
+            date_deadline, 
+            date_done, 
+            automated, 
+            active
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    cr_dst.execute(SQL,[
+        87,
+        row['partner_id'],
+        row['partner_id'],
+        2,
+        row['user_id'],
+        'res.partner',
+        'res_name',
+        row['name'],
+        row['date'],
+        row['date'],
+        False,
+        False,
+    ])
+cnx_dst.commit()
+#******************************************************************************
+
+#** crm ***************************************************************
+MigrationTable(db_src,db_dst,"crm_lead")
+MigrationTable(db_src,db_dst,"crm_stage",text2jsonb=True)
+#******************************************************************************
+
+
+#** mail **********************************************************************
+SQL="""
+    update crm_lead set team_id=null;
+    delete from crm_team;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
 
 
 debut = Log(debut, "Fin migration")
