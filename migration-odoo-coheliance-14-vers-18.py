@@ -87,8 +87,8 @@ if category_id:
     """
     cr_dst.execute(SQL,[category_id])
     rows = cr_dst.fetchall()
-    for row in rows:
-        print(row)
+    # for row in rows:
+    #     print(row)
     #** Si il a plusieurs types, il faut lui mettre le id le plus petit uniquement
     SQL="""
         DELETE FROM res_groups_users_rel r
@@ -681,7 +681,7 @@ cnx_dst.commit()
 
 
 #** Récupérer la ligne de ir_attachment pour faire fonctionner les PDF ********
-db_vierge = 'opta-s-vierge'
+db_vierge = 'odoo18'
 table="ir_attachment"
 where="name='res.company.scss'"
 CopieTable(db_vierge,db_dst,table,where)
@@ -797,10 +797,18 @@ SQL="""
     update sale_order set team_id=null;
     update sale_order set pricelist_id=null;
     update  account_move set team_id=null;
-
     delete from account_account_tag_account_tax_repartition_line_rel;
     delete from account_account_account_tag;
+    delete from account_tax_sale_order_line_rel where sale_order_line_id not in (select id from sale_order_line);
+
+    update account_payment ap set payment_method_line_id=(select id from account_payment_method_line where journal_id=ap.journal_id and payment_method_id=ap.payment_method_id limit 1);
 """
+
+# Il faut le faire manuellement, sinon ce n'est pas pris en compte
+# update decimal_precision set digits=3 where name in ('Product Price','Product Unit of Measure');
+
+
+
 cr_dst.execute(SQL,[name,row['id']])
 cnx_dst.commit()
 #******************************************************************************
@@ -880,6 +888,10 @@ cnx_dst.commit()
 MigrationTable(db_src,db_dst,"crm_lead")
 MigrationTable(db_src,db_dst,"crm_stage",text2jsonb=True)
 #******************************************************************************
+
+
+
+
 
 
 #** mail **********************************************************************

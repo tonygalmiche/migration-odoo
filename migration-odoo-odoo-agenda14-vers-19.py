@@ -42,6 +42,7 @@ tables=[
 for table in tables:
     MigrationTable(db_src,db_dst,table)
 
+
 # ** Conversion du champ weekday de calendar_recurrence ************************
 # Odoo 14 utilise 2 lettres (MO, TU, WE, TH, FR, SA, SU)
 # Odoo 19 utilise 3 lettres (MON, TUE, WED, THU, FRI, SAT, SUN)
@@ -120,7 +121,6 @@ for row in rows:
         (v19_color, partner_id)
     )
 cr_dst.connection.commit()
-#******************************************************************************
 
 
 # ** calendar_contacts => calendar_filters ************************************
@@ -150,7 +150,7 @@ MigrationResGroups(db_src,db_dst)
 
 #** mail ****************************************************************
 tables = [
-    "message_attachment_rel",
+    # "message_attachment_rel",   # => La clé (attachment_id)=(6804) n'est pas présente dans la table « ir_attachment 
     "mail_tracking_value",
     "mail_message_res_partner_rel",
     "mail_message",
@@ -166,9 +166,32 @@ for table in tables:
 #****************************************************************************
 
 
-# ** mail_template ************************************************************
-MigrationTable(db_src,db_dst,'mail_template',text2jsonb=True)
-#******************************************************************************
+# # ** mail_template ************************************************************
+
+# ERREUR:  une instruction insert ou update sur la table « mail_template » viole la contrainte de clé
+# étrangère « mail_template_model_id_fkey »
+# DÉTAIL : La clé (model_id)=(302) n'est pas présente dans la table « ir_model ».
+
+# MigrationTable(db_src,db_dst,'mail_template',text2jsonb=True)
+# #******************************************************************************
+
+
+
+# # ** Conversion syntaxe ${...} => {{ ... }} dans mail_template ****************
+# # Odoo 14 utilise la syntaxe Mako ${...}, Odoo 19 utilise inline_template {{ ... }}
+# cr_dst.execute("""
+#     UPDATE mail_template 
+#     SET lang = REGEXP_REPLACE(lang, '\\$\\{([^}]+)\\}', '{{ \\1 }}', 'g')
+#     WHERE lang LIKE '%${%}'
+# """)
+# cr_dst.connection.commit()
+# #******************************************************************************
+
+
+
+
+
+
 
 # ** mail_message_subtype *****************************************************
 MigrationTable(db_src,db_dst,'mail_message_subtype',text2jsonb=True)
@@ -253,15 +276,108 @@ MigrationTable(db_src, db_dst, 'mail_activity_type', text2jsonb=True,
                default={'chaining_type': 'suggest'})
 #******************************************************************************
 
-# ** Conversion syntaxe ${...} => {{ ... }} dans mail_template ****************
-# Odoo 14 utilise la syntaxe Mako ${...}, Odoo 19 utilise inline_template {{ ... }}
+
+
+
+
+
+# ** web_m2x_options : paramètres système *************************************
+web_m2x_params = [
+    ('web_m2x_options.create',      'False'),
+    ('web_m2x_options.create_edit', 'False'),
+    ('web_m2x_options.limit',       '10'),
+]
+for key, value in web_m2x_params:
+    cr_dst.execute("""
+        INSERT INTO ir_config_parameter (key, value, create_uid, write_uid, create_date, write_date)
+        VALUES (%s, %s, 1, 1, NOW(), NOW())
+        ON CONFLICT (key) DO NOTHING
+    """, (key, value))
+cr_dst.connection.commit()
+#******************************************************************************
+
+
+
+# ** Désactivation des contacts sans utilisateur associé **********************
 cr_dst.execute("""
-    UPDATE mail_template 
-    SET lang = REGEXP_REPLACE(lang, '\\$\\{([^}]+)\\}', '{{ \\1 }}', 'g')
-    WHERE lang LIKE '%${%}'
+    UPDATE res_partner
+    SET active = FALSE
+    WHERE id NOT IN (SELECT partner_id FROM res_users WHERE partner_id IS NOT NULL)
+    AND active = TRUE
 """)
 cr_dst.connection.commit()
 #******************************************************************************
 
 
+# ** Recalcul de complete_name sur res_partner *********************************
+# Logique identique à _get_complete_name() d'Odoo 19 :
+#   - Société ou contact sans parent ni company_name : complete_name = name
+#   - Contact avec parent : complete_name = "Nom société parente, nom"
+#   - Contact avec company_name sans parent : complete_name = "company_name, nom"
+cr_dst.execute("""
+    UPDATE res_partner p
+    SET complete_name = CASE
+        WHEN p.is_company OR (p.parent_id IS NULL AND COALESCE(p.company_name, '') = '')
+            THEN COALESCE(TRIM(p.name), '')
+        WHEN p.parent_id IS NOT NULL
+            THEN TRIM(
+                COALESCE(
+                    (SELECT name FROM res_partner WHERE id = p.parent_id),
+                    p.company_name,
+                    ''
+                ) || ', ' || COALESCE(p.name, '')
+            )
+        ELSE TRIM(p.company_name || ', ' || COALESCE(p.name, ''))
+    END
+""")
+cr_dst.connection.commit()
+#******************************************************************************
+
+
+
+
+# Correction manuelle : Pour me mettre en vert (couleur 47)
+cr_dst.execute("""
+    UPDATE res_partner SET is_calendar_color = 47 WHERE id=7
+""")
+cr_dst.connection.commit()
+#******************************************************************************
+
+
+# ** Suppression des orphelins dans message_attachment_rel ********************
+# Supprime les lignes dont le message_id n'existe plus dans mail_message
+cr_dst.execute("""
+    DELETE FROM message_attachment_rel
+    WHERE NOT EXISTS (
+        SELECT 1 FROM mail_message WHERE id = message_attachment_rel.message_id
+    )
+""")
+cr_dst.connection.commit()
+#******************************************************************************
+
+
+# =============================================================================
+# PROBLÈME RENCONTRÉ APRÈS COPIE SUR SERVEUR DE PROD (25/04/2026)
+# =============================================================================
+# Symptôme : page de login inaccessible, écran blanc sans formulaire.
+# Erreur dans les logs Odoo :
+#   FileNotFoundError: [Errno 2] Aucun fichier ou dossier de ce nom:
+#   '/home/odoo/.local/share/Odoo/filestore/odoo19-agenda/3b/3bfec11ea...'
+#
+# Cause :
+#   1. Le filestore n'a pas été copié sur le serveur de prod.
+#   2. Les assets web (JS/CSS) sont stockés comme ir.attachment avec un fichier
+#      physique dans le filestore. Sans ce fichier, le chargement de la page
+#      de login plante (asset web.assets_frontend_lazy.min.js introuvable).
+#
+# Solution en 2 étapes :
+#
+#   Étape 1 - Débloquer la connexion (supprimer les assets en cache) :
+#     DELETE FROM ir_attachment WHERE url LIKE '/web/assets/%';
+#     Puis redémarrer Odoo → les assets sont regénérés automatiquement.
+#
+#   Étape 2 - Copier le filestore complet depuis la machine locale :
+#     rsync -rva /home/odoo/.local/share/Odoo/filestore/odoo19-agenda/ \
+#         user@prod:/home/odoo/.local/share/Odoo/filestore/odoo19-agenda/
+# =============================================================================
 
