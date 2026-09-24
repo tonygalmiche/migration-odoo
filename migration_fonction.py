@@ -447,6 +447,59 @@ def MigrationIrFilters(db_src,db_dst,modules={}):
     cnx_dst.commit()
 
 
+def MigrationIsSetColumnWidth(db_src,db_dst,modules={}):
+    """Migration des largeurs de colonnes mémorisées (module is_set_column_width) :
+    - view_key = "modèle,list,id_vue[,champ relationnel,list],champs triés..." : l'id de la vue (3e élément)
+      change d'une version à l'autre => on retrouve la vue de la base destination par son identifiant externe.
+      modules permet de gérer les modules renommés (ex : {'is_kmymoney18': 'is_kmymoney20'})
+    - utilisateur : correspondance par login
+    - Mise à jour ou création par (utilisateur, view_key) : les lignes déjà présentes en destination sont conservées
+    """
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    # Module absent de la source ou pas encore installé dans la destination => rien à faire
+    if not GetChamps(cr_src,'is_set_column_width') or not GetChamps(cr_dst,'is_set_column_width'):
+        print("MigrationIsSetColumnWidth : table is_set_column_width absente de %s ou %s => ignoré"%(db_src,db_dst))
+        return
+    SQL="""
+        select w.view_key, w.column_widths, u.login
+        from is_set_column_width w inner join res_users u on u.id=w.user_id
+    """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    for row in rows:
+        parts = row['view_key'].split(',')
+        if len(parts)>2 and parts[2].isdigit():
+            SQL="select module, name from ir_model_data where model='ir.ui.view' and res_id=%s limit 1"
+            cr_src.execute(SQL,(int(parts[2]),))
+            xmlid = cr_src.fetchone()
+            view_id = False
+            if xmlid:
+                module = modules.get(xmlid['module'], xmlid['module'])
+                SQL="select res_id from ir_model_data where model='ir.ui.view' and module=%s and name=%s limit 1"
+                cr_dst.execute(SQL,(module,xmlid['name']))
+                res = cr_dst.fetchone()
+                if res:
+                    view_id = res['res_id']
+            if not view_id:
+                print("MigrationIsSetColumnWidth : vue %s non retrouvée => ignorée (%s)"%(parts[2],row['view_key']))
+                continue
+            parts[2] = str(view_id)
+        view_key = ','.join(parts)
+        cr_dst.execute("select id from res_users where login=%s",(row['login'],))
+        user = cr_dst.fetchone()
+        if not user:
+            print("MigrationIsSetColumnWidth : utilisateur %s non trouvé => ignoré"%row['login'])
+            continue
+        cr_dst.execute("delete from is_set_column_width where user_id=%s and view_key=%s",(user['id'],view_key))
+        SQL="""
+            insert into is_set_column_width (user_id, view_key, column_widths, create_uid, create_date, write_uid, write_date)
+            values (%s, %s, %s, %s, now() at time zone 'UTC', %s, now() at time zone 'UTC')
+        """
+        cr_dst.execute(SQL,(user['id'],view_key,row['column_widths'],user['id'],user['id']))
+    cnx_dst.commit()
+
+
 def CopieTable(db_src,db_dst,table,where):
     "Permet de copier certaines lignes d'une table dans une autre base avec une clause where"
     cnx_src,cr_src=GetCR(db_src)

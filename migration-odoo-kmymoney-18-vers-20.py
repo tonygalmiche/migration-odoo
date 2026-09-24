@@ -48,3 +48,8 @@ for table in tables:
 # ** ir_filters ***************************************************************
 MigrationIrFilters(db_src,db_dst,modules={'is_kmymoney18': 'is_kmymoney20'})
 #******************************************************************************
+
+
+# ** is_set_column_width (largeurs de colonnes mémorisées) ********************
+MigrationIsSetColumnWidth(db_src,db_dst,modules={'is_kmymoney18': 'is_kmymoney20'})
+#******************************************************************************
