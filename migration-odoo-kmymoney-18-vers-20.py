@@ -21,6 +21,15 @@ SQL="""
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
+
+# ** base.default_user est supprimé depuis la v19 => les ids des partenaires techniques sont décalés
+# ** et le partenaire de portaltemplate reçoit le nom v18 "Default User Template" (esthétique uniquement)
+SQL="""
+    update res_partner set name='Portal User Template'
+    where id=(select partner_id from res_users where login='portaltemplate');
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 # *****************************************************************************
 
 
