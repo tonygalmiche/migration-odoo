@@ -381,6 +381,72 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
         SetSequence(cr_dst,cnx_dst,table_dst)
 
 
+def MigrationIrFilters(db_src,db_dst,modules={}):
+    """Migration des filtres favoris (ir_filters) :
+    - action_id : l'id des actions change d'une version à l'autre => on retrouve l'action de la base destination
+      par son identifiant externe (ir_model_data). modules permet de gérer les modules renommés
+      (ex : {'is_kmymoney18': 'is_kmymoney20'}). Si l'action n'est pas retrouvée, action_id est vidé
+      (le filtre, et surtout un filtre par défaut, s'applique alors à tous les menus du modèle)
+    - utilisateur : correspondance par login. À partir d'Odoo 19, user_id est remplacé par la table
+      de liaison ir_filters_res_users_rel (sans cette reprise, les filtres personnels deviennent partagés)
+    """
+    MigrationTable(db_src,db_dst,'ir_filters')
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+
+    # ** action_id ************************************************************
+    SQL="""
+        select f.id, d.module, d.name
+        from ir_filters f inner join ir_model_data d on d.model like 'ir.actions.%%' and d.res_id=f.action_id
+        where f.action_id is not null
+    """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    cr_dst.execute("update ir_filters set action_id=NULL")
+    for row in rows:
+        module = modules.get(row['module'], row['module'])
+        SQL="""
+            update ir_filters set action_id=(
+                select res_id from ir_model_data where model like 'ir.actions.%%' and module=%s and name=%s limit 1
+            )
+            where id=%s
+        """
+        cr_dst.execute(SQL,(module,row['name'],row['id']))
+    cnx_dst.commit()
+
+    # ** Utilisateur ***********************************************************
+    if 'user_id' in GetChamps(cr_src,'ir_filters'):
+        # Source < 19 : colonne user_id
+        SQL="""
+            select f.id, u.login
+            from ir_filters f inner join res_users u on f.user_id=u.id
+        """
+    else:
+        # Source >= 19 : table de liaison ir_filters_res_users_rel
+        SQL="""
+            select r.ir_filters_id as id, u.login
+            from ir_filters_res_users_rel r inner join res_users u on r.res_users_id=u.id
+        """
+    cr_src.execute(SQL)
+    rows = cr_src.fetchall()
+    if 'user_id' in GetChamps(cr_dst,'ir_filters'):
+        # Destination < 19 : colonne user_id
+        cr_dst.execute("update ir_filters set user_id=NULL")
+        for row in rows:
+            SQL="update ir_filters set user_id=(select id from res_users where login=%s) where id=%s"
+            cr_dst.execute(SQL,(row['login'],row['id']))
+    else:
+        # Destination >= 19 : table de liaison ir_filters_res_users_rel
+        cr_dst.execute("delete from ir_filters_res_users_rel")
+        for row in rows:
+            SQL="""
+                insert into ir_filters_res_users_rel (ir_filters_id, res_users_id)
+                select %s, id from res_users where login=%s
+            """
+            cr_dst.execute(SQL,(row['id'],row['login']))
+    cnx_dst.commit()
+
+
 def CopieTable(db_src,db_dst,table,where):
     "Permet de copier certaines lignes d'une table dans une autre base avec une clause where"
     cnx_src,cr_src=GetCR(db_src)
