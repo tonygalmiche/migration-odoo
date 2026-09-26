@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pyright: reportUndefinedVariable=false
 # Correctif des utilisateurs techniques décalés sur Coheliance (Odoo 18)
 # Voir Documentation/migration-odoo/correctif-utilisateurs-techniques-coheliance18.md
 #
