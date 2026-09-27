@@ -777,11 +777,23 @@ def GetChampsCommuns(cr_src,cr_dst,table):
     return(communs)
 
 
-def MigrationDonneesTable(db_src,db_dst,table): # ,text2jsonb=False):
+def MigrationDonneesTable(db_src,db_dst,table,exclure=[]): # ,text2jsonb=False):
+    """Met à jour les champs communs (non jsonb) des lignes existantes de la destination avec les valeurs de la source.
+    currency_id : les ids des devises changent d'une version à l'autre (ex : id 1 = EUR en v16, USD en v20)
+    => correspondance par le code de la devise. exclure : colonnes à ne pas reprendre"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     champs = GetChampsCommuns(cr_src,cr_dst,table)
     for champ in champs:
+        if champ in exclure:
+            continue
+        if champ=='currency_id':
+            SQL="SELECT t.id, c.name FROM "+table+" t JOIN res_currency c ON c.id=t.currency_id"
+            cr_src.execute(SQL)
+            for row in cr_src.fetchall():
+                SQL="UPDATE "+table+" SET currency_id=(SELECT id FROM res_currency WHERE name=%s) WHERE id=%s AND EXISTS (SELECT 1 FROM res_currency WHERE name=%s)"
+                cr_dst.execute(SQL,[row['name'],row['id'],row['name']])
+            continue
         json=False
         type_champ = GetChampsTable(cr_dst,table,champ)
         if type_champ:

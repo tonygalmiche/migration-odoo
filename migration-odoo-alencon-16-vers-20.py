@@ -51,6 +51,12 @@ MigrationUtilisateursTechniques(db_src,db_dst)
 #******************************************************************************
 
 
+# ** res_company **************************************************************
+# Nom, adresse (partenaire 1), e-mail, téléphone, paramètres THEIA (is_*)... ; devise retrouvée par son code (EUR)
+MigrationDonneesTable(db_src,db_dst,'res_company')
+#******************************************************************************
+
+
 # ** hr_employee **************************************************************
 # Employés, départements, postes, catégories et une hr_version par employé (voir MigrationHrEmployee)
 MigrationHrEmployee(db_src,db_dst)
