@@ -671,6 +671,39 @@ def MigrationResGroups(db_src,db_dst):
     cnx_dst.commit()
 
 
+def MigrationUtilisateursTechniques(db_src,db_dst):
+    """Correctif des utilisateurs techniques décalés, à appeler après MigrationResGroups quand res_users est copiée
+    d'une version ≤ 18 vers une version ≥ 19 (base.default_user supprimé en v19 => ids décalés d'un cran).
+    Voir Documentation/migration-odoo/correctif-utilisateurs-techniques-odoo19-agenda.md
+    - les identifiants externes base des utilisateurs et partenaires pointent sur les ids de la source
+    - le paramètre base.template_portal_user_id reprend la valeur de la source
+    - l'ancien utilisateur default (inexistant en destination) perd tous ses groupes (il avait les droits internes)
+    - public et portaltemplate ne gardent que group_public et group_portal
+    Les ids des utilisateurs ne changent pas : ils sont référencés partout.
+    Redémarrer Odoo ensuite (identifiants externes en cache)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    SQL="select model,name,res_id from ir_model_data where module='base' and model in ('res.users','res.partner')"
+    cr_src.execute(SQL)
+    for row in cr_src.fetchall():
+        SQL="update ir_model_data set res_id=%s where module='base' and model=%s and name=%s"
+        cr_dst.execute(SQL,[row['res_id'],row['model'],row['name']])
+    cr_src.execute("select value from ir_config_parameter where key='base.template_portal_user_id'")
+    for row in cr_src.fetchall():
+        cr_dst.execute("update ir_config_parameter set value=%s where key='base.template_portal_user_id'",[row['value']])
+    default_user_id = ExternalId2Id(cr_src,'default_user',module='base',model='res.users')
+    if default_user_id and not ExternalId2Id(cr_dst,'default_user',module='base',model='res.users'):
+        cr_dst.execute("delete from res_groups_users_rel where uid=%s",[default_user_id])
+        cr_dst.execute("update res_users set share=true where id=%s",[default_user_id]) # share est calculé par l'ORM
+    for user,group in [('public_user','group_public'),('template_portal_user_id','group_portal')]:
+        uid = ExternalId2Id(cr_dst,user,module='base',model='res.users')
+        gid = ExternalId2GroupId(cr_dst,group,module='base')
+        if uid and gid:
+            cr_dst.execute("delete from res_groups_users_rel where uid=%s and gid<>%s",[uid,gid])
+            cr_dst.execute("insert into res_groups_users_rel (gid,uid) values (%s,%s) on conflict do nothing",[gid,uid])
+    cnx_dst.commit()
+
+
 def AddUserGroupToOtherGroup(db_dst, group_src_external_id, group_dst_external_id):
     """Ajoute les utilisateurs d'un groupe dans un autre groupe"""
     cnx_dst,cr_dst=GetCR(db_dst)

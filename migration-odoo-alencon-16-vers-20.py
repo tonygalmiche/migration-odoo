@@ -12,6 +12,52 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
 
+# ** res_partner et res_users *************************************************
+# Copiés avec les ids de la source (99 partenaires, 15 utilisateurs dans alencon16)
+MigrationTable(db_src,db_dst,'res_partner')
+MigrationTable(db_src,db_dst,'res_users')
+MigrationTable(db_src,db_dst,'res_company_users_rel')
+
+# ** commercial_partner_id vide : un partenaire sans parent est son propre partenaire commercial
+SQL="""
+    update res_partner set commercial_partner_id=id where parent_id is null and commercial_partner_id is null;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# ** complete_name n'existe pas en v16 => à calculer (même logique que _get_complete_name d'Odoo 20) :
+# ** contact avec parent (pas une société) : "nom du partenaire commercial (ou du parent), nom", sinon : nom
+SQL="""
+    update res_partner p set complete_name = case
+        when p.parent_id is not null and not coalesce(p.is_company,false)
+            then trim(coalesce(
+                (select nullif(c.name,'') from res_partner c where c.id=p.commercial_partner_id),
+                (select name from res_partner where id=p.parent_id),
+                ''
+            ) || ', ' || coalesce(p.name,''))
+        else trim(coalesce(p.name,''))
+    end;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# ** Groupes : correspondance par nom d'identifiant externe (is_plastigray16.xxx => is_alencon20.xxx)
+# ** Les groupes absents en v20 (ventes, achats, stock...) sont ignorés
+MigrationResGroups(db_src,db_dst)
+
+# ** base.default_user supprimé en v19 : public et portaltemplate ont un id de moins en v20 (3 et 4 au lieu de 4 et 5)
+# ** => les identifiants externes base pointent sur les ids de la source et l'ancien default (id 3) perd ses groupes
+MigrationUtilisateursTechniques(db_src,db_dst)
+#******************************************************************************
+
+
+
+
+
+# A supprimer à la fin
+sys.exit()
+
+
 # ** Tables diverses (5mn) ****************************************************
 # Volumes dans alencon16 (ubuntu2604, copie ancienne, relevés le 27/09/2026) :
 #   is_presse_cycle            12,7 M lignes  1,8 Go
