@@ -12,9 +12,14 @@ cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
 
-# ** Tables diverses **********************************************************
+# ** Tables diverses (5mn) ****************************************************
+# Volumes dans alencon16 (ubuntu2604, copie ancienne, relevés le 27/09/2026) :
+#   is_presse_cycle            12,7 M lignes  1,8 Go
+#   is_presse_cycle_of_rel     13,8 M lignes  1,1 Go
+#   is_theia_trs                352 k lignes   85 Mo
+# => is_presse_cycle et sa table de relation font ~97 % du volume
+
 tables=[
-    "is_suivi_sante",
     "is_badge",
     "is_database",
     "is_equipement",
@@ -32,8 +37,6 @@ tables=[
     "is_presse_arret",
     "is_presse_arret_of_rel",
     "is_presse_classe",
-    "is_presse_cycle",
-    "is_presse_cycle_of_rel",
     "is_presse_puissance",
     "is_raspberry",
     "is_raspberry_entree_sortie",
@@ -56,4 +59,11 @@ tables=[
 ]
 for table in tables:
     MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
+# ** Grosses tables des cycles presse *****************************************
+# Vidées ensemble (TRUNCATE) puis rechargées par COPY FREEZE : voir MigrationTablesTruncate
+# is_presse_cycle_of_rel référence is_of : is_of doit donc être reprise avant (liste ci-dessus)
+MigrationTablesTruncate(db_src,db_dst,["is_presse_cycle","is_presse_cycle_of_rel"])
 #******************************************************************************

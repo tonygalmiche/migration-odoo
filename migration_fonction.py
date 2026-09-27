@@ -381,6 +381,44 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
         SetSequence(cr_dst,cnx_dst,table_dst)
 
 
+def MigrationTablesTruncate(db_src,db_dst,tables):
+    """Migration rapide de grosses tables (plusieurs millions de lignes), à la place de MigrationTable :
+    - TRUNCATE au lieu de DELETE : instantané et sans lignes mortes à nettoyer ensuite par le VACUUM
+    - COPY ... WITH (FREEZE) dans la même transaction que le TRUNCATE : pas de VACUUM de gel ensuite,
+      et pas d'écriture dans le WAL si le serveur est en wal_level = minimal
+    - VACUUM (ANALYZE) à la fin, pour ne pas laisser l'autovacuum le faire au mauvais moment
+    Les tables sont vidées ensemble, dans une seule transaction : il faut passer dans la même liste
+    les tables liées entre elles (ex : is_presse_cycle et is_presse_cycle_of_rel).
+    Pas de CASCADE : si une autre table référence l'une d'elles, le TRUNCATE échoue et rien n'est modifié
+    (MigrationTable, avec son DELETE, ne vérifie pas les clés étrangères)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    copies=[]
+    for table in tables:
+        communs = GetChampsCommuns(cr_src,cr_dst,table)
+        Table2CSV(cr_src,table,','.join(communs),db_src=db_src)
+        path = "/tmp/%s-%s.csv"%(db_src or 'x',table)
+        champs = ','.join('"%s"'%champ for champ in communs) # Guillemets pour les noms réservés (order, default...)
+        copies.append((table,champs,path))
+    SQL = ""
+    for table in tables:
+        SQL+="ALTER TABLE "+table+" DISABLE TRIGGER ALL;\n"
+    SQL+="TRUNCATE "+", ".join(tables)+";\n"
+    for table,champs,path in copies:
+        SQL+="COPY "+table+" ("+champs+") FROM '"+path+"' WITH (FORMAT csv, HEADER, FREEZE);\n"
+    for table in tables:
+        SQL+="ALTER TABLE "+table+" ENABLE TRIGGER ALL;\n"
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    for table in tables:
+        SetSequence(cr_dst,cnx_dst,table)
+    cnx_dst.rollback()        # SetSequence laisse la transaction en erreur sur une table sans id (table de relation)
+    cnx_dst.autocommit = True # VACUUM ne peut pas s'exécuter dans une transaction
+    for table in tables:
+        cr_dst.execute("VACUUM (ANALYZE) "+table)
+    cnx_dst.autocommit = False
+
+
 def MigrationIrFilters(db_src,db_dst,modules={}):
     """Migration des filtres favoris (ir_filters) :
     - action_id : l'id des actions change d'une version à l'autre => on retrouve l'action de la base destination
