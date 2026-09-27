@@ -7,6 +7,8 @@ import base64
 import magic
 import os
 import json
+import html
+import shutil
 #from xmlrpc import client as xmlrpclib
 import xmlrpc.client
 from datetime import datetime
@@ -467,6 +469,7 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
     - crée une hr_version par employé à partir des champs de la source, datée de la création de l'employé
     - work_contact_id (v16+) absent en v14/v15 : repris du partenaire de l'utilisateur lié s'il y en a un
     - hr_responsible_id : utilisateur responsable RH des versions (obligatoire en v20, inexistant avant)
+    - work_location_id : obligatoire dans la fiche en v20 => "Office" (hr.home_work_office) si absent de la source
     Non repris (affiché en fin de traitement s'il y a des données) : contrats (hr_contract), départs,
     lieux de travail (hr_work_location, ou texte libre work_location en v14), calendriers absents de la destination
     (remplacés par le calendrier de la société)."""
@@ -476,8 +479,10 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
     company = cr_dst.fetchone()
     cr_dst.execute("select id from resource_calendar")
     calendriers_dst = [row['id'] for row in cr_dst.fetchall()]
-    cr_dst.execute("select id from hr_work_location")
+    cr_dst.execute("select id from hr_work_location order by id")
     lieux_dst = [row['id'] for row in cr_dst.fetchall()]
+    # Lieu de travail obligatoire dans la fiche employé en v20 (vide => champ en rouge) : "Office" par défaut
+    lieu_defaut = ExternalId2Id(cr_dst,'home_work_office',module='hr',model='hr.work.location') or (lieux_dst and lieux_dst[0]) or None
 
     # ** Tables liées ************************************************************
     MigrationTable(db_src,db_dst,'resource_resource')
@@ -542,7 +547,7 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
         calendar_id = v('resource_calendar_id')
         if calendar_id not in calendriers_dst:
             calendar_id = company['resource_calendar_id']
-        work_location_id = v('work_location_id') if v('work_location_id') in lieux_dst else None
+        work_location_id = v('work_location_id') if v('work_location_id') in lieux_dst else lieu_defaut
         create_date = row['create_date'] or datetime.now()
         vals = {
             'employee_id'            : row['id'],
@@ -617,6 +622,129 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
     for row in cr_src.fetchall():
         if row['id'] not in calendriers_dst:
             print("MigrationHrEmployee : calendrier %s (%s) absent de la destination : %s employés passés sur le calendrier de la société"%(row['id'],row['name'],row['nb']))
+
+
+def SubtypeId2SubtypeId(cr_src,cr_dst):
+    """Correspondance {id sous-type source: id sous-type destination} des mail_message_subtype par identifiant externe"""
+    SQL="select d.module, d.name, d.res_id from ir_model_data d where d.model='mail.message.subtype'"
+    cr_dst.execute(SQL)
+    dst = {(row['module'],row['name']): row['res_id'] for row in cr_dst.fetchall()}
+    cr_src.execute(SQL)
+    return {row['res_id']: dst.get((row['module'],row['name'])) for row in cr_src.fetchall()}
+
+
+def TrackingValues2Html(cr_src,message_id):
+    """Suivi des modifications d'un message (table mail_tracking_value, v14 à v18) au format HTML de la v20
+    (gabarit mail.mail_tracking_template : "ancienne valeur → <b>nouvelle valeur</b> <i>(libellé)</i>").
+    En v20, mail_tracking_value n'existe que si le module mail_tracking est installé : le suivi est dans le corps."""
+    cr_src.execute("select * from mail_tracking_value where mail_message_id=%s order by tracking_sequence, id",[message_id])
+    lignes=[]
+    for t in cr_src.fetchall():
+        valeurs=[]
+        for sens in ('old','new'):
+            v=None
+            for suffixe in ('char','text','integer','float','monetary','datetime'):
+                x = t.get(sens+'_value_'+suffixe)
+                if x not in (None,'') and not (suffixe=='integer' and t['field_type'] in ('many2one','char','selection')):
+                    v=x
+                    break
+            if isinstance(v,float):
+                v = int(v) if v.is_integer() else round(v,2)
+            valeurs.append('' if v is None else html.escape(str(v)))
+        old,new=valeurs
+        ligne = (old+' ' if old else '')+'→ <b>'+new+'</b> <i>('+html.escape(t['field_desc'] or '')+')</i>'
+        lignes.append(ligne)
+    if not lignes:
+        return ''
+    return '<div>'+'<br>'.join(lignes)+'</div>'
+
+
+def MigrationChatter(db_src,db_dst,models):
+    """Migration du chatter (messages et abonnés) des modèles donnés, d'une v14, v15 ou v16 vers une v19 ou v20 :
+    - les messages et abonnés existants de ces modèles dans la destination sont supprimés, puis ceux de la source
+      sont insérés avec de nouveaux ids (parent_id recalculé)
+    - sous-types (subtype_id) : correspondance par identifiant externe
+    - suivi des modifications (mail_tracking_value) : ajouté au corps du message, comme le fait la v20
+    Les messages ne doivent pas avoir de pièces jointes ni de notifications (non reprises)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    subtypes = SubtypeId2SubtypeId(cr_src,cr_dst)
+    champs = [c for c in GetChampsCommuns(cr_src,cr_dst,'mail_message') if c not in ('id','parent_id','subtype_id','mail_server_id')]
+    tracking = bool(GetTypesChamps(cr_src,'mail_tracking_value'))
+
+    # ** Messages ****************************************************************
+    cr_dst.execute("delete from mail_message where model in %s",[tuple(models)])
+    cr_src.execute("select * from mail_message where model in %s order by id",[tuple(models)])
+    ids={}
+    nb=0
+    for row in cr_src.fetchall():
+        vals = {c: row[c] for c in champs}
+        vals['subtype_id'] = subtypes.get(row['subtype_id'])
+        vals['parent_id']  = ids.get(row['parent_id'])
+        if tracking:
+            html_tracking = TrackingValues2Html(cr_src,row['id'])
+            if html_tracking:
+                vals['body'] = (row['body'] or '')+html_tracking
+        SQL="insert into mail_message ("+','.join(vals)+") values ("+','.join(['%s']*len(vals))+") returning id"
+        cr_dst.execute(SQL,list(vals.values()))
+        ids[row['id']] = cr_dst.fetchone()['id']
+        nb+=1
+    cnx_dst.commit()
+
+    # ** Abonnés *****************************************************************
+    cr_dst.execute("delete from mail_followers where res_model in %s",[tuple(models)])
+    cr_src.execute("select * from mail_followers where res_model in %s and partner_id is not null order by id",[tuple(models)])
+    nb_followers=0
+    for row in cr_src.fetchall():
+        SQL="""
+            insert into mail_followers (res_model,res_id,partner_id) values (%s,%s,%s)
+            on conflict do nothing returning id
+        """
+        cr_dst.execute(SQL,[row['res_model'],row['res_id'],row['partner_id']])
+        res = cr_dst.fetchone()
+        if not res:
+            continue
+        nb_followers+=1
+        cr_src.execute("select mail_message_subtype_id from mail_followers_mail_message_subtype_rel where mail_followers_id=%s",[row['id']])
+        for rel in cr_src.fetchall():
+            subtype_id = subtypes.get(rel['mail_message_subtype_id'])
+            if subtype_id:
+                SQL="insert into mail_followers_mail_message_subtype_rel (mail_followers_id,mail_message_subtype_id) values (%s,%s) on conflict do nothing"
+                cr_dst.execute(SQL,[res['id'],subtype_id])
+    cnx_dst.commit()
+    print("MigrationChatter : %s messages et %s abonnés repris"%(nb,nb_followers))
+
+
+def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore"):
+    """Copie des pièces jointes (ir_attachment) sélectionnées par la clause where (sur la source) avec de nouveaux ids,
+    et de leurs fichiers d'un filestore à l'autre (<filestore>/<db_src>/xx/... => <filestore>/<db_dst>/xx/...).
+    Les pièces jointes de la destination qui ont le même res_model, res_field et res_id sont d'abord supprimées.
+    Les fichiers absents du filestore source sont affichés (à copier à la main depuis la production)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    champs = [c for c in GetChampsCommuns(cr_src,cr_dst,'ir_attachment') if c!='id']
+    cr_src.execute("select * from ir_attachment where "+where+" order by id")
+    rows = cr_src.fetchall()
+    manquants=[]
+    for row in rows:
+        SQL="delete from ir_attachment where res_model=%s and res_id=%s and coalesce(res_field,'')=coalesce(%s,'')"
+        cr_dst.execute(SQL,[row['res_model'],row['res_id'],row['res_field']])
+        SQL="insert into ir_attachment ("+','.join(champs)+") values ("+','.join(['%s']*len(champs))+")"
+        cr_dst.execute(SQL,[row[c] for c in champs])
+        if row['store_fname']:
+            src = os.path.join(filestore,db_src,row['store_fname'])
+            dst = os.path.join(filestore,db_dst,row['store_fname'])
+            if os.path.exists(src):
+                os.makedirs(os.path.dirname(dst),exist_ok=True)
+                shutil.copy2(src,dst)
+            else:
+                manquants.append(row['store_fname'])
+    cnx_dst.commit()
+    print("MigrationPiecesJointes : %s pièces jointes reprises"%len(rows))
+    if manquants:
+        print("MigrationPiecesJointes : %s fichiers absents de %s, à copier dans %s :"%(len(manquants),os.path.join(filestore,db_src),os.path.join(filestore,db_dst)))
+        for f in manquants:
+            print("  "+f)
 
 
 def MigrationIrFilters(db_src,db_dst,modules={}):

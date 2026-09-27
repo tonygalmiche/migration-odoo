@@ -63,6 +63,48 @@ MigrationHrEmployee(db_src,db_dst)
 #******************************************************************************
 
 
+# ** Séquence du relevé des quantités produites *******************************
+# Dernier relevé en v16 : 00471 => le prochain doit être 00472 (sinon la v20 repart à 00001)
+cr_src.execute("select id from ir_sequence where code='is.releve.qt.produite'")
+id_src = cr_src.fetchone()['id']
+cr_dst.execute("select id from ir_sequence where code='is.releve.qt.produite'")
+id_dst = cr_dst.fetchone()['id']
+MigrationIrSequence(db_src,db_dst,id_src=id_src,id_dst=id_dst)
+#******************************************************************************
+
+
+# ** Valeur par défaut : langue des nouveaux partenaires (fr_FR) **************
+SQL="""
+    insert into ir_default (field_id, json_value)
+    select id, '"fr_FR"' from ir_model_fields where model='res.partner' and name='lang'
+    and not exists (select 1 from ir_default d join ir_model_fields f on f.id=d.field_id
+                    where f.model='res.partner' and f.name='lang' and d.user_id is null and d.company_id is null)
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Filtres favoris **********************************************************
+MigrationIrFilters(db_src,db_dst,modules={'is_plastigray16': 'is_alencon20', 'is_alencon': 'is_alencon20'})
+#******************************************************************************
+
+
+# ** Chatter ******************************************************************
+# ~290 messages (surtout des créations) et leurs abonnés ; suivi des modifications ajouté au corps (format v20)
+MigrationChatter(db_src,db_dst,['res.partner','res.company','hr.employee','hr.department','is.releve.qt.produite'])
+#******************************************************************************
+
+
+# ** Pièces jointes ***********************************************************
+# CSV des relevés des quantités produites (00462 et 00463). Fichiers copiés depuis le filestore d'alencon16
+# (absent sur ubuntu2604 : les fichiers manquants sont affichés). Le logo de la société est à remettre à la main
+# (Paramètres / Sociétés) : en v20, logo_web est une pièce jointe calculée à partir de l'image du partenaire
+# En attente de la récupération du filestore d'alencon16
+# MigrationPiecesJointes(db_src,db_dst,"res_model='is.releve.qt.produite'")
+#******************************************************************************
+
+
 
 
 
