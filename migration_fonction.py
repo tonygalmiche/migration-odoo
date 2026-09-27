@@ -419,6 +419,206 @@ def MigrationTablesTruncate(db_src,db_dst,tables):
     cnx_dst.autocommit = False
 
 
+def GetTypesChamps(cr,table):
+    """Dictionnaire {colonne: type postgresql} d'une table (vide si la table n'existe pas)"""
+    SQL="select column_name,data_type from information_schema.columns where table_schema='public' and table_name=%s"
+    cr.execute(SQL,[table])
+    return {row['column_name']: row['data_type'] for row in cr.fetchall()}
+
+
+def MigrationTableJsonb(db_src,db_dst,table,rename={}):
+    """Copie ligne à ligne d'une petite table dont des champs texte sont devenus traduisibles (jsonb) :
+    valeur => {"en_US": valeur, "fr_FR": traduction ou valeur}. La traduction est lue dans ir_translation
+    si elle existe dans la source (v14, v15). Remplace MigrationTable(text2jsonb=True) quand la source est
+    en v16 ou plus (ir_translation supprimée). rename : {colonne source: colonne destination}"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    types_src = GetTypesChamps(cr_src,table)
+    types_dst = GetTypesChamps(cr_dst,table)
+    if not types_src or not types_dst:
+        return
+    communs = [c for c in types_src if rename.get(c,c) in types_dst]
+    jsons   = [c for c in communs if types_dst[rename.get(c,c)]=='jsonb' and types_src[c]!='jsonb']
+    ir_translation = bool(GetTypesChamps(cr_src,'ir_translation'))
+    cr_src.execute("select "+','.join(communs)+" from "+table)
+    rows = cr_src.fetchall()
+    cr_dst.execute("alter table "+table+" disable trigger all; delete from "+table+";")
+    for row in rows:
+        for c in jsons:
+            if row[c] is not None:
+                fr = row[c]
+                if ir_translation and 'id' in row:
+                    fr = GetTraduction(cr_src,table.replace('_','.'),c,row['id']) or row[c]
+                row[c] = json.dumps({"en_US": row[c], "fr_FR": fr})
+        SQL="insert into "+table+" ("+','.join(rename.get(c,c) for c in communs)+") values ("+','.join(['%s']*len(communs))+")"
+        cr_dst.execute(SQL,[row[c] for c in communs])
+    cr_dst.execute("alter table "+table+" enable trigger all")
+    cnx_dst.commit()
+    SetSequence(cr_dst,cnx_dst,table)
+
+
+def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
+    """Migration des employés d'une v14, v15 ou v16 vers une v19 ou v20.
+    Depuis la v19, hr.employee hérite de hr.version (_inherits) : une partie des champs de l'employé (département,
+    poste, calendrier, situation familiale, adresse privée...) est dans hr_version, et chaque employé a une
+    version courante (current_version_id). Cette fonction :
+    - copie resource_resource, hr_department, hr_job, hr_employee_category, employee_category_rel et hr_employee
+      avec leurs ids (à appeler après res_partner, res_users et res_company)
+    - crée une hr_version par employé à partir des champs de la source, datée de la création de l'employé
+    - work_contact_id (v16+) absent en v14/v15 : repris du partenaire de l'utilisateur lié s'il y en a un
+    - hr_responsible_id : utilisateur responsable RH des versions (obligatoire en v20, inexistant avant)
+    Non repris (affiché en fin de traitement s'il y a des données) : contrats (hr_contract), départs,
+    lieux de travail (hr_work_location, ou texte libre work_location en v14), calendriers absents de la destination
+    (remplacés par le calendrier de la société)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_dst.execute("select id,resource_calendar_id from res_company order by id limit 1")
+    company = cr_dst.fetchone()
+    cr_dst.execute("select id from resource_calendar")
+    calendriers_dst = [row['id'] for row in cr_dst.fetchall()]
+    cr_dst.execute("select id from hr_work_location")
+    lieux_dst = [row['id'] for row in cr_dst.fetchall()]
+
+    # ** Tables liées ************************************************************
+    MigrationTable(db_src,db_dst,'resource_resource')
+    SQL="update resource_resource set calendar_id=%s where calendar_id is null or calendar_id not in (select id from resource_calendar)"
+    cr_dst.execute(SQL,[company['resource_calendar_id']])
+    cnx_dst.commit()
+    MigrationTableJsonb(db_src,db_dst,'hr_department')
+    MigrationTableJsonb(db_src,db_dst,'hr_job')
+    cr_dst.execute("update hr_job set company_id=%s where company_id is null",[company['id']]) # obligatoire en v20
+    cnx_dst.commit()
+    MigrationTableJsonb(db_src,db_dst,'hr_employee_category')
+    if 'emp_id' in GetTypesChamps(cr_src,'employee_category_rel'):
+        MigrationTableJsonb(db_src,db_dst,'employee_category_rel',rename={'emp_id':'employee_id'})
+    else:
+        MigrationTableJsonb(db_src,db_dst,'employee_category_rel')
+
+    # ** Employés ****************************************************************
+    MigrationTable(db_src,db_dst,'hr_employee')
+    SQL="""
+        update hr_employee e set work_contact_id=u.partner_id
+        from res_users u where u.id=e.user_id and e.work_contact_id is null
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+
+    # ** Employé manager ou coach de lui-même : toléré avant, message "Certains employés apparaissent dans une boucle" en v20
+    cr_dst.execute("select id,name from hr_employee where parent_id=id or coach_id=id")
+    for row in cr_dst.fetchall():
+        print("MigrationHrEmployee : %s (id %s) était son propre manager ou coach : lien retiré"%(row['name'],row['id']))
+    cr_dst.execute("update hr_employee set parent_id=null where parent_id=id")
+    cr_dst.execute("update hr_employee set coach_id=null where coach_id=id")
+    cnx_dst.commit()
+    SQL="""
+        with recursive chaine(depart, courant, chemin, boucle) as (
+            select id, parent_id, array[id], false from hr_employee where parent_id is not null
+          union all
+            select c.depart, e.parent_id, c.chemin || c.courant, c.courant = any(c.chemin)
+            from chaine c join hr_employee e on e.id = c.courant
+            where not c.boucle and e.parent_id is not null
+        )
+        select distinct depart from chaine where boucle order by depart
+    """
+    cr_dst.execute(SQL)
+    for row in cr_dst.fetchall():
+        print("MigrationHrEmployee : boucle de managers à corriger à la main, employé id %s"%row['depart'])
+
+    # ** Une version par employé *************************************************
+    champs_src = GetTypesChamps(cr_src,'hr_employee')
+    cr_dst.execute("delete from hr_version")
+    SQL="""
+        select e.*, r.tz as resource_tz, p.street, p.street2, p.zip, p.city, p.state_id,
+               p.country_id as private_country_id, p.email as partner_email, p.phone as partner_phone
+        from hr_employee e join resource_resource r on r.id=e.resource_id
+                           left join res_partner p on p.id=e.address_home_id
+        order by e.id
+    """
+    cr_src.execute(SQL)
+    for row in cr_src.fetchall():
+        v = lambda champ: row[champ] if champ in champs_src else None
+        employee_type = v('employee_type') or 'employee'
+        employee_type_id = ExternalId2Id(cr_dst,'contract_type_'+employee_type,module='hr',model='hr.employee.type') or None
+        calendar_id = v('resource_calendar_id')
+        if calendar_id not in calendriers_dst:
+            calendar_id = company['resource_calendar_id']
+        work_location_id = v('work_location_id') if v('work_location_id') in lieux_dst else None
+        create_date = row['create_date'] or datetime.now()
+        vals = {
+            'employee_id'            : row['id'],
+            'company_id'             : row['company_id'],
+            'active'                 : True,
+            'date_version'           : create_date.date(),
+            'last_modified_date'     : datetime.now(),
+            'last_modified_uid'      : hr_responsible_id,
+            'hr_responsible_id'      : hr_responsible_id,
+            'resource_calendar_id'   : calendar_id,
+            'tz'                     : row['resource_tz'] or 'Europe/Paris',
+            'marital'                : v('marital') or 'single',
+            'distance_home_work_unit': 'kilometers',
+            'distance_home_work'     : v('km_home_work'),
+            'km_home_work'           : v('km_home_work'),
+            'department_id'          : v('department_id'),
+            'job_id'                 : v('job_id'),
+            'job_title'              : v('job_title'),
+            'address_id'             : v('address_id'),
+            'work_location_id'       : work_location_id,
+            'country_id'             : v('country_id'),
+            'identification_id'      : v('identification_id'),
+            'passport_id'            : v('passport_id'),
+            'children'               : v('children'),
+            'spouse_complete_name'   : v('spouse_complete_name'),
+            'spouse_birthdate'       : v('spouse_birthdate'),
+            'sex'                    : v('gender') if v('gender') in ('male','female') else None,
+            'employee_type_id'       : employee_type_id,
+            'private_street'         : row['street'],
+            'private_street2'        : row['street2'],
+            'private_zip'            : row['zip'],
+            'private_city'           : row['city'],
+            'private_state_id'       : row['state_id'],
+            'private_country_id'     : row['private_country_id'],
+            'create_uid'             : row['create_uid'],
+            'create_date'            : create_date,
+            'write_uid'              : row['write_uid'],
+            'write_date'             : row['write_date'],
+        }
+        SQL="insert into hr_version ("+','.join(vals)+") values ("+','.join(['%s']*len(vals))+") returning id"
+        cr_dst.execute(SQL,list(vals.values()))
+        version_id = cr_dst.fetchone()['id']
+        SQL="""
+            update hr_employee set current_version_id=%s,
+                   private_email=coalesce(private_email,%s), private_phone=coalesce(private_phone,%s)
+            where id=%s
+        """
+        cr_dst.execute(SQL,[version_id,row['partner_email'],row['partner_phone'],row['id']])
+    cnx_dst.commit()
+    SetSequence(cr_dst,cnx_dst,'hr_version')
+
+    # ** Données non reprises ****************************************************
+    controles = [
+        ("Contrats (hr_contract)"                , "select count(*) as nb from hr_contract"),
+        ("Employés avec une date de départ"      , "select count(*) as nb from hr_employee where departure_date is not null"),
+        ("Lieux de travail (hr_work_location)"   , "select count(*) as nb from hr_work_location"),
+        ("Lieux de travail en texte libre (v14)" , "select count(*) as nb from hr_employee where coalesce(work_location,'')<>''"),
+    ]
+    for libelle,SQL in controles:
+        try:
+            cr_src.execute(SQL)
+            nb = cr_src.fetchone()['nb']
+            if nb:
+                print("MigrationHrEmployee : non repris : %s : %s"%(libelle,nb))
+        except psycopg2.Error:
+            cnx_src.rollback() # colonne ou table absente dans cette version
+    SQL="""
+        select c.id, c.name, count(*) as nb from hr_employee e join resource_calendar c on c.id=e.resource_calendar_id
+        group by c.id, c.name order by c.id
+    """
+    cr_src.execute(SQL)
+    for row in cr_src.fetchall():
+        if row['id'] not in calendriers_dst:
+            print("MigrationHrEmployee : calendrier %s (%s) absent de la destination : %s employés passés sur le calendrier de la société"%(row['id'],row['name'],row['nb']))
+
+
 def MigrationIrFilters(db_src,db_dst,modules={}):
     """Migration des filtres favoris (ir_filters) :
     - action_id : l'id des actions change d'une version à l'autre => on retrouve l'action de la base destination

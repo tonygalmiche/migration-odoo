@@ -51,6 +51,12 @@ MigrationUtilisateursTechniques(db_src,db_dst)
 #******************************************************************************
 
 
+# ** hr_employee **************************************************************
+# Employés, départements, postes, catégories et une hr_version par employé (voir MigrationHrEmployee)
+MigrationHrEmployee(db_src,db_dst)
+#******************************************************************************
+
+
 
 
 
