@@ -549,12 +549,16 @@ for table in [
 # Ids qui auraient changé (collision) : remplacés partout (aucun pour France Filets)
 RemplacerIdsPiecesJointes(db_dst,ids_pj)
 
-# Rattachement à leur enregistrement (étape 7.c) des pièces jointes sans res_id (widget many2many_binary) ;
-# les 5 512 pièces jointes de commandes déplacées sur un chantier par la v15 (anomalie 4) reviennent sur leur commande
+# Rattachement à leur enregistrement des pièces jointes sans res_id (étape 7.c)
+RattacherPiecesJointes(db_dst,[('sale_order_piece_jointe_attachment_rel','order_id','sale.order')])
+
+# Spécifique France Filets (anomalie 4, question 11) : les 5 512 pièces jointes de commandes déplacées sur un chantier par
+# la v15 reviennent sur leur commande ; celles de la commande recopiées sur le chantier (piece_jointe_ids) appartiennent
+# à la commande, pas au chantier
 SQL="""
     update ir_attachment a set res_model='sale.order', res_id=r.order_id
     from sale_order_piece_jointe_attachment_rel r
-    where a.id=r.attachment_id and (coalesce(a.res_id,0)=0 or a.res_model='is.chantier')
+    where a.id=r.attachment_id and a.res_model='is.chantier'
 """
 cr_dst.execute(SQL)
 SQL="""
@@ -563,15 +567,14 @@ SQL="""
     where a.id=r.attachment_id and coalesce(a.res_id,0)=0 and c.order_id is not null
 """
 cr_dst.execute(SQL)
-for table,colonne,modele in [
+cnx_dst.commit()
+
+RattacherPiecesJointes(db_dst,[
     ('is_chantier_piece_jointe_chantier_attachment_rel','is_chantier_id','is.chantier'),
     ('is_chantier_fin_chantier_attachment_rel'         ,'is_chantier_id','is.chantier'),
     ('is_chantier_document_attachment_rel'             ,'document_id'   ,'is.chantier.document'),
     ('is_document_employe_attachment_rel'              ,'document_id'   ,'is.document.employe'),
-]:
-    SQL="update ir_attachment a set res_model=%s, res_id=r."+colonne+" from "+table+" r where a.id=r.attachment_id and coalesce(a.res_id,0)=0"
-    cr_dst.execute(SQL,[modele])
-cnx_dst.commit()
+])
 
 # Pièces jointes des messages (2 sur des factures) : les messages ont de nouveaux ids (9.i)
 cr_src.execute("select message_id,attachment_id from message_attachment_rel")

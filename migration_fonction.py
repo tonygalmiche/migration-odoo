@@ -1775,3 +1775,24 @@ def RemplacerIdsPiecesJointes(db_dst,correspondances):
         cr_dst.execute("update "+row['tab']+" set "+row['col']+" = case "+row['col']+" "+cas+" end where "+row['col']+" in ("+ids+")")
     cnx_dst.commit()
     print("RemplacerIdsPiecesJointes : %s ids remplacés"%len(changes))
+
+
+def RattacherPiecesJointes(db_dst,relations):
+    """Rattache à leur enregistrement les pièces jointes des champs Many2many (widget many2many_binary) qui n'en ont pas :
+    ajoutées sur un enregistrement pas encore sauvegardé, elles sont créées sans res_id, et Odoo ne les montre alors qu'à
+    leur créateur (d'où des surcharges d'ir.attachment.check() qui retirent ce contrôle : faille). Une fois rattachées,
+    les droits standard s'appliquent (lisible si l'enregistrement l'est). Voir migration-vers-odoo20.md § 2.3.
+    relations : liste de (table de relation, colonne de l'enregistrement, modèle), ex :
+        [('sale_order_piece_jointe_attachment_rel','order_id','sale.order')]
+    La colonne de la pièce jointe dans la table de relation doit s'appeler attachment_id.
+    Seules les pièces jointes sans res_id sont modifiées."""
+    cnx_dst,cr_dst=GetCR(db_dst)
+    for table,colonne,modele in relations:
+        SQL="""
+            update ir_attachment a set res_model=%s, res_id=r."""+colonne+"""
+            from """+table+""" r
+            where a.id=r.attachment_id and coalesce(a.res_id,0)=0
+        """
+        cr_dst.execute(SQL,[modele])
+        print("RattacherPiecesJointes : %s : %s pièces jointes rattachées à %s"%(table,cr_dst.rowcount,modele))
+    cnx_dst.commit()
