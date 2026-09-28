@@ -722,13 +722,16 @@ def MigrationChatter(db_src,db_dst,models):
     return ids
 
 
-def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore",copier_fichiers=True):
+def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore",copier_fichiers=True,garder_ids=False):
     """Copie des pièces jointes (ir_attachment) sélectionnées par la clause where (sur la source) avec de nouveaux ids,
     et de leurs fichiers d'un filestore à l'autre (<filestore>/<db_src>/xx/... => <filestore>/<db_dst>/xx/...).
     Les pièces jointes de la destination qui ont le même res_model, res_field et res_id sont d'abord supprimées
     (une seule fois, avant les copies : un enregistrement peut avoir plusieurs pièces jointes).
     copier_fichiers=False : données seulement (store_fname conservé : fichiers à copier ensuite, ex : filestore de
     production copié tel quel). Sinon, les fichiers absents du filestore source sont affichés.
+    garder_ids=True : chaque pièce jointe garde son id de la source s'il est libre dans la destination (les autres,
+    en collision avec les pièces jointes techniques de la destination, reçoivent un nouvel id, après le recalage de la
+    séquence au-dessus du plus grand id : pas de collision avec les ids repris).
     Retourne la correspondance {id source: id destination} (tables de relation, pièce jointe principale...)."""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
@@ -741,10 +744,26 @@ def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/shar
         cr_dst.execute(SQL,[res_model,res_id,res_field])
     ids={}
     manquants=[]
-    for row in rows:
+    en_attente=[]
+    if garder_ids:
+        cr_dst.execute("select id from ir_attachment")
+        ids_dst = {row['id'] for row in cr_dst.fetchall()}
+        for row in rows:
+            if row['id'] in ids_dst:
+                en_attente.append(row) # id déjà pris dans la destination : nouvel id, après le recalage de la séquence
+                continue
+            SQL="insert into ir_attachment (id,"+','.join(champs)+") values (%s,"+','.join(['%s']*len(champs))+")"
+            cr_dst.execute(SQL,[row['id']]+[row[c] for c in champs])
+            ids[row['id']] = row['id']
+        cnx_dst.commit()
+        SetSequence(cr_dst,cnx_dst,'ir_attachment')
+    else:
+        en_attente = rows
+    for row in en_attente:
         SQL="insert into ir_attachment ("+','.join(champs)+") values ("+','.join(['%s']*len(champs))+") returning id"
         cr_dst.execute(SQL,[row[c] for c in champs])
         ids[row['id']] = cr_dst.fetchone()['id']
+    for row in rows:
         if copier_fichiers and row['store_fname']:
             src = os.path.join(filestore,db_src,row['store_fname'])
             dst = os.path.join(filestore,db_dst,row['store_fname'])
@@ -754,7 +773,7 @@ def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/shar
             else:
                 manquants.append(row['store_fname'])
     cnx_dst.commit()
-    print("MigrationPiecesJointes : %s pièces jointes reprises"%len(rows))
+    print("MigrationPiecesJointes : %s pièces jointes reprises%s"%(len(rows),(", dont %s avec un nouvel id"%len(en_attente)) if garder_ids else ''))
     if manquants:
         print("MigrationPiecesJointes : %s fichiers absents de %s, à copier dans %s :"%(len(manquants),os.path.join(filestore,db_src),os.path.join(filestore,db_dst)))
         for f in manquants:

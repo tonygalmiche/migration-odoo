@@ -524,7 +524,8 @@ ids_messages = MigrationChatter(db_src,db_dst,[
 
 
 # ** 9.j Pièces jointes (données seulement, fichiers à l'étape 11) ************
-# Nouveaux ids (la v20 a déjà ses pièces jointes) ; store_fname conservé : le filestore de production sera copié tel quel
+# Ids de la v15 conservés (garder_ids) : seules 4 pièces jointes en collision avec les 89 pièces jointes techniques de la
+# v20 (ids 1 à 101) reçoivent un nouvel id ; store_fname conservé : le filestore de production sera copié tel quel
 # (étape 11). Non repris : XML Factur-X générés par la v15 (1 316, sans modèle), images des anciens champs de la v10
 # (image, image_medium, image_small), pièces jointes techniques (vues, menus, pays...), discussions, Export Ciel
 modeles = ('sale.order','is.chantier','is.chantier.document','is.chantier.planning','account.move',
@@ -537,7 +538,7 @@ where = """
                   'is.planning','is.planning.pdf','is.document.employe')
     or (res_model='res.partner' and res_field in ('image_1920','image_1024','image_512','image_256','image_128'))
 """
-ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False)
+ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False,garder_ids=True)
 
 # Tables de relation des champs Many2many de pièces jointes, avec les nouveaux ids
 for table,colonne in [
