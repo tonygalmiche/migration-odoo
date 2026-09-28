@@ -462,12 +462,7 @@ MigrationTable(db_src,db_dst,'sale_order_line_invoice_rel')
 
 # Devises : EUR = 1 en v15, 126 en v20
 MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','account_payment','account_partial_reconcile','account_full_reconcile'])
-
-# Pièce jointe principale (PDF de la facture...) : ids des pièces jointes v15, qui ne sont reprises qu'en 9.j ; en attendant,
-# ces ids désignent d'autres pièces jointes de la v20 (la contrainte empêche alors de les supprimer) => vidée ici, remise en 9.j
-for table in ['account_move','account_payment','hr_employee','is_planning','is_planning_pdf']:
-    cr_dst.execute("update "+table+" set message_main_attachment_id=null where message_main_attachment_id is not null")
-cnx_dst.commit()
+# Pièce jointe principale (message_main_attachment_id) : copiée telle quelle (ids des pièces jointes v15 conservés en 9.j)
 #******************************************************************************
 
 
@@ -524,10 +519,10 @@ ids_messages = MigrationChatter(db_src,db_dst,[
 
 
 # ** 9.j Pièces jointes (données seulement, fichiers à l'étape 11) ************
-# Ids de la v15 conservés (garder_ids) : seules 4 pièces jointes en collision avec les 89 pièces jointes techniques de la
-# v20 (ids 1 à 101) reçoivent un nouvel id ; store_fname conservé : le filestore de production sera copié tel quel
-# (étape 11). Non repris : XML Factur-X générés par la v15 (1 316, sans modèle), images des anciens champs de la v10
-# (image, image_medium, image_small), pièces jointes techniques (vues, menus, pays...), discussions, Export Ciel
+# Ids de la v15 conservés (garder_ids ; aucune collision avec les 89 pièces jointes techniques de la v20) ;
+# store_fname conservé : le filestore de production sera copié tel quel (étape 11). Non repris : XML Factur-X générés
+# par la v15 (1 316, sans modèle), images des anciens champs de la v10 (image, image_medium, image_small), pièces
+# jointes techniques (vues, menus, pays...), discussions, Export Ciel
 modeles = ('sale.order','is.chantier','is.chantier.document','is.chantier.planning','account.move',
            'is.planning','is.planning.pdf','is.document.employe')
 cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles]) # pièces jointes de test de la v20
@@ -540,21 +535,19 @@ where = """
 """
 ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False,garder_ids=True)
 
-# Tables de relation des champs Many2many de pièces jointes, avec les nouveaux ids
-for table,colonne in [
-    ('sale_order_piece_jointe_attachment_rel'          ,'order_id'),
-    ('is_chantier_piece_jointe_attachment_rel'         ,'is_chantier_id'),
-    ('is_chantier_piece_jointe_chantier_attachment_rel','is_chantier_id'),
-    ('is_chantier_fin_chantier_attachment_rel'         ,'is_chantier_id'),
-    ('is_chantier_document_attachment_rel'             ,'document_id'),
-    ('is_document_employe_attachment_rel'              ,'document_id'),
+# Tables de relation des champs Many2many de pièces jointes (mêmes ids)
+for table in [
+    'sale_order_piece_jointe_attachment_rel',
+    'is_chantier_piece_jointe_attachment_rel',
+    'is_chantier_piece_jointe_chantier_attachment_rel',
+    'is_chantier_fin_chantier_attachment_rel',
+    'is_chantier_document_attachment_rel',
+    'is_document_employe_attachment_rel',
 ]:
-    cr_dst.execute("delete from "+table)
-    cr_src.execute("select "+colonne+",attachment_id from "+table)
-    for row in cr_src.fetchall():
-        if row['attachment_id'] in ids_pj:
-            cr_dst.execute("insert into "+table+" ("+colonne+",attachment_id) values (%s,%s) on conflict do nothing",[row[colonne],ids_pj[row['attachment_id']]])
-cnx_dst.commit()
+    MigrationTable(db_src,db_dst,table)
+
+# Ids qui auraient changé (collision) : remplacés partout (aucun pour France Filets)
+RemplacerIdsPiecesJointes(db_dst,ids_pj)
 
 # Rattachement à leur enregistrement (étape 7.c) des pièces jointes sans res_id (widget many2many_binary) ;
 # les 5 512 pièces jointes de commandes déplacées sur un chantier par la v15 (anomalie 4) reviennent sur leur commande
@@ -580,15 +573,7 @@ for table,colonne,modele in [
     cr_dst.execute(SQL,[modele])
 cnx_dst.commit()
 
-# Pièce jointe principale (vidée en 9.g) : valeurs de la v15 avec les nouveaux ids
-for table in ['account_move','account_payment','hr_employee','is_planning','is_planning_pdf']:
-    cr_src.execute("select id,message_main_attachment_id from "+table+" where message_main_attachment_id is not null")
-    for row in cr_src.fetchall():
-        if row['message_main_attachment_id'] in ids_pj:
-            cr_dst.execute("update "+table+" set message_main_attachment_id=%s where id=%s",[ids_pj[row['message_main_attachment_id']],row['id']])
-cnx_dst.commit()
-
-# Pièces jointes des messages (2 sur des factures) : nouveaux ids des messages (9.i) et des pièces jointes
+# Pièces jointes des messages (2 sur des factures) : les messages ont de nouveaux ids (9.i)
 cr_src.execute("select message_id,attachment_id from message_attachment_rel")
 for row in cr_src.fetchall():
     if row['message_id'] in ids_messages and row['attachment_id'] in ids_pj:

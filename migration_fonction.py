@@ -1752,3 +1752,26 @@ def MigrationDevisesParCode(db_src,db_dst,tables):
             colonne = row['colonne']
             cr_dst.execute("update "+table+" set "+colonne+" = case "+colonne+" "+cas+" end where "+colonne+" is not null")
     cnx_dst.commit()
+
+
+def RemplacerIdsPiecesJointes(db_dst,correspondances):
+    """Après MigrationPiecesJointes(garder_ids=True) : remplace les ids des pièces jointes qui ont changé (en collision
+    avec une pièce jointe de la destination) dans toutes les colonnes qui pointent sur ir_attachment (tables de relation,
+    message_main_attachment_id...), trouvées par les clés étrangères de la base. Ne fait rien si aucun id n'a changé."""
+    changes = {a:b for a,b in correspondances.items() if a!=b}
+    if not changes:
+        return
+    cnx_dst,cr_dst=GetCR(db_dst)
+    SQL="""
+        select t.relname as tab, a.attname as col
+        from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
+        join pg_attribute a on a.attrelid=c.conrelid and a.attnum=c.conkey[1]
+        where c.contype='f' and cf.relname='ir_attachment' and t.relname<>'ir_attachment'
+    """
+    cr_dst.execute(SQL)
+    cas = ' '.join('when %s then %s'%(a,b) for a,b in changes.items())
+    ids = ','.join(str(a) for a in changes)
+    for row in cr_dst.fetchall():
+        cr_dst.execute("update "+row['tab']+" set "+row['col']+" = case "+row['col']+" "+cas+" end where "+row['col']+" in ("+ids+")")
+    cnx_dst.commit()
+    print("RemplacerIdsPiecesJointes : %s ids remplacés"%len(changes))
