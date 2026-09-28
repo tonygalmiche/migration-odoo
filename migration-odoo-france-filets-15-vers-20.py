@@ -181,6 +181,9 @@ cr_dst.execute("update account_journal set alias_id=null") # alias de messagerie
 cnx_dst.commit()
 MigrationTable(db_src,db_dst,'account_payment_method_line')
 
+# Devises : EUR = 1 en v15, 126 en v20 (1 = USD en v20) => conversion par le code
+MigrationDevisesParCode(db_src,db_dst,['account_account','account_journal'])
+
 # Conditions de paiement (13) : toutes les lignes v15 sont des soldes => 100 %
 # day_after_invoice_date => days_after (+ jour du mois => days_end_of_month_on_the), after_invoice_month => days_after_end_of_month
 MigrationTable(db_src,db_dst,'account_payment_term',text2jsonb=True)
@@ -261,10 +264,96 @@ MigrationIrModelData(db_src,db_dst,[
 
 
 # ** 9.e Articles et ventes ***************************************************
+# 9.e et 9.f sont à lancer ensemble : les commandes pointent sur les tables is_* (nacelles, types de prestation,
+# motifs d'archivage, planning...) et Odoo 20 refuse d'afficher une liste qui pointe sur une ligne absente
+
+# Catégories (3), liste de prix (1, celle de tous les clients : pas de propriété à reprendre), équipes commerciales (4)
+MigrationTable(db_src,db_dst,'product_category',text2jsonb=True)
+parent_store_compute(cr_dst,cnx_dst,'product_category','parent_id')
+MigrationTable(db_src,db_dst,'product_pricelist',text2jsonb=True)
+MigrationTable(db_src,db_dst,'crm_team',text2jsonb=True)
+MigrationTable(db_src,db_dst,'crm_team_member')
+MigrationDevisesParCode(db_src,db_dst,['product_pricelist'])
+
+# Articles (16, tous des prestations) : type vide pour 13 articles en v15 => repris de detailed_type
+# sale_delay : nombre en v15, jsonb en v20, toujours à 0 => non repris
+MigrationTable(db_src,db_dst,'product_template',text2jsonb=True,exclure=['sale_delay'],
+    default={'service_tracking':'no','base_unit_count':0})
+cr_src.execute("select id,detailed_type from product_template")
+for row in cr_src.fetchall():
+    type_article = 'service' if row['detailed_type']=='service' else 'consu'
+    cr_dst.execute("update product_template set type=%s, is_storable=%s where id=%s",[type_article,row['detailed_type']=='product',row['id']])
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'product_product',default={'base_unit_count':0})
+MigrationTable(db_src,db_dst,'product_taxes_rel')
+MigrationTable(db_src,db_dst,'product_supplier_taxes_rel')
+MigrationIrProperty2JsonField(db_src,db_dst,'product.template',property_src='property_account_income_id',field_dst='property_account_income_id')
+
+# Commandes (4 666) et lignes (7 017) : aucune commande « done » (état supprimé en v17)
+# Lignes : product_uom => product_uom_id ; sale_order_line_invoice_rel (lien avec les lignes de factures) : en 9.g
+MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excluded'})
+MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'})
+MigrationTable(db_src,db_dst,'account_tax_sale_order_line_rel')
+MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
+
+# Identifiants externes : catégories renommées en v20 (product_category_all => product_category_goods...)
+cr_src.execute("select name,res_id from ir_model_data where model='product.category'")
+categories = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+MigrationIrModelData(db_src,db_dst,['product.category','crm.team','product.pricelist'],correspondances={
+    'product.category': {
+        'product_category_goods'   : categories.get('product_category_all'), # catégorie par défaut des articles
+        'product_category_expenses': categories.get('cat_expense'),
+        'product_category_services': categories.get('product_category_1'),
+    },
+})
 #******************************************************************************
 
 
 # ** 9.f Tables métier is_* ***************************************************
+# Colonnes identiques en v15 et en v20. Déjà reprises en 9.b : is_region, is_secteur_activite, is_origine, is_groupe_client
+# Non reprises : is_export_compta* (Export Ciel abandonné, question 8)
+# Tables de relation des pièces jointes (*_attachment_rel) : en 9.j, avec les pièces jointes
+tables=[
+    'is_departement',
+    'is_equipe',
+    'is_departement_equipe_rel',
+    'is_equipe_absence',
+    'is_equipe_message',
+    'is_motif_archivage',
+    'is_nacelle',
+    'is_type_prestation',
+    'is_type_document',
+    'is_controle_gestion',
+    'is_sale_order_controle_gestion',
+    'is_sale_order_zone',
+    'is_sale_order_planning',
+    'is_sale_order_planning_employee_rel',
+    'is_sale_order_planning_equipe_rel',
+    'is_creation_planning',
+    'is_creation_planning_preparation',
+    'is_planning',
+    'is_planning_line',
+    'is_planning_pdf',
+    'is_chantier',
+    'is_chantier_is_equipe_rel',
+    'is_chantier_res_users_rel',
+    'is_chantier_user_rel',
+    'hr_employee_is_chantier_rel',
+    'is_chantier_planning',
+    'is_chantier_planning_employee_rel',
+    'is_chantier_planning_equipe_rel',
+    'is_chantier_document',
+    'is_filet',
+    'is_filet_mouvement',
+    'is_suivi_budget',
+    'is_suivi_budget_mois',
+    'is_suivi_budget_groupe_client',
+    'is_suivi_budget_secteur_activite',
+    'is_suivi_budget_top_client',
+    'is_document_employe',
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
 #******************************************************************************
 
 

@@ -1631,7 +1631,7 @@ def init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation,doc_field,
 
 
 
-def MigrationIrModelData(db_src,db_dst,models):
+def MigrationIrModelData(db_src,db_dst,models,correspondances={}):
     """Identifiants externes des modèles repris avec les ids de la source (comptes, taxes, journaux...).
     Après la copie, les identifiants de la destination pointent sur les ids de la destination, qui désignent
     maintenant d'autres enregistrements (les ids se chevauchent). Comme une mise à niveau d'Odoo :
@@ -1642,6 +1642,8 @@ def MigrationIrModelData(db_src,db_dst,models):
       le -u du module recrée alors l'enregistrement standard)
     - les identifiants de la source absents de la destination ne sont pas ajoutés (au -u, Odoo supprime
       les enregistrements dont l'identifiant n'est plus dans les données du module)
+    correspondances : {modèle: {nom de l'identifiant de la destination: id de la source}} pour les identifiants
+    renommés entre les versions (ex : product.product_category_all en v15 => product.product_category_goods en v20)
     Voir Documentation/migration-odoo/migration-vers-odoo20.md § 5.4"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
@@ -1660,6 +1662,8 @@ def MigrationIrModelData(db_src,db_dst,models):
             res_id = src.get(name)
             if res_id is None and name.startswith('1_'):
                 res_id = src.get(name[2:])
+            if name in correspondances.get(model,{}):
+                res_id = correspondances[model][name]
             if res_id in ids_dst:
                 cr_dst.execute("update ir_model_data set res_id=%s where id=%s",[res_id,row['id']])
                 repris+=1
@@ -1690,3 +1694,32 @@ def AccountTypeParCode(codes,fichiers):
                 meilleur = (n,account_type)
         res[code] = meilleur[1] if meilleur and meilleur[0] > 0 else 'income'
     return res
+
+
+def MigrationDevisesParCode(db_src,db_dst,tables):
+    """Conversion des devises des tables copiées avec MigrationTable : les ids de res_currency changent d'une version
+    à l'autre (ex : EUR = 1 en v15, 126 en v20 ; 1 = USD en v20). Toutes les colonnes de la table qui référencent
+    res_currency (currency_id, company_currency_id...) sont converties en une seule requête par colonne (pas d'effet
+    de chaîne 1 => 126, 2 => 1), par le code de la devise"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_src.execute("select id,name from res_currency")
+    codes_src = {row['id']:row['name'] for row in cr_src.fetchall()}
+    cr_dst.execute("select id,name from res_currency")
+    ids_dst = {row['name']:row['id'] for row in cr_dst.fetchall()}
+    correspondances = {id_src:ids_dst[code] for id_src,code in codes_src.items() if code in ids_dst}
+    if not correspondances:
+        return
+    cas = ' '.join('when %s then %s'%(a,b) for a,b in correspondances.items())
+    for table in tables:
+        SQL="""
+            select a.attname as colonne
+            from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
+            join pg_attribute a on a.attrelid=c.conrelid and a.attnum=c.conkey[1]
+            where c.contype='f' and t.relname=%s and cf.relname='res_currency'
+        """
+        cr_dst.execute(SQL,[table])
+        for row in cr_dst.fetchall():
+            colonne = row['colonne']
+            cr_dst.execute("update "+table+" set "+colonne+" = case "+colonne+" "+cas+" end where "+colonne+" is not null")
+    cnx_dst.commit()
