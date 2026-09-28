@@ -567,6 +567,13 @@ SQL="""
     where a.id=r.attachment_id and coalesce(a.res_id,0)=0 and c.order_id is not null
 """
 cr_dst.execute(SQL)
+# Chantiers dont la commande a été supprimée (5 chantiers, 7 pièces jointes) : la pièce jointe n'existe plus que sur le chantier
+SQL="""
+    update ir_attachment a set res_model='is.chantier', res_id=r.is_chantier_id
+    from is_chantier_piece_jointe_attachment_rel r join is_chantier c on c.id=r.is_chantier_id
+    where a.id=r.attachment_id and coalesce(a.res_id,0)=0 and c.order_id is null
+"""
+cr_dst.execute(SQL)
 cnx_dst.commit()
 
 RattacherPiecesJointes(db_dst,[
