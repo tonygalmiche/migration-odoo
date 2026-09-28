@@ -472,6 +472,34 @@ cnx_dst.commit()
 
 
 # ** 9.h Séquences, filtres, valeurs par défaut *******************************
+# Séquences : commandes (sans préfixe en v15, « S » en v20 ; dernière : 04965) et filets (dernier : F01557)
+for code in ['sale.order','is.filet']:
+    cr_src.execute("select id from ir_sequence where code=%s and active order by id limit 1",[code])
+    id_src = cr_src.fetchone()['id']
+    cr_dst.execute("select id from ir_sequence where code=%s and active order by id limit 1",[code])
+    id_dst = cr_dst.fetchone()['id']
+    MigrationIrSequence(db_src,db_dst,id_src=id_src,id_dst=id_dst)
+
+# Filtres favoris : 2 filtres personnels (Clients, Devis) et les 5 filtres standard de l'analyse des factures
+MigrationIrFilters(db_src,db_dst,modules={'is_france_filets15': 'is_france_filets20'})
+
+# Valeurs par défaut de la v15 dont le champ existe encore (politique de facturation des articles, langue,
+# conditions des devis « Validité de notre offre... ») ; achats et livraisons : modules non installés
+SQL="""
+    select f.model, f.name, d.user_id, d.company_id, d.condition, d.json_value
+    from ir_default d join ir_model_fields f on f.id=d.field_id
+    where d.user_id is null
+"""
+cr_src.execute(SQL)
+for row in cr_src.fetchall():
+    cr_dst.execute("select id from ir_model_fields where model=%s and name=%s",[row['model'],row['name']])
+    field = cr_dst.fetchone()
+    if not field:
+        continue
+    cr_dst.execute("delete from ir_default where field_id=%s and user_id is null and company_id is not distinct from %s",[field['id'],row['company_id']])
+    SQL="insert into ir_default (field_id,company_id,condition,json_value) values (%s,%s,%s,%s)"
+    cr_dst.execute(SQL,[field['id'],row['company_id'],row['condition'],row['json_value']])
+cnx_dst.commit()
 #******************************************************************************
 
 
