@@ -504,9 +504,26 @@ cnx_dst.commit()
 
 
 # ** 9.i Chatter **************************************************************
+# ~37 000 messages (20 900 sur les commandes, 11 600 sur les factures...) et leurs abonnés ; nouveaux ids (la v20 a
+# déjà ses messages) ; suivi des modifications ajouté au corps (format v20). Non repris : account.invoice (ancien
+# modèle v10), discussions internes (mail.channel), messages sans modèle
+ids_messages = MigrationChatter(db_src,db_dst,[
+    'sale.order',
+    'account.move',
+    'account.payment',
+    'res.partner',
+    'is.planning',
+    'is.planning.pdf',
+    'hr.employee',
+    'hr.department',
+    'product.template',
+    'product.product',
+    'crm.team',
+])
 #******************************************************************************
 
 
 # ** 9.j Pièces jointes (données seulement, fichiers à l'étape 11) ************
-# À faire : après la reprise des pièces jointes, remettre message_main_attachment_id (vidé en 9.g) avec les valeurs de la v15
+# À faire : après la reprise des pièces jointes, remettre message_main_attachment_id (vidé en 9.g) avec les valeurs de la v15,
+# et message_attachment_rel (7 pièces jointes de messages) avec ids_messages (9.i)
 #******************************************************************************

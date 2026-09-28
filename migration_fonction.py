@@ -670,7 +670,8 @@ def MigrationChatter(db_src,db_dst,models):
       sont insérés avec de nouveaux ids (parent_id recalculé)
     - sous-types (subtype_id) : correspondance par identifiant externe
     - suivi des modifications (mail_tracking_value) : ajouté au corps du message, comme le fait la v20
-    Les messages ne doivent pas avoir de pièces jointes ni de notifications (non reprises)."""
+    Les notifications ne sont pas reprises. Pièces jointes des messages (message_attachment_rel) : non reprises ici ;
+    la fonction retourne la correspondance {id message source: id message destination} pour les recoller ensuite."""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     subtypes = SubtypeId2SubtypeId(cr_src,cr_dst)
@@ -718,6 +719,7 @@ def MigrationChatter(db_src,db_dst,models):
                 cr_dst.execute(SQL,[res['id'],subtype_id])
     cnx_dst.commit()
     print("MigrationChatter : %s messages et %s abonnés repris"%(nb,nb_followers))
+    return ids
 
 
 def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore"):
