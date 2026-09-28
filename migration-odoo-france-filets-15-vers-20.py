@@ -296,6 +296,11 @@ MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excl
 MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'},exclure=['customer_lead'],default={'customer_lead':0})
 MigrationTable(db_src,db_dst,'account_tax_sale_order_line_rel')
 MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
+# Devise vide sur 1 726 commandes (2018 à 2023) et 17 lignes en v15 : champ calculé et stocké en v20
+# (liste de prix, sinon société) => devise de la société (EUR, comme l'unique liste de prix)
+cr_dst.execute("update sale_order o set currency_id=(select currency_id from res_company c where c.id=o.company_id) where currency_id is null")
+cr_dst.execute("update sale_order_line l set currency_id=o.currency_id from sale_order o where o.id=l.order_id and l.currency_id is null")
+cnx_dst.commit()
 
 # Identifiants externes : catégories renommées en v20 (product_category_all => product_category_goods...)
 cr_src.execute("select name,res_id from ir_model_data where model='product.category'")
