@@ -364,6 +364,98 @@ for table in tables:
 
 
 # ** 9.g Pièces comptables ***************************************************
+# 3 971 pièces (1 984 factures, 9 avoirs, 1 978 pièces de paiement), 9 485 lignes, 1 978 paiements, lettrages
+# v15 : aucune pièce « à vérifier », aucune comptabilisation automatique, aucun doublon de numéro, aucun hachage
+
+# Pièces : to_check => review_state, auto_post (booléen, toujours faux) => 'no', payment_id => origin_payment_id
+MigrationTable(db_src,db_dst,'account_move',exclure=['auto_post'],default={'auto_post':'no','review_state':'no_review'})
+SQL="""
+    update account_move set
+        amount_untaxed_in_currency_signed = amount_untaxed_signed,
+        invoice_currency_rate = 1
+"""
+cr_dst.execute(SQL)
+cr_src.execute("select id,payment_id from account_move where payment_id is not null")
+for row in cr_src.fetchall():
+    cr_dst.execute("update account_move set origin_payment_id=%s where id=%s",[row['payment_id'],row['id']])
+cnx_dst.commit()
+
+# Lignes : display_type obligatoire en v20 (v15 : vide, sauf sections ; exclude_from_invoice_tab pour les lignes
+# de taxes et d'échéances des factures) ; invoice_date stockée sur la ligne en v20
+MigrationTable(db_src,db_dst,'account_move_line',default={'display_type':'product'})
+SQL="""
+    update account_move_line l set
+        display_type = case
+            when l.display_type in ('line_section','line_note') then l.display_type
+            when l.tax_line_id is not null then 'tax'
+            when m.move_type in ('out_invoice','out_refund','in_invoice','in_refund') and a.account_type in ('asset_receivable','liability_payable') then 'payment_term'
+            else 'product'
+        end,
+        invoice_date = m.invoice_date
+    from account_move m, account_account a
+    where m.id=l.move_id and a.id=l.account_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'account_move_line_account_tax_rel')
+cr_dst.execute("delete from account_account_tag_account_move_line_rel") # étiquettes de TVA des lignes : aucune en v15
+cnx_dst.commit()
+
+# Lettrages
+MigrationTable(db_src,db_dst,'account_full_reconcile')
+MigrationTable(db_src,db_dst,'account_partial_reconcile')
+
+# Paiements : nom, date, journal, société et mémo portés par la pièce en v15 ; état : draft / canceled selon la pièce,
+# sinon comme Odoo 20 (_compute_state) : reconciled si les lignes de liquidité sont soldées, sinon paid
+# (en v15, 1 247 paiements ont le compte client 411LOT comme compte d'attente des encaissements : repris tel quel)
+MigrationTable(db_src,db_dst,'account_payment',default={'company_id':1,'date':'2000-01-01','journal_id':1,'state':'draft'})
+SQL="""
+    update account_payment p set
+        name       = m.name,
+        date       = m.date,
+        journal_id = m.journal_id,
+        company_id = m.company_id,
+        memo       = m.ref,
+        currency_id = m.currency_id,
+        commercial_partner_id = (select commercial_partner_id from res_partner r where r.id=p.partner_id),
+        amount_company_currency_signed = case when p.payment_type='outbound' then -m.amount_total_signed else m.amount_total_signed end,
+        is_sent    = false,
+        state = case
+            when m.state='draft'  then 'draft'
+            when m.state='cancel' then 'canceled'
+            when coalesce((
+                select sum(l.amount_residual) from account_move_line l join account_journal j on j.id=m.journal_id
+                where l.move_id=m.id and l.account_id=coalesce(p.outstanding_account_id,j.default_account_id)
+            ),0)=0 then 'reconciled'
+            else 'paid'
+        end
+    from account_move m
+    where m.id=p.move_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Factures réglées par chaque paiement (Many2many invoice_ids du paiement) : d'après les lettrages de la v15
+cr_dst.execute("delete from account_move__account_payment")
+SQL="""
+    select distinct l_facture.move_id invoice_id, m.payment_id
+    from account_partial_reconcile r
+    join account_move_line ld on ld.id=r.debit_move_id
+    join account_move_line lc on lc.id=r.credit_move_id
+    join account_move m on m.id in (ld.move_id,lc.move_id) and m.payment_id is not null
+    join account_move_line l_facture on l_facture.id in (ld.id,lc.id) and l_facture.move_id<>m.id
+    join account_move f on f.id=l_facture.move_id and f.move_type<>'entry'
+"""
+cr_src.execute(SQL)
+for row in cr_src.fetchall():
+    cr_dst.execute("insert into account_move__account_payment (invoice_id,payment_id) values (%s,%s) on conflict do nothing",[row['invoice_id'],row['payment_id']])
+cnx_dst.commit()
+
+# Lien entre les lignes de commande et les lignes de factures
+MigrationTable(db_src,db_dst,'sale_order_line_invoice_rel')
+
+# Devises : EUR = 1 en v15, 126 en v20
+MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','account_payment','account_partial_reconcile','account_full_reconcile'])
 #******************************************************************************
 
 
