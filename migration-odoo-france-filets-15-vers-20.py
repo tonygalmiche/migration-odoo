@@ -462,6 +462,12 @@ MigrationTable(db_src,db_dst,'sale_order_line_invoice_rel')
 
 # Devises : EUR = 1 en v15, 126 en v20
 MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','account_payment','account_partial_reconcile','account_full_reconcile'])
+
+# Pièce jointe principale (PDF de la facture...) : ids des pièces jointes v15, qui ne sont reprises qu'en 9.j ; en attendant,
+# ces ids désignent d'autres pièces jointes de la v20 (la contrainte empêche alors de les supprimer) => vidée ici, remise en 9.j
+for table in ['account_move','account_payment','hr_employee','is_planning','is_planning_pdf']:
+    cr_dst.execute("update "+table+" set message_main_attachment_id=null where message_main_attachment_id is not null")
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -474,4 +480,5 @@ MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','accou
 
 
 # ** 9.j Pièces jointes (données seulement, fichiers à l'étape 11) ************
+# À faire : après la reprise des pièces jointes, remettre message_main_attachment_id (vidé en 9.g) avec les valeurs de la v15
 #******************************************************************************
