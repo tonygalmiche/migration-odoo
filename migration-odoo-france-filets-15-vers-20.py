@@ -97,6 +97,14 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 
+# Utilisateur système __system__ : inactif, comme dans une base Odoo standard (actif en v15)
+cr_dst.execute("update res_users set active=false where id=1")
+cnx_dst.commit()
+
+# Résumé périodique d'Odoo (digest) : e-mail de statistiques désactivé (décision de Tony)
+cr_dst.execute("update digest_digest set state='deactivated'")
+cnx_dst.commit()
+
 # Anomalie 14 : inscription libre au portail fermée (b2c en v15)
 SQL="""
     insert into ir_config_parameter (key,value) values ('auth_signup.invitation_scope','b2b')
