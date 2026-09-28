@@ -1629,3 +1629,64 @@ def init_res_id_ir_attachment_Many2many(cr_dst,cnx_dst,table_relation,doc_field,
 
 
 
+
+
+def MigrationIrModelData(db_src,db_dst,models):
+    """Identifiants externes des modèles repris avec les ids de la source (comptes, taxes, journaux...).
+    Après la copie, les identifiants de la destination pointent sur les ids de la destination, qui désignent
+    maintenant d'autres enregistrements (les ids se chevauchent). Comme une mise à niveau d'Odoo :
+    - un identifiant de la destination reprend l'enregistrement de la source qui portait le même nom
+      (module ignoré : l10n_fr.1_pcg_411 => account.1_pcg_411 ; préfixe de société 1_ ajouté si besoin :
+      l10n_fr.tax_group_tva_20 => account.1_tax_group_tva_20), même s'il a été renommé depuis
+    - un identifiant sans équivalent dans la source est supprimé (pour des données XML en noupdate,
+      le -u du module recrée alors l'enregistrement standard)
+    - les identifiants de la source absents de la destination ne sont pas ajoutés (au -u, Odoo supprime
+      les enregistrements dont l'identifiant n'est plus dans les données du module)
+    Voir Documentation/migration-odoo/migration-vers-odoo20.md § 5.4"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    for model in models:
+        table = model.replace('.','_')
+        cr_src.execute("select name,res_id from ir_model_data where model=%s order by id",[model])
+        src = {}
+        for row in cr_src.fetchall():
+            src.setdefault(row['name'],row['res_id'])
+        cr_dst.execute("select id from "+table)
+        ids_dst = {row['id'] for row in cr_dst.fetchall()}
+        cr_dst.execute("select id,name from ir_model_data where model=%s",[model])
+        repris = supprimes = 0
+        for row in cr_dst.fetchall():
+            name = row['name']
+            res_id = src.get(name)
+            if res_id is None and name.startswith('1_'):
+                res_id = src.get(name[2:])
+            if res_id in ids_dst:
+                cr_dst.execute("update ir_model_data set res_id=%s where id=%s",[res_id,row['id']])
+                repris+=1
+            else:
+                cr_dst.execute("delete from ir_model_data where id=%s",[row['id']])
+                supprimes+=1
+        print("MigrationIrModelData : %s : %s identifiants repris, %s supprimés"%(model,repris,supprimes))
+    cnx_dst.commit()
+
+
+def AccountTypeParCode(codes,fichiers):
+    """Type de compte v17+ (account_type) déduit du code : type du compte du plan comptable standard dont le
+    code a le plus long début commun (ex : 411AUE => 411000 => asset_receivable, 512001 => asset_cash).
+    codes : liste des codes ; fichiers : CSV du plan comptable de la localisation (colonnes code, account_type),
+    ex : /opt/odoo20/addons/l10n_fr_account/data/template/account.account-fr.csv et account.account-fr_comp.csv.
+    Retourne {code: account_type}"""
+    modeles = []
+    for fichier in fichiers:
+        for row in csv.DictReader(open(fichier)):
+            if row.get('code') and row.get('account_type'):
+                modeles.append((row['code'],row['account_type']))
+    res = {}
+    for code in codes:
+        meilleur = None
+        for code_modele,account_type in modeles:
+            n = len(os.path.commonprefix([code,code_modele]))
+            if meilleur is None or n > meilleur[0]:
+                meilleur = (n,account_type)
+        res[code] = meilleur[1] if meilleur and meilleur[0] > 0 else 'income'
+    return res

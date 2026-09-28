@@ -114,11 +114,153 @@ MigrationHrEmployee(db_src,db_dst)
 #******************************************************************************
 
 
-# ** 9.d Articles et paramètres de vente et de comptabilité *******************
+# ** 9.d Paramètres comptables ************************************************
+# Plan comptable, taxes, journaux, conditions de paiement et positions fiscales de la v15 repris à l'identique
+# (mêmes ids) à la place de ceux créés par l10n_fr en v20. Seuls les types de comptes et les identifiants externes
+# sont corrigés ; la facturation électronique sera préparée après la migration (doc générale § 8 et § 5.4)
+
+# Tables de la v20 liées aux anciens comptes et taxes, sans équivalent repris (vides ou non utilisées en v15)
+for table in [
+    'account_account_account_tag',                          # étiquettes des comptes (rapports de flux)
+    'account_account_tag_account_tax_repartition_line_rel', # étiquettes de la déclaration de TVA (aucune en v15)
+    'account_account_tax_default_rel',                      # taxes par défaut des comptes (aucune en v15)
+    'account_tax_filiation_rel',                            # taxes groupées (aucune en v15)
+    'account_fiscal_position_account',                      # correspondances de comptes (aucune en v15)
+    'account_fiscal_position_account_tax_rel',              # recréées plus bas à partir de la v15
+    'account_tax_alternatives',                             # recréées plus bas à partir de la v15
+    'account_reconcile_model_line',                         # modèles de rapprochement : pas de relevés bancaires
+    'account_reconcile_model',
+]:
+    cr_dst.execute("delete from "+table)
+cnx_dst.commit()
+
+# Comptes (775) : code => code_store (par société), deprecated => active, type recalculé d'après le code
+# (en v15, 290 comptes des classes 1 à 5, jamais utilisés, sont « hors bilan »)
+MigrationTable(db_src,db_dst,'account_account',text2jsonb=True,default={'account_type':'income'})
+cr_src.execute("select id,code,deprecated from account_account")
+comptes = cr_src.fetchall()
+modeles = [
+    '/opt/odoo20/addons/l10n_fr_account/data/template/account.account-fr.csv',
+    '/opt/odoo20/addons/l10n_fr_account/data/template/account.account-fr_comp.csv',
+]
+types = AccountTypeParCode([row['code'] for row in comptes],modeles)
+cr_dst.execute("delete from account_account_res_company_rel")
+for row in comptes:
+    SQL="update account_account set code_store=jsonb_build_object('1',%s::text), active=%s, account_type=%s where id=%s"
+    cr_dst.execute(SQL,[row['code'],not row['deprecated'],types[row['code']],row['id']])
+    cr_dst.execute("insert into account_account_res_company_rel (account_account_id,res_company_id) values (%s,1)",[row['id']])
+cnx_dst.commit()
+
+# Groupes de taxes et taxes (15) ; lignes de répartition : invoice_tax_id / refund_tax_id => tax_id + document_type
+MigrationTable(db_src,db_dst,'account_tax_group',text2jsonb=True,default={'company_id':1})
+MigrationTable(db_src,db_dst,'account_tax',text2jsonb=True)
+MigrationTable(db_src,db_dst,'account_tax_repartition_line',default={'document_type':'invoice'})
+cr_src.execute("select id,invoice_tax_id,refund_tax_id from account_tax_repartition_line")
+for row in cr_src.fetchall():
+    if row['invoice_tax_id']:
+        tax_id,document_type = row['invoice_tax_id'],'invoice'
+    else:
+        tax_id,document_type = row['refund_tax_id'],'refund'
+    cr_dst.execute("update account_tax_repartition_line set tax_id=%s, document_type=%s where id=%s",[tax_id,document_type,row['id']])
+cnx_dst.commit()
+
+# Positions fiscales (3) ; correspondances de taxes (16) : en v20, portées par la taxe de remplacement
+# (fiscal_position_ids : positions où elle s'applique, original_tax_ids : taxes qu'elle remplace)
+MigrationTable(db_src,db_dst,'account_fiscal_position',text2jsonb=True,default={'company_id':1})
+cr_src.execute("select position_id,tax_src_id,tax_dest_id from account_fiscal_position_tax where tax_dest_id is not null")
+for row in cr_src.fetchall():
+    cr_dst.execute("insert into account_fiscal_position_account_tax_rel (account_tax_id,account_fiscal_position_id) values (%s,%s) on conflict do nothing",[row['tax_dest_id'],row['position_id']])
+    cr_dst.execute("insert into account_tax_alternatives (dest_tax_id,src_tax_id) values (%s,%s) on conflict do nothing",[row['tax_dest_id'],row['tax_src_id']])
+cr_dst.execute("update account_tax t set is_domestic = not exists (select 1 from account_fiscal_position_account_tax_rel r where r.account_tax_id=t.id)")
+cr_dst.execute("update account_fiscal_position set is_domestic=false")
+cnx_dst.commit()
+
+# Journaux (7) et modes de paiement des journaux
+MigrationTable(db_src,db_dst,'account_journal',text2jsonb=True,default={'invoice_reference_type':'invoice','invoice_reference_model':'odoo'})
+cr_dst.execute("update account_journal set alias_id=null") # alias de messagerie non repris
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'account_payment_method_line')
+
+# Conditions de paiement (13) : toutes les lignes v15 sont des soldes => 100 %
+# day_after_invoice_date => days_after (+ jour du mois => days_end_of_month_on_the), after_invoice_month => days_after_end_of_month
+MigrationTable(db_src,db_dst,'account_payment_term',text2jsonb=True)
+MigrationTable(db_src,db_dst,'account_payment_term_line',rename={'days':'nb_days'},default={'delay_type':'days_after'})
+cr_src.execute("select id,value,value_amount,option,day_of_the_month from account_payment_term_line")
+for row in cr_src.fetchall():
+    delay_type,days_next_month = 'days_after',None
+    if row['option']=='after_invoice_month':
+        delay_type = 'days_after_end_of_month'
+    elif row['day_of_the_month']:
+        delay_type,days_next_month = 'days_end_of_month_on_the',str(row['day_of_the_month'])
+    value,value_amount = ('percent',100) if row['value']=='balance' else (row['value'],row['value_amount'])
+    SQL="update account_payment_term_line set delay_type=%s, days_next_month=%s, value=%s, value_amount=%s where id=%s"
+    cr_dst.execute(SQL,[delay_type,days_next_month,value,value_amount,row['id']])
+cnx_dst.commit()
+
+# Champs comptables de la société (comptes, journaux, taxes, positions fiscales) : valeur de la v15 si le champ
+# existait, sinon vidé (il pointait sur les ids de la v20)
+SQL="""
+    select a.attname as colonne
+    from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
+    join pg_attribute a on a.attrelid=c.conrelid and a.attnum=c.conkey[1]
+    where c.contype='f' and t.relname='res_company'
+    and cf.relname in ('account_account','account_journal','account_tax','account_fiscal_position','account_payment_term')
+"""
+cr_dst.execute(SQL)
+colonnes_src = GetTypesChamps(cr_src,'res_company')
+for row in cr_dst.fetchall():
+    colonne = row['colonne']
+    valeur = None
+    if colonne in colonnes_src:
+        cr_src.execute("select "+colonne+" from res_company where id=1")
+        valeur = cr_src.fetchone()[colonne]
+    cr_dst.execute("update res_company set "+colonne+"=%s where id=1",[valeur])
+cnx_dst.commit()
+
+# Valeurs par défaut des champs dépendant de la société (compte client, compte fournisseur, comptes des catégories...) :
+# propriétés sans res_id de la v15, sinon supprimées (elles pointaient sur les ids de la v20)
+SQL="""
+    select d.id, f.model, f.name
+    from ir_default d join ir_model_fields f on f.id=d.field_id
+    where f.relation in ('account.account','account.journal','account.tax','account.fiscal.position','account.payment.term')
+"""
+cr_dst.execute(SQL)
+for row in cr_dst.fetchall():
+    cr_src.execute("""
+        select p.value_reference from ir_property p join ir_model_fields f on f.id=p.fields_id
+        where f.model=%s and f.name=%s and p.res_id is null and p.value_reference is not null
+    """,[row['model'],row['name']])
+    prop = cr_src.fetchone()
+    if prop:
+        cr_dst.execute("update ir_default set json_value=%s where id=%s",[prop['value_reference'].split(',')[1],row['id']])
+    else:
+        cr_dst.execute("delete from ir_default where id=%s",[row['id']])
+cnx_dst.commit()
+
+# Propriétés des partenaires (ir_property en v15 => colonnes jsonb par société en v20)
+for champ in [
+    'property_account_receivable_id',    # 161 comptes clients individuels (411xxx)
+    'property_account_payable_id',
+    'property_payment_term_id',          # 1 316
+    'property_supplier_payment_term_id', # 738
+    'property_account_position_id',      # 459
+]:
+    MigrationIrProperty2JsonField(db_src,db_dst,'res.partner',property_src=champ,field_dst=champ)
+
+# Identifiants externes des modèles repris (doc générale § 5.4)
+MigrationIrModelData(db_src,db_dst,[
+    'account.account',
+    'account.tax.group',
+    'account.tax',
+    'account.fiscal.position',
+    'account.journal',
+    'account.payment.term',
+    'account.reconcile.model',
+])
 #******************************************************************************
 
 
-# ** 9.e Ventes ***************************************************************
+# ** 9.e Articles et ventes ***************************************************
 #******************************************************************************
 
 
@@ -126,7 +268,7 @@ MigrationHrEmployee(db_src,db_dst)
 #******************************************************************************
 
 
-# ** 9.g Comptabilité *********************************************************
+# ** 9.g Pièces comptables ***************************************************
 #******************************************************************************
 
 
