@@ -108,6 +108,9 @@ cnx_dst.commit()
 
 
 # ** 9.c Employés *************************************************************
+# 15 employés, 2 départements : employés, départements, postes, catégories et une hr_version par employé
+# Les liens avec les chantiers et le planning (hr_employee_is_chantier_rel...) sont repris avec les tables is_* (9.f)
+MigrationHrEmployee(db_src,db_dst)
 #******************************************************************************
 
 
