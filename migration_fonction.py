@@ -468,6 +468,7 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
     - copie resource_resource, hr_department, hr_job, hr_employee_category, employee_category_rel et hr_employee
       avec leurs ids (à appeler après res_partner, res_users et res_company)
     - crée une hr_version par employé à partir des champs de la source, datée de la création de l'employé
+    - parent_path des départements (absent en v14/v15) recalculé
     - work_contact_id (v16+) absent en v14/v15 : repris du partenaire de l'utilisateur lié s'il y en a un
     - hr_responsible_id : utilisateur responsable RH des versions (obligatoire en v20, inexistant avant)
     - work_location_id : obligatoire dans la fiche en v20 => "Office" (hr.home_work_office) si absent de la source
@@ -491,6 +492,9 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
     cr_dst.execute(SQL,[company['resource_calendar_id']])
     cnx_dst.commit()
     MigrationTableJsonb(db_src,db_dst,'hr_department')
+    # parent_path absent en v14/v15 : vide => erreur du panneau des départements de la liste des employés
+    # ('bool' object has no attribute 'split' dans _operator_parent_of_domain)
+    parent_store_compute(cr_dst,cnx_dst,'hr_department','parent_id')
     MigrationTableJsonb(db_src,db_dst,'hr_job')
     cr_dst.execute("update hr_job set company_id=%s where company_id is null",[company['id']]) # obligatoire en v20
     cnx_dst.commit()
