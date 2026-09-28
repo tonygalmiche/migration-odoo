@@ -278,7 +278,7 @@ MigrationDevisesParCode(db_src,db_dst,['product_pricelist'])
 # Articles (16, tous des prestations) : type vide pour 13 articles en v15 => repris de detailed_type
 # sale_delay : nombre en v15, jsonb en v20, toujours à 0 => non repris
 MigrationTable(db_src,db_dst,'product_template',text2jsonb=True,exclure=['sale_delay'],
-    default={'service_tracking':'no','base_unit_count':0})
+    default={'service_tracking':'no','base_unit_count':0,'type':'service'}) # type obligatoire en v20 : corrigé juste après
 cr_src.execute("select id,detailed_type from product_template")
 for row in cr_src.fetchall():
     type_article = 'service' if row['detailed_type']=='service' else 'consu'
