@@ -354,7 +354,8 @@ def DumpRestoreTable(db_src,db_dst,table):
     os.popen(cde).readlines()
 
 
-def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where="",text2jsonb=False):
+def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where="",text2jsonb=False,exclure=[]):
+    """exclure : colonnes communes à ne pas reprendre (ex : type changé entre les versions)"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
 
@@ -375,7 +376,7 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
         champs.sort()                    # Trier
         communs=[]
         for champ in champs:
-            if champ in champs_src and champ in champs_dst:
+            if champ in champs_src and champ in champs_dst and champ not in exclure:
                 communs.append(champ)
         champs=','.join(communs)
         Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst,db_src=db_src)
