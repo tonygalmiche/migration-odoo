@@ -378,9 +378,6 @@ SQL="""
                                  then (select account_price_include from res_company c where c.id=account_move.company_id) end
 """
 cr_dst.execute(SQL)
-cr_src.execute("select id,payment_id from account_move where payment_id is not null")
-for row in cr_src.fetchall():
-    cr_dst.execute("update account_move set origin_payment_id=%s where id=%s",[row['payment_id'],row['id']])
 cnx_dst.commit()
 
 # Lignes : display_type obligatoire en v20 (v15 : vide, sauf sections ; exclude_from_invoice_tab pour les lignes
@@ -436,6 +433,12 @@ SQL="""
     where m.id=p.move_id
 """
 cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Pièce de chaque paiement : payment_id de la pièce en v15 => origin_payment_id (après la copie des paiements : clé étrangère)
+cr_src.execute("select id,payment_id from account_move where payment_id is not null")
+for row in cr_src.fetchall():
+    cr_dst.execute("update account_move set origin_payment_id=%s where id=%s",[row['payment_id'],row['id']])
 cnx_dst.commit()
 
 # Factures réglées par chaque paiement (Many2many invoice_ids du paiement) : d'après les lettrages de la v15
