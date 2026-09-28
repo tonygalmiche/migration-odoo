@@ -368,11 +368,14 @@ for table in tables:
 # v15 : aucune pièce « à vérifier », aucune comptabilisation automatique, aucun doublon de numéro, aucun hachage
 
 # Pièces : to_check => review_state, auto_post (booléen, toujours faux) => 'no', payment_id => origin_payment_id
-MigrationTable(db_src,db_dst,'account_move',exclure=['auto_post'],default={'auto_post':'no','review_state':'no_review'})
+# document_tax_mode : obligatoire pour les factures et avoirs (contrainte), vide pour les autres pièces (comme _compute_document_tax_mode)
+MigrationTable(db_src,db_dst,'account_move',exclure=['auto_post'],default={'auto_post':'no','review_state':'no_review','document_tax_mode':'tax_excluded'})
 SQL="""
     update account_move set
         amount_untaxed_in_currency_signed = amount_untaxed_signed,
-        invoice_currency_rate = 1
+        invoice_currency_rate = 1,
+        document_tax_mode = case when move_type in ('out_invoice','out_refund','out_receipt','in_invoice','in_refund','in_receipt')
+                                 then (select account_price_include from res_company c where c.id=account_move.company_id) end
 """
 cr_dst.execute(SQL)
 cr_src.execute("select id,payment_id from account_move where payment_id is not null")
