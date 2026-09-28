@@ -35,6 +35,11 @@ for row in cr_src.fetchall():
             cr_dst.execute("update res_partner_title set "+champ+"=%s where id=%s",[fr,row['id']])
 cnx_dst.commit()
 
+# Tables de référence des partenaires (régions, secteurs d'activité, origines, groupes clients) : à reprendre
+# avant eux, sinon Odoo refuse d'afficher les listes de partenaires (lien vers un enregistrement inexistant)
+for table in ['is_region','is_secteur_activite','is_origine','is_groupe_client']:
+    MigrationTable(db_src,db_dst,table)
+
 # Partenaires (3 127), avec les ids de la source : is_company (case « Société »), mobile et title repris tels quels
 # credit_limit : nombre en v15, jsonb (par société) en v20, toujours à 0 => non repris
 # autopost_bills : nouvelle colonne obligatoire en v20 (valeur par défaut d'Odoo)
