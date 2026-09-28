@@ -292,7 +292,8 @@ MigrationIrProperty2JsonField(db_src,db_dst,'product.template',property_src='pro
 # Commandes (4 666) et lignes (7 017) : aucune commande « done » (état supprimé en v17)
 # Lignes : product_uom => product_uom_id ; sale_order_line_invoice_rel (lien avec les lignes de factures) : en 9.g
 MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excluded'})
-MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'})
+# customer_lead : décimal en v15, entier en v20, toujours à 0 => 0
+MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'},exclure=['customer_lead'],default={'customer_lead':0})
 MigrationTable(db_src,db_dst,'account_tax_sale_order_line_rel')
 MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
 
