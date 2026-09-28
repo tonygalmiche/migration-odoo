@@ -42,6 +42,10 @@ MigrationTable(db_src,db_dst,'res_partner',exclure=['credit_limit'],default={'au
 MigrationTable(db_src,db_dst,'res_users')
 MigrationTable(db_src,db_dst,'res_company_users_rel')
 
+# Type d'adresse « private » (adresse privée d'employé) supprimé en v17 => contact
+cr_dst.execute("update res_partner set type='contact' where type='private'")
+cnx_dst.commit()
+
 # commercial_partner_id vide : un partenaire sans parent est son propre partenaire commercial
 cr_dst.execute("update res_partner set commercial_partner_id=id where parent_id is null and commercial_partner_id is null")
 cnx_dst.commit()
