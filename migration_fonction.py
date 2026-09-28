@@ -722,23 +722,30 @@ def MigrationChatter(db_src,db_dst,models):
     return ids
 
 
-def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore"):
+def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore",copier_fichiers=True):
     """Copie des pièces jointes (ir_attachment) sélectionnées par la clause where (sur la source) avec de nouveaux ids,
     et de leurs fichiers d'un filestore à l'autre (<filestore>/<db_src>/xx/... => <filestore>/<db_dst>/xx/...).
-    Les pièces jointes de la destination qui ont le même res_model, res_field et res_id sont d'abord supprimées.
-    Les fichiers absents du filestore source sont affichés (à copier à la main depuis la production)."""
+    Les pièces jointes de la destination qui ont le même res_model, res_field et res_id sont d'abord supprimées
+    (une seule fois, avant les copies : un enregistrement peut avoir plusieurs pièces jointes).
+    copier_fichiers=False : données seulement (store_fname conservé : fichiers à copier ensuite, ex : filestore de
+    production copié tel quel). Sinon, les fichiers absents du filestore source sont affichés.
+    Retourne la correspondance {id source: id destination} (tables de relation, pièce jointe principale...)."""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     champs = [c for c in GetChampsCommuns(cr_src,cr_dst,'ir_attachment') if c!='id']
     cr_src.execute("select * from ir_attachment where "+where+" order by id")
     rows = cr_src.fetchall()
+    cles = {(row['res_model'],row['res_id'],row['res_field'] or '') for row in rows}
+    for res_model,res_id,res_field in cles:
+        SQL="delete from ir_attachment where res_model=%s and res_id=%s and coalesce(res_field,'')=%s"
+        cr_dst.execute(SQL,[res_model,res_id,res_field])
+    ids={}
     manquants=[]
     for row in rows:
-        SQL="delete from ir_attachment where res_model=%s and res_id=%s and coalesce(res_field,'')=coalesce(%s,'')"
-        cr_dst.execute(SQL,[row['res_model'],row['res_id'],row['res_field']])
-        SQL="insert into ir_attachment ("+','.join(champs)+") values ("+','.join(['%s']*len(champs))+")"
+        SQL="insert into ir_attachment ("+','.join(champs)+") values ("+','.join(['%s']*len(champs))+") returning id"
         cr_dst.execute(SQL,[row[c] for c in champs])
-        if row['store_fname']:
+        ids[row['id']] = cr_dst.fetchone()['id']
+        if copier_fichiers and row['store_fname']:
             src = os.path.join(filestore,db_src,row['store_fname'])
             dst = os.path.join(filestore,db_dst,row['store_fname'])
             if os.path.exists(src):
@@ -752,6 +759,7 @@ def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/shar
         print("MigrationPiecesJointes : %s fichiers absents de %s, à copier dans %s :"%(len(manquants),os.path.join(filestore,db_src),os.path.join(filestore,db_dst)))
         for f in manquants:
             print("  "+f)
+    return ids
 
 
 def MigrationIrFilters(db_src,db_dst,modules={}):

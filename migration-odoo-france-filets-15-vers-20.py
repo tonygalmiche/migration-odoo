@@ -524,6 +524,73 @@ ids_messages = MigrationChatter(db_src,db_dst,[
 
 
 # ** 9.j Pièces jointes (données seulement, fichiers à l'étape 11) ************
-# À faire : après la reprise des pièces jointes, remettre message_main_attachment_id (vidé en 9.g) avec les valeurs de la v15,
-# et message_attachment_rel (7 pièces jointes de messages) avec ids_messages (9.i)
+# Nouveaux ids (la v20 a déjà ses pièces jointes) ; store_fname conservé : le filestore de production sera copié tel quel
+# (étape 11). Non repris : XML Factur-X générés par la v15 (1 316, sans modèle), images des anciens champs de la v10
+# (image, image_medium, image_small), pièces jointes techniques (vues, menus, pays...), discussions, Export Ciel
+modeles = ('sale.order','is.chantier','is.chantier.document','is.chantier.planning','account.move',
+           'is.planning','is.planning.pdf','is.document.employe')
+cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles]) # pièces jointes de test de la v20
+cr_dst.execute("delete from ir_attachment where res_model='res.partner' and res_field like 'image%%'")
+cnx_dst.commit()
+where = """
+    res_model in ('sale.order','is.chantier','is.chantier.document','is.chantier.planning','account.move',
+                  'is.planning','is.planning.pdf','is.document.employe')
+    or (res_model='res.partner' and res_field in ('image_1920','image_1024','image_512','image_256','image_128'))
+"""
+ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False)
+
+# Tables de relation des champs Many2many de pièces jointes, avec les nouveaux ids
+for table,colonne in [
+    ('sale_order_piece_jointe_attachment_rel'          ,'order_id'),
+    ('is_chantier_piece_jointe_attachment_rel'         ,'is_chantier_id'),
+    ('is_chantier_piece_jointe_chantier_attachment_rel','is_chantier_id'),
+    ('is_chantier_fin_chantier_attachment_rel'         ,'is_chantier_id'),
+    ('is_chantier_document_attachment_rel'             ,'document_id'),
+    ('is_document_employe_attachment_rel'              ,'document_id'),
+]:
+    cr_dst.execute("delete from "+table)
+    cr_src.execute("select "+colonne+",attachment_id from "+table)
+    for row in cr_src.fetchall():
+        if row['attachment_id'] in ids_pj:
+            cr_dst.execute("insert into "+table+" ("+colonne+",attachment_id) values (%s,%s) on conflict do nothing",[row[colonne],ids_pj[row['attachment_id']]])
+cnx_dst.commit()
+
+# Rattachement à leur enregistrement (étape 7.c) des pièces jointes sans res_id (widget many2many_binary) ;
+# les 5 512 pièces jointes de commandes déplacées sur un chantier par la v15 (anomalie 4) reviennent sur leur commande
+SQL="""
+    update ir_attachment a set res_model='sale.order', res_id=r.order_id
+    from sale_order_piece_jointe_attachment_rel r
+    where a.id=r.attachment_id and (coalesce(a.res_id,0)=0 or a.res_model='is.chantier')
+"""
+cr_dst.execute(SQL)
+SQL="""
+    update ir_attachment a set res_model='sale.order', res_id=c.order_id
+    from is_chantier_piece_jointe_attachment_rel r join is_chantier c on c.id=r.is_chantier_id
+    where a.id=r.attachment_id and coalesce(a.res_id,0)=0 and c.order_id is not null
+"""
+cr_dst.execute(SQL)
+for table,colonne,modele in [
+    ('is_chantier_piece_jointe_chantier_attachment_rel','is_chantier_id','is.chantier'),
+    ('is_chantier_fin_chantier_attachment_rel'         ,'is_chantier_id','is.chantier'),
+    ('is_chantier_document_attachment_rel'             ,'document_id'   ,'is.chantier.document'),
+    ('is_document_employe_attachment_rel'              ,'document_id'   ,'is.document.employe'),
+]:
+    SQL="update ir_attachment a set res_model=%s, res_id=r."+colonne+" from "+table+" r where a.id=r.attachment_id and coalesce(a.res_id,0)=0"
+    cr_dst.execute(SQL,[modele])
+cnx_dst.commit()
+
+# Pièce jointe principale (vidée en 9.g) : valeurs de la v15 avec les nouveaux ids
+for table in ['account_move','account_payment','hr_employee','is_planning','is_planning_pdf']:
+    cr_src.execute("select id,message_main_attachment_id from "+table+" where message_main_attachment_id is not null")
+    for row in cr_src.fetchall():
+        if row['message_main_attachment_id'] in ids_pj:
+            cr_dst.execute("update "+table+" set message_main_attachment_id=%s where id=%s",[ids_pj[row['message_main_attachment_id']],row['id']])
+cnx_dst.commit()
+
+# Pièces jointes des messages (2 sur des factures) : nouveaux ids des messages (9.i) et des pièces jointes
+cr_src.execute("select message_id,attachment_id from message_attachment_rel")
+for row in cr_src.fetchall():
+    if row['message_id'] in ids_messages and row['attachment_id'] in ids_pj:
+        cr_dst.execute("insert into message_attachment_rel (message_id,attachment_id) values (%s,%s) on conflict do nothing",[ids_messages[row['message_id']],ids_pj[row['attachment_id']]])
+cnx_dst.commit()
 #******************************************************************************
