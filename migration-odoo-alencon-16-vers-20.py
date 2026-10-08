@@ -97,11 +97,15 @@ MigrationChatter(db_src,db_dst,['res.partner','res.company','hr.employee','hr.de
 
 
 # ** Pièces jointes ***********************************************************
-# CSV des relevés des quantités produites (00462 et 00463). Fichiers copiés depuis le filestore d'alencon16
-# (absent sur ubuntu2604 : les fichiers manquants sont affichés). Le logo de la société est à remettre à la main
-# (Paramètres / Sociétés) : en v20, logo_web est une pièce jointe calculée à partir de l'image du partenaire
-# En attente de la récupération du filestore d'alencon16
-# MigrationPiecesJointes(db_src,db_dst,"res_model='is.releve.qt.produite'")
+# Le filestore de production (odoo16) est copié par rsync directement dans le filestore d'alencon20
+# (migration-odoo-alencon-16-vers-20.sh) => données seulement, store_fname conservé (copier_fichiers=False)
+# CSV des relevés des quantités produites : ~1430, un par relevé
+MigrationPiecesJointes(db_src,db_dst,"res_model='is.releve.qt.produite'",copier_fichiers=False)
+# Images des partenaires (logo de la société sur le partenaire 1, avatar de l'administrateur), mêmes ids de partenaires
+# Le logo de la barre de menus est à remettre à la main (Paramètres / Sociétés) : en v20, logo_web est une pièce jointe
+# calculée à partir de l'image du partenaire. Non repris : is_logo (champ d'is_plastigray16, absent en v20, même image
+# que le partenaire 1), favicon (champ absent en v20), images des icônes de paiement, des menus et des vues (techniques)
+MigrationPiecesJointes(db_src,db_dst,"res_model='res.partner' and res_field like 'image_%'",copier_fichiers=False)
 #******************************************************************************
 
 
