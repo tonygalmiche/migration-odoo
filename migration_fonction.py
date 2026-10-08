@@ -11,7 +11,7 @@ import html
 import shutil
 #from xmlrpc import client as xmlrpclib
 import xmlrpc.client
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 
@@ -472,7 +472,9 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
     - work_contact_id (v16+) absent en v14/v15 : repris du partenaire de l'utilisateur lié s'il y en a un
     - hr_responsible_id : utilisateur responsable RH des versions (obligatoire en v20, inexistant avant)
     - work_location_id : obligatoire dans la fiche en v20 => "Office" (hr.home_work_office) si absent de la source
-    Non repris (affiché en fin de traitement s'il y a des données) : contrats (hr_contract), départs,
+    - départs (departure_date, motif et description de l'employé) : un hr_employee_departure déjà appliqué par
+      employé parti, lié à sa version (datée au plus tard la veille du départ, sinon départ refusé en v20)
+    Non repris (affiché en fin de traitement s'il y a des données) : contrats (hr_contract),
     lieux de travail (hr_work_location, ou texte libre work_location en v14), calendriers absents de la destination
     (remplacés par le calendrier de la société)."""
     cnx_src,cr_src=GetCR(db_src)
@@ -554,11 +556,15 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
             calendar_id = company['resource_calendar_id']
         work_location_id = v('work_location_id') if v('work_location_id') in lieux_dst else lieu_defaut
         create_date = row['create_date'] or datetime.now()
+        date_version = create_date.date()
+        # Départ v20 refusé s'il n'y a pas de version commençant avant la date de départ
+        if v('departure_date') and date_version >= v('departure_date'):
+            date_version = v('departure_date') - timedelta(days=1)
         vals = {
             'employee_id'            : row['id'],
             'company_id'             : row['company_id'],
             'active'                 : True,
-            'date_version'           : create_date.date(),
+            'date_version'           : date_version,
             'last_modified_date'     : datetime.now(),
             'last_modified_uid'      : hr_responsible_id,
             'hr_responsible_id'      : hr_responsible_id,
@@ -604,10 +610,54 @@ def MigrationHrEmployee(db_src,db_dst,hr_responsible_id=2):
     cnx_dst.commit()
     SetSequence(cr_dst,cnx_dst,'hr_version')
 
+    # ** Départs : champs de l'employé avant la v19, table hr_employee_departure liée à la version depuis ***
+    cr_dst.execute("delete from hr_employee_departure")
+    cnx_dst.commit()
+    if 'departure_date' in champs_src:
+        # Motifs : correspondance par identifiant externe (departure_fired...), sinon même id, sinon le 1er motif
+        cr_dst.execute("select id from hr_departure_reason order by sequence,id")
+        motifs_dst = [row['id'] for row in cr_dst.fetchall()]
+        motifs = {}
+        if 'departure_reason_id' in champs_src:
+            cr_src.execute("""
+                select r.id, d.name as xmlid from hr_departure_reason r
+                left join ir_model_data d on d.model='hr.departure.reason' and d.res_id=r.id
+            """)
+            for row in cr_src.fetchall():
+                id = row['xmlid'] and ExternalId2Id(cr_dst,row['xmlid'],module='hr',model='hr.departure.reason')
+                motifs[row['id']] = id or (row['id'] if row['id'] in motifs_dst else motifs_dst[0])
+        cr_src.execute("select * from hr_employee where departure_date is not null order by id")
+        for row in cr_src.fetchall():
+            v = lambda champ: row[champ] if champ in champs_src else None
+            if 'departure_reason_id' in champs_src:
+                departure_reason_id = motifs.get(v('departure_reason_id')) or motifs_dst[0]
+            else: # v14 : sélection fired / resigned / retired
+                departure_reason_id = ExternalId2Id(cr_dst,'departure_'+(v('departure_reason') or ''),module='hr',model='hr.departure.reason') or motifs_dst[0]
+            # Départ déjà appliqué (employé archivé) : apply_date renseignée pour que le cron ne le traite pas
+            lendemain = row['departure_date'] + timedelta(days=1)
+            vals = {
+                'employee_id'          : row['id'],
+                'departure_reason_id'  : departure_reason_id,
+                'departure_description': v('departure_description'),
+                'dismissal_date'       : row['departure_date'],
+                'departure_date'       : row['departure_date'],
+                'action_date'          : lendemain,
+                'apply_date'           : lendemain,
+                'create_uid'           : row['write_uid'],
+                'create_date'          : row['write_date'],
+                'write_uid'            : row['write_uid'],
+                'write_date'           : row['write_date'],
+            }
+            SQL="insert into hr_employee_departure ("+','.join(vals)+") values ("+','.join(['%s']*len(vals))+") returning id"
+            cr_dst.execute(SQL,list(vals.values()))
+            departure_id = cr_dst.fetchone()['id']
+            cr_dst.execute("update hr_version set departure_id=%s where employee_id=%s",[departure_id,row['id']])
+        cnx_dst.commit()
+    SetSequence(cr_dst,cnx_dst,'hr_employee_departure')
+
     # ** Données non reprises ****************************************************
     controles = [
         ("Contrats (hr_contract)"                , "select count(*) as nb from hr_contract"),
-        ("Employés avec une date de départ"      , "select count(*) as nb from hr_employee where departure_date is not null"),
         ("Lieux de travail (hr_work_location)"   , "select count(*) as nb from hr_work_location"),
         ("Lieux de travail en texte libre (v14)" , "select count(*) as nb from hr_employee where coalesce(work_location,'')<>''"),
     ]
