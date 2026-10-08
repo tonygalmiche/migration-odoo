@@ -102,9 +102,8 @@ MigrationChatter(db_src,db_dst,['res.partner','res.company','hr.employee','hr.de
 # CSV des relevés des quantités produites : ~1430, un par relevé
 MigrationPiecesJointes(db_src,db_dst,"res_model='is.releve.qt.produite'",copier_fichiers=False)
 # Images des partenaires (logo de la société sur le partenaire 1, avatar de l'administrateur), mêmes ids de partenaires
-# Le logo de la barre de menus est à remettre à la main (Paramètres / Sociétés) : en v20, logo_web est une pièce jointe
-# calculée à partir de l'image du partenaire. Non repris : is_logo (champ d'is_plastigray16, absent en v20, même image
-# que le partenaire 1), favicon (champ absent en v20), images des icônes de paiement, des menus et des vues (techniques)
+# Non repris : is_logo (champ d'is_plastigray16, absent en v20, même image que le partenaire 1), favicon (champ absent
+# en v20), images des icônes de paiement, des menus et des vues (techniques)
 MigrationPiecesJointes(db_src,db_dst,"res_model='res.partner' and res_field like 'image_%'",copier_fichiers=False)
 #******************************************************************************
 
