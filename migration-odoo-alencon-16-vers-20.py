@@ -112,7 +112,7 @@ MigrationPiecesJointes(db_src,db_dst,"res_model='res.partner' and res_field like
 
 
 # A supprimer à la fin
-sys.exit()
+#sys.exit()
 
 
 # ** Tables diverses (5mn) ****************************************************
@@ -169,4 +169,16 @@ for table in tables:
 # Vidées ensemble (TRUNCATE) puis rechargées par COPY FREEZE : voir MigrationTablesTruncate
 # is_presse_cycle_of_rel référence is_of : is_of doit donc être reprise avant (liste ci-dessus)
 MigrationTablesTruncate(db_src,db_dst,["is_presse_cycle","is_presse_cycle_of_rel"])
+#******************************************************************************
+
+
+# ** Période de test : dossier d'export du relevé des quantités produites *****
+# En v16 : partage Silog (/net/srv-silog/THEIA SUIVI DE PROD/EchangeTheiaSilog), repris avec res_company
+# => remis sur un dossier local, sinon les relevés validés pendant les tests partiraient dans Silog
+# A la bascule : remettre le dossier de la v16 dans la société (Documentation/alencon/partage-silog-autofs.md)
+SQL="""
+    update res_company set is_dossier_releve_qt_produite='/var/tmp/';
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
