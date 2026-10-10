@@ -254,6 +254,67 @@ MigrationIrModelData(db_src,db_dst,['product.category','product.attribute','prod
 #******************************************************************************
 
 
+# ** Configuration du stock ***************************************************
+# Entrepôt, emplacements (60), types d'opérations (9), routes (7), règles (10) copiés avec les ids de la v16 (ids
+# différents en v20 : WH/Stock = 8 en v16, 6 en v20) ; correspondance par rôle avec ceux créés par la v20 pour recaler
+# ses références (société, emplacements par défaut, identifiants externes) ; types Contrôle qualité, Stockage et
+# Correspondance de la v20 recréés (utilisés par l'entrepôt v20) ; séquences des types recalées sur la v16 (RCP, BL...)
+# Emplacements vues Physical Locations, Partners, Virtual Locations (supprimés en v18) retirés
+MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={'stock_location_inter_company':'stock_location_inter_wh'})
+MigrationTable(db_src,db_dst,'stock_route_warehouse')
+MigrationTable(db_src,db_dst,'stock_route_product')                               # routes des articles (4 428)
+MigrationTable(db_src,db_dst,'stock_putaway_rule',default={'sublocation':'no'})   # règles de rangement (10)
+
+# Emplacement des charges des partenaires (3, WH/JURAWOOD) : non repris avec les partenaires (emplacements pas encore là)
+cr_src.execute("select id,is_emplacement_charge_id from res_partner where is_emplacement_charge_id is not null")
+for row in cr_src.fetchall():
+    cr_dst.execute("update res_partner set is_emplacement_charge_id=%s where id=%s",[row['is_emplacement_charge_id'],row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Lots et stock ************************************************************
+# Lots (5 714) : product_uom_id supprimé en v20
+MigrationTable(db_src,db_dst,'stock_lot')
+# Quants (16 597, dont 80 avec une quantité réservée : à vérifier avec la reprise des mouvements)
+MigrationTable(db_src,db_dst,'stock_quant')
+# Emplacement du lot (nouveau en v20, stocké) : l'emplacement de ses quantités positives s'il n'y en a qu'un (calcul d'Odoo)
+SQL="""
+    update stock_lot l set location_id=q.location_id
+    from (
+        select lot_id, min(location_id) as location_id from stock_quant
+        where quantity>0 and lot_id is not null group by lot_id having count(distinct location_id)=1
+    ) q
+    where q.lot_id=l.id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Règles de réapprovisionnement (370) : qty_to_order => qty_to_order_manual ; nouvelles colonnes obligatoires en v20 :
+# valeurs par défaut d'Odoo ; vendor_id supprimé (même fournisseur que supplier_id)
+# Non repris : qty_multiple (« Multiple » : unité en v20) : 2 règles à revoir (ROULEAU 330 POINTES par 20, EPICEA DU NORD 25*75 par 2)
+MigrationTable(db_src,db_dst,'stock_warehouse_orderpoint',rename={'qty_to_order':'qty_to_order_manual'},default={
+    'min_max_based_on'       : 'one_month',
+    'min_max_based_on_factor': 100,
+    'daily_demand'           : 0,
+})
+
+# Inventaires (module is_jurabotec20) et tables is_* du stock (charges, scans)
+for table in [
+    'is_inventaire',
+    'stock_inventory',
+    'stock_inventory_line',
+    'is_creation_charge',
+    'is_deplacement_charge',
+    'is_scan_inventaire',
+    'is_scan_inventaire_ligne',
+    'is_scan_inventaire_ligne_stock_location_rel',
+    'is_scan_deplacement_charge',
+]:
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
 # ** Thème de l'entreprise (is_theme_entreprise) ******************************
 # Couleurs choisies dans jurabotec20 le 10/10/2026 (pas de thème en v16)
 SQL="""

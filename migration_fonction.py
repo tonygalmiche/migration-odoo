@@ -1922,7 +1922,9 @@ def MigrationUnites(db_src,db_dst):
 
     # Unités de la destination absentes de la source : rattachées à la référence de même racine (racines d'abord)
     nouvel_id = max(u['id'] for u in unites)
-    for id_dst in sorted([i for i in dst if i not in anciens], key=lambda i: len(dst[i]['parent_path'])):
+    # Ordre stable d'un lancement à l'autre (mêmes ids) : racines d'abord, puis par identifiant externe
+    noms_xmlids = {row['res_id']:row['name'] for row in xmlids_dst}
+    for id_dst in sorted([i for i in dst if i not in anciens], key=lambda i: (dst[i]['parent_path'].count('/'),noms_xmlids.get(i,''),i)):
         e = dst[id_dst]
         nouvel_id+=1
         anciens[id_dst] = nouvel_id
@@ -2016,3 +2018,283 @@ def MigrationIrPropertyJsonb(db_src,db_dst,model,property_src,field_dst=False,co
         nb+=1
     cnx_dst.commit()
     print("MigrationIrPropertyJsonb : %s.%s => %s : %s valeurs"%(model,property_src,field_dst,nb))
+
+
+def GetClesEtrangeres(cr,table):
+    """Dictionnaire {colonne: table référencée} des clés étrangères d'une table"""
+    SQL="""
+        select a.attname as col, cf.relname as ref
+        from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
+        join pg_attribute a on a.attrelid=c.conrelid and a.attnum=c.conkey[1]
+        where c.contype='f' and t.relname=%s
+    """
+    cr.execute(SQL,[table])
+    return {row['col']:row['ref'] for row in cr.fetchall()}
+
+
+def CopierIrSequence(cr_src,cr_dst,id_src):
+    """Crée dans la destination une copie de la séquence id_src de la source (avec son compteur) et retourne son id"""
+    cr_src.execute("select * from ir_sequence where id=%s",[id_src])
+    seq = cr_src.fetchone()
+    champs = [c for c in GetTypesChamps(cr_dst,'ir_sequence') if c in seq and c!='id']
+    valeurs = [json.dumps(seq[c]) if isinstance(seq[c],(dict,list)) else seq[c] for c in champs]
+    cr_dst.execute("insert into ir_sequence ("+','.join(champs)+") values ("+','.join(['%s']*len(champs))+") returning id",valeurs)
+    id_dst = cr_dst.fetchone()['id']
+    suivant = seq['number_next']
+    if seq['implementation']=='standard':
+        cr_src.execute("select last_value, is_called from ir_sequence_%03d"%id_src)
+        row = cr_src.fetchone()
+        suivant = row['last_value']+1 if row['is_called'] else row['last_value']
+        cr_dst.execute("create sequence ir_sequence_%03d increment by %%s start with %%s"%id_dst,[seq['number_increment'],suivant])
+    return id_dst
+
+
+def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
+    """Configuration du stock d'une version ≤ 16 vers Odoo 20, copiée avec les ids de la source (comme MigrationUnites) :
+    entrepôts, emplacements, types d'opérations, routes, règles (tables stock_warehouse, stock_location,
+    stock_picking_type, stock_route, stock_rule). Les tables qui les utilisent (quants, lots, mouvements, transferts,
+    articles...) se copient ensuite sans conversion.
+    1. Correspondance des enregistrements créés par la v20 avec ceux de la source, par rôle : colonnes communes de
+       l'entrepôt (lot_stock_id, in_type_id, reception_route_id, buy_pull_id...), identifiants externes (même nom, ou
+       correspondances_xmlids : {nom v20: nom source}), colonnes de la société (internal_transit_location_id), puis
+       emplacement de même usage s'il n'y en a qu'un (ajustement d'inventaire hors rebut, production)
+    2. Copie des tables de la source (MigrationTable)
+    3. Enregistrements de la v20 sans équivalent mais utilisés par une colonne ajoutée en v20 (types d'opérations
+       Contrôle qualité, Stockage, Correspondance de stock_warehouse.qc_type_id...) : recréés avec un nouvel id
+    4. Colonnes ajoutées en v20 (impression automatique, stratégie d'expédition...) : valeurs de l'enregistrement v20
+       correspondant ; séquences des types d'opérations : celle du type v20 correspondant, recalée sur la source
+       (préfixe, compteur) ; sinon copiée de la source
+    5. Références de la v20 recalées : colonnes de res_company, ir_default (emplacements par défaut des partenaires et
+       des articles), identifiants externes (ceux sans équivalent sont supprimés)
+    6. Emplacements vues de la source supprimés en v18 (Physical Locations, Partners, Virtual Locations) : retirés,
+       leurs enfants deviennent des racines comme en v20 ; complete_name et parent_path recalculés
+    Relançable : les tables sont recopiées à chaque lancement (à lancer sur une base dont la configuration du stock
+    est celle créée par la v20 : après un premier lancement, la correspondance par rôle retrouve les mêmes ids)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    tables = ['stock_location','stock_picking_type','stock_route','stock_rule','stock_warehouse']
+    modeles = {t:t.replace('_','.') for t in tables}
+
+    # Destination avant la copie
+    dst = {}
+    for t in tables:
+        cr_dst.execute("select * from "+t)
+        dst[t] = {row['id']:row for row in cr_dst.fetchall()}
+    src = {}
+    for t in tables:
+        cr_src.execute("select * from "+t)
+        src[t] = {row['id']:row for row in cr_src.fetchall()}
+    fk = {t:GetClesEtrangeres(cr_dst,t) for t in tables}
+    corr = {t:{} for t in tables} # id v20 => id source
+
+    # 1. Correspondance par rôle
+    for w20 in dst['stock_warehouse'].values():
+        w16 = next((w for w in src['stock_warehouse'].values() if w['code']==w20['code']), None)
+        if not w16:
+            continue
+        corr['stock_warehouse'][w20['id']] = w16['id']
+        for col,ref in fk['stock_warehouse'].items():
+            if ref in corr and col in w16 and w20[col] and w16[col]:
+                corr[ref].setdefault(w20[col],w16[col])
+    for t in tables:
+        cr_src.execute("select name,res_id from ir_model_data where model=%s",[modeles[t]])
+        xmlids_src = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+        cr_dst.execute("select name,res_id from ir_model_data where model=%s",[modeles[t]])
+        for row in cr_dst.fetchall():
+            nom = correspondances_xmlids.get(row['name'],row['name'])
+            if nom in xmlids_src:
+                corr[t].setdefault(row['res_id'],xmlids_src[nom])
+    cr_dst.execute("select * from res_company")
+    societes_dst = {row['id']:row for row in cr_dst.fetchall()}
+    cr_src.execute("select * from res_company")
+    societes_src = {row['id']:row for row in cr_src.fetchall()}
+    for col,ref in GetClesEtrangeres(cr_dst,'res_company').items():
+        if ref in corr:
+            for id,s in societes_dst.items():
+                if s[col] and id in societes_src and societes_src[id].get(col):
+                    corr[ref].setdefault(s[col],societes_src[id][col])
+    for l in dst['stock_location'].values():
+        if l['id'] in corr['stock_location']:
+            continue
+        candidats = [s for s in src['stock_location'].values() if s['usage']==l['usage'] and s['company_id']==l['company_id']
+                     and not s.get('scrap_location') and s['id'] not in corr['stock_location'].values()]
+        if len(candidats)==1:
+            corr['stock_location'][l['id']] = candidats[0]['id']
+
+    # 2. Copie des tables de la source
+    # Types d'opérations : emplacements par défaut obligatoires en v20 (vides possibles en v16, ex : type Retours)
+    # => 0 pendant la copie, puis calculés comme Odoo 20 (_compute_default_location_src_id / _dest_id)
+    for t in tables:
+        defaut = {'move_type':'direct','default_location_src_id':0,'default_location_dest_id':0} if t=='stock_picking_type' else {}
+        MigrationTable(db_src,db_dst,t,default=defaut)
+    cr_src.execute("select name,res_id from ir_model_data where module='stock' and name in ('stock_location_suppliers','stock_location_customers')")
+    emplacements = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+    SQL="""
+        update stock_picking_type t set
+            default_location_src_id = case when t.default_location_src_id<>0 then t.default_location_src_id
+                when t.code='incoming' then %s else w.lot_stock_id end,
+            default_location_dest_id = case when t.default_location_dest_id<>0 then t.default_location_dest_id
+                when t.code='outgoing' then %s else w.lot_stock_id end
+        from stock_warehouse w
+        where w.id=t.warehouse_id and (t.default_location_src_id=0 or t.default_location_dest_id=0)
+    """
+    cr_dst.execute(SQL,[emplacements.get('stock_location_suppliers'),emplacements.get('stock_location_customers')])
+    cnx_dst.commit()
+
+    # 3. Enregistrements v20 sans équivalent, utilisés par une colonne ajoutée en v20
+    nouveaux = {t:{} for t in tables} # id v20 => nouvel id
+    for t in tables:
+        types_src = GetTypesChamps(cr_src,t)
+        for id20,ancien in corr[t].items():
+            for col,ref in fk[t].items():
+                if col in types_src or ref not in corr:
+                    continue
+                v = dst[t][id20][col]
+                if v and v not in corr[ref] and v not in nouveaux[ref]:
+                    nouveaux[ref][v] = None
+    for t in tables:
+        if not nouveaux[t]:
+            continue
+        cr_dst.execute("select max(id) as id from "+t)
+        id = cr_dst.fetchone()['id']
+        for id20 in nouveaux[t]:
+            id+=1
+            nouveaux[t][id20] = id
+            corr[t][id20] = id
+    for t in tables:
+        for id20,id in nouveaux[t].items():
+            ligne = dict(dst[t][id20])
+            ligne['id'] = id
+            for col,ref in fk[t].items():
+                if ref in corr and ligne[col]:
+                    ligne[col] = corr[ref].get(ligne[col])
+            champs = list(ligne)
+            valeurs = [json.dumps(ligne[c]) if isinstance(ligne[c],(dict,list)) else ligne[c] for c in champs]
+            cr_dst.execute("alter table "+t+" disable trigger all")
+            cr_dst.execute("insert into "+t+" ("+','.join('"%s"'%c for c in champs)+") values ("+','.join(['%s']*len(champs))+")",valeurs)
+            cr_dst.execute("alter table "+t+" enable trigger all")
+            print("MigrationConfigurationStock : %s %s recréé (id %s)"%(t,(ligne.get('name') or {}).get('en_US') if isinstance(ligne.get('name'),dict) else ligne.get('name'),id))
+        SetSequence(cr_dst,cnx_dst,t)
+
+    # 4. Colonnes ajoutées en v20 : valeurs de l'enregistrement v20 correspondant
+    for t in tables:
+        types_src = GetTypesChamps(cr_src,t)
+        ajoutees = [c for c in GetTypesChamps(cr_dst,t) if c not in types_src]
+        for id20,id in corr[t].items():
+            if id20 in nouveaux[t].keys() or id20 not in dst[t]:
+                continue
+            for col in ajoutees:
+                v = dst[t][id20][col]
+                if col in fk[t] and fk[t][col] in corr and v:
+                    v = corr[fk[t][col]].get(v)
+                if v is not None:
+                    cr_dst.execute("update "+t+" set "+col+"=%s where id=%s",[json.dumps(v) if isinstance(v,(dict,list)) else v,id])
+    # Séquences des types d'opérations copiés de la source
+    sequences = {} # séquence source => séquence destination (types qui partagent une séquence)
+    for t16 in src['stock_picking_type'].values():
+        if not t16['sequence_id']:
+            continue
+        if t16['sequence_id'] not in sequences:
+            id20 = next((a for a,b in corr['stock_picking_type'].items() if b==t16['id'] and a in dst['stock_picking_type']), None)
+            seq20 = dst['stock_picking_type'][id20]['sequence_id'] if id20 else None
+            if not seq20 and t16['id'] in dst['stock_picking_type']:
+                # Relance : séquence déjà copiée par un lancement précédent (même type, même préfixe)
+                cr_src.execute("select prefix from ir_sequence where id=%s",[t16['sequence_id']])
+                prefixe = cr_src.fetchone()['prefix']
+                cr_dst.execute("select id from ir_sequence where id=%s and prefix is not distinct from %s",[dst['stock_picking_type'][t16['id']]['sequence_id'],prefixe])
+                row = cr_dst.fetchone()
+                seq20 = row and row['id']
+            if seq20:
+                MigrationIrSequence(db_src,db_dst,id_src=t16['sequence_id'],id_dst=seq20)
+                sequences[t16['sequence_id']] = seq20
+            else:
+                sequences[t16['sequence_id']] = CopierIrSequence(cr_src,cr_dst,t16['sequence_id'])
+        cr_dst.execute("update stock_picking_type set sequence_id=%s where id=%s",[sequences[t16['sequence_id']],t16['id']])
+
+    # 5. Références de la v20 recalées
+    for col,ref in GetClesEtrangeres(cr_dst,'res_company').items():
+        if ref in corr:
+            for id,s in societes_dst.items():
+                if s[col]:
+                    cr_dst.execute("update res_company set "+col+"=%s where id=%s",[corr[ref].get(s[col]),id])
+    # Valeurs par défaut (ir_default) et valeurs par enregistrement (jsonb par société) des champs vers la config :
+    # propriétés de la source (ir_property, ids de la source) : emplacements par défaut des partenaires et des articles...
+    # Les autres ir_default de la v20 sur ces champs sont convertis par la correspondance (supprimés sans équivalent)
+    SQL="""
+        select d.id, d.json_value, f.relation
+        from ir_default d join ir_model_fields f on f.id=d.field_id
+        where f.relation in %s
+    """
+    cr_dst.execute(SQL,[tuple(modeles.values())])
+    for row in cr_dst.fetchall():
+        t = row['relation'].replace('.','_')
+        v = corr[t].get(json.loads(row['json_value']))
+        if v:
+            cr_dst.execute("update ir_default set json_value=%s where id=%s",[json.dumps(v),row['id']])
+        else:
+            cr_dst.execute("delete from ir_default where id=%s",[row['id']])
+    if GetTypesChamps(cr_src,'ir_property'):
+        SQL="""
+            select f.model, f.name, p.res_id, p.value_reference, p.company_id
+            from ir_property p join ir_model_fields f on f.id=p.fields_id
+            where f.relation in %s and p.value_reference is not null
+        """
+        cr_src.execute(SQL,[tuple(modeles.values())])
+        for row in cr_src.fetchall():
+            valeur = int(row['value_reference'].split(',')[1])
+            cr_dst.execute("select id from ir_model_fields where model=%s and name=%s",[row['model'],row['name']])
+            champ = cr_dst.fetchone()
+            if not champ:
+                continue
+            if row['res_id'] is None:
+                cr_dst.execute("delete from ir_default where field_id=%s and user_id is null and condition is null and company_id is not distinct from %s",[champ['id'],row['company_id']])
+                cr_dst.execute("insert into ir_default (field_id,company_id,json_value) values (%s,%s,%s)",[champ['id'],row['company_id'],json.dumps(valeur)])
+            else:
+                table = row['model'].replace('.','_')
+                if row['name'] in GetTypesChamps(cr_dst,table):
+                    SQL="update "+table+" set "+row['name']+"=coalesce("+row['name']+",'{}'::jsonb)||jsonb_build_object(%s,%s) where id=%s"
+                    cr_dst.execute(SQL,[str(row['company_id'] or 1),valeur,int(row['res_id'].split(',')[1])])
+    for t in tables:
+        cr_dst.execute("select id,res_id from ir_model_data where model=%s",[modeles[t]])
+        for row in cr_dst.fetchall():
+            if row['res_id'] in corr[t]:
+                cr_dst.execute("update ir_model_data set res_id=%s where id=%s",[corr[t][row['res_id']],row['id']])
+            else:
+                cr_dst.execute("delete from ir_model_data where id=%s",[row['id']])
+
+    # 6. Emplacements vues supprimés en v18, complete_name et parent_path
+    cr_src.execute("select res_id from ir_model_data where model='stock.location' and name in ('stock_location_locations','stock_location_locations_partner','stock_location_locations_virtual')")
+    vues = [row['res_id'] for row in cr_src.fetchall()]
+    if vues:
+        cr_dst.execute("update stock_location set location_id=null where location_id = any(%s)",[vues])
+        # Vue encore utilisée par des données de la source (ex : déplacements vers « Partners ») : gardée, archivée
+        utilisees = set()
+        cr_src.execute("""
+            select t.relname as tab, a.attname as col
+            from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
+            join pg_attribute a on a.attrelid=c.conrelid and a.attnum=c.conkey[1]
+            where c.contype='f' and cf.relname='stock_location' and not (t.relname='stock_location' and a.attname='location_id')
+        """)
+        for row in cr_src.fetchall():
+            cr_src.execute("select distinct "+row['col']+" as id from "+row['tab']+" where "+row['col']+" = any(%s)",[vues])
+            utilisees |= {r['id'] for r in cr_src.fetchall()}
+        cr_dst.execute("update stock_location set active=false where id = any(%s)",[list(utilisees) or [0]])
+        cr_dst.execute("delete from stock_location where id = any(%s)",[[v for v in vues if v not in utilisees] or [0]])
+        if utilisees:
+            print("MigrationConfigurationStock : emplacements vues gardés (archivés) car utilisés : %s"%sorted(utilisees))
+    SQL="""
+        with recursive noms(id, complete_name) as (
+            select id, name from stock_location where location_id is null
+        union all
+            select l.id, case when l.usage='view' then l.name else n.complete_name||'/'||l.name end
+            from stock_location l join noms n on l.location_id=n.id
+        )
+        update stock_location l set complete_name=n.complete_name from noms n where n.id=l.id
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    parent_store_compute(cr_dst,cnx_dst,'stock_location','location_id')
+    for t in tables:
+        sans = [id20 for id20 in dst[t] if id20 not in corr[t]]
+        print("MigrationConfigurationStock : %s : %s copiés, %s de la v20 sans équivalent non repris %s"%(t,len(src[t]),len(sans),sans))
+    return corr
