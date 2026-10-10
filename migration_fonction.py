@@ -288,7 +288,7 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
                 row[x] = v
             for x in jsons:
                 v=row[x]
-                if v:
+                if v and not isinstance(v,(dict,list)):
                     model=table.replace("_",".")
                     v=GetTraduction(cr_src, model, x, row["id"]) or v
                     val={
@@ -296,6 +296,10 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
                         "fr_FR": v,
                     }
                     row[x]=json.dumps(val)
+            # Colonnes déjà en jsonb dans la source (v16 et plus) : psycopg2 les lit en dict => à réécrire en JSON
+            for x in row:
+                if isinstance(row[x],(dict,list)):
+                    row[x]=json.dumps(row[x])
             writer.writerow(row)
         f.close()
     else:
@@ -1846,3 +1850,169 @@ def RattacherPiecesJointes(db_dst,relations):
         cr_dst.execute(SQL,[modele])
         print("RattacherPiecesJointes : %s : %s pièces jointes rattachées à %s"%(table,cr_dst.rowcount,modele))
     cnx_dst.commit()
+
+
+def MigrationUnites(db_src,db_dst):
+    """Unités de mesure d'une version ≤ 18 vers Odoo 19 / 20 (uom.category supprimé, arborescence relative_uom_id),
+    copiées avec les ids de la source : les tables qui utilisent les unités (articles, lignes de vente, mouvements...)
+    se copient ensuite telles quelles, sans conversion. Voir Documentation/migration-odoo/migration-vers-odoo20.md § 5.2.
+    - chaque unité est rattachée à l'unité de référence de son ancienne catégorie (relative_factor = 1 / factor de la
+      source ; la référence devient une unité racine) : la v20 ne regarde que la racine commune (_has_common_reference)
+      et le facteur absolu (conversions) ; ex : « Boite (1600) » => 1600 Unités
+    - noms, actif, colonnes communes : ceux de la source (traduction vide => nom anglais) ; colonnes ajoutées par la
+      destination (unece_code du Factur-X...) : reprises de l'unité de la destination de même identifiant externe
+    - identifiants externes uom.* : repointés sur les ids de la source (renommés : uom_square_meter => product_uom_square_meter)
+    - unités de la destination absentes de la source (Pack de 6, Minutes, ml, KWH en v20) : recréées avec un nouvel id,
+      sous la référence qui a la même racine dans la destination ; sans elles, les données en noupdate d'autres modules
+      qui les complètent (account_edi_ubl_cii : <record id="uom.product_uom_minute">) tenteraient de les créer au -u,
+      sans nom => erreur
+    - colonnes de la destination qui pointent déjà sur une unité (barcode_rule.associated_uom_id en v20) : converties
+    Relançable : les unités sont supprimées et recopiées à chaque lancement."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+
+    # Destination avant la copie
+    types_src = GetTypesChamps(cr_src,'uom_uom')
+    types_dst = GetTypesChamps(cr_dst,'uom_uom')
+    structure = ['id','name','relative_uom_id','relative_factor','factor','parent_path','sequence']
+    communes  = [c for c in types_dst if c in types_src and c not in structure]   # active, create_uid...
+    ajoutees  = [c for c in types_dst if c not in types_src and c not in structure] # unece_code, package_type_id...
+    cr_dst.execute("select * from uom_uom")
+    dst = {row['id']:row for row in cr_dst.fetchall()}
+    cr_dst.execute("select id,name,res_id from ir_model_data where module='uom' and model='uom.uom'")
+    xmlids_dst = cr_dst.fetchall()
+    id_xmlid_dst = {row['name']:row['res_id'] for row in xmlids_dst}
+    def racine_dst(id):
+        return int(dst[id]['parent_path'].split('/')[0])
+
+    # Unités de la source, références des catégories en premier
+    SQL="""
+        select u.*, d.name as xmlid
+        from uom_uom u left join ir_model_data d on d.model='uom.uom' and d.res_id=u.id and d.module='uom'
+        order by (u.uom_type='reference') desc, u.id
+    """
+    cr_src.execute(SQL)
+    unites = cr_src.fetchall()
+    references = {u['category_id']:u['id'] for u in unites if u['uom_type']=='reference'}
+    lignes = []
+    anciens = {}   # id de la destination avant la copie => nouvel id
+    for u in unites:
+        id_dst = (id_xmlid_dst.get(u['xmlid']) or id_xmlid_dst.get('product_'+u['xmlid'])) if u['xmlid'] else None
+        if id_dst:
+            anciens[id_dst] = u['id']
+        elif u['id'] in dst and u['id'] not in id_xmlid_dst.values():
+            anciens[u['id']] = u['id'] # unité maison déjà copiée par un lancement précédent
+        reference = references[u['category_id']]
+        if u['id']==reference:
+            relative_uom_id, relative_factor, parent_path = None, 1.0, '%s/'%u['id']
+        else:
+            relative_uom_id = reference
+            relative_factor = round(1/float(u['factor']),10) # 1/0.000625 => 1600 et non 1600.0000000000002
+            parent_path = '%s/%s/'%(reference,u['id'])
+        name = dict(u['name'])
+        for lang in name:
+            name[lang] = name[lang] or name.get('en_US') # ex : « m » sans traduction française en v16
+        ligne = {'id':u['id'], 'name':json.dumps(name), 'relative_uom_id':relative_uom_id, 'relative_factor':relative_factor,
+                 'factor':relative_factor, 'parent_path':parent_path, 'sequence':min(int(relative_factor*100.0),1000)}
+        for c in communes:
+            ligne[c] = u[c]
+        for c in ajoutees:
+            ligne[c] = dst[id_dst][c] if id_dst else None
+        lignes.append(ligne)
+
+    # Unités de la destination absentes de la source : rattachées à la référence de même racine (racines d'abord)
+    nouvel_id = max(u['id'] for u in unites)
+    for id_dst in sorted([i for i in dst if i not in anciens], key=lambda i: len(dst[i]['parent_path'])):
+        e = dst[id_dst]
+        nouvel_id+=1
+        anciens[id_dst] = nouvel_id
+        reference = next((references[u['category_id']] for u in unites if u['xmlid'] and
+                         (id_xmlid_dst.get(u['xmlid']) or id_xmlid_dst.get('product_'+u['xmlid'])) in dst and
+                         racine_dst(id_xmlid_dst.get(u['xmlid']) or id_xmlid_dst.get('product_'+u['xmlid']))==racine_dst(id_dst)), None)
+        id_ref_dst = next((i for i,n in anciens.items() if n==reference), None) if reference else None
+        if id_ref_dst:
+            relative_uom_id = reference
+            relative_factor = round(float(e['factor'])/float(dst[id_ref_dst]['factor']),10) # ex : ml = 0.001 L
+            parent_path = '%s/%s/'%(reference,nouvel_id)
+        elif e['relative_uom_id']: # racine elle-même absente de la source (déjà recréée : racines d'abord)
+            relative_uom_id = anciens[racine_dst(id_dst)]
+            relative_factor = float(e['factor'])
+            parent_path = '%s/%s/'%(relative_uom_id,nouvel_id)
+        else:
+            relative_uom_id, relative_factor, parent_path = None, 1.0, '%s/'%nouvel_id
+        ligne = {'id':nouvel_id, 'name':json.dumps(e['name']), 'relative_uom_id':relative_uom_id, 'relative_factor':relative_factor,
+                 'factor':relative_factor, 'parent_path':parent_path, 'sequence':e['sequence']}
+        for c in communes+ajoutees:
+            ligne[c] = e[c]
+        lignes.append(ligne)
+        print("MigrationUnites : %s recréée (id %s)"%(e['name'].get('en_US'),nouvel_id))
+
+    # Copie
+    colonnes = structure+communes+ajoutees
+    cr_dst.execute("alter table uom_uom disable trigger all; delete from uom_uom;")
+    for ligne in lignes:
+        SQL="insert into uom_uom ("+','.join('"%s"'%c for c in colonnes)+") values ("+','.join(['%s']*len(colonnes))+")"
+        cr_dst.execute(SQL,[ligne[c] for c in colonnes])
+    cr_dst.execute("alter table uom_uom enable trigger all")
+
+    # Identifiants externes uom.*
+    for row in xmlids_dst:
+        cr_dst.execute("update ir_model_data set res_id=%s where id=%s",[anciens[row['res_id']],row['id']])
+
+    # Colonnes de la destination qui pointaient sur les anciens ids (en une requête par colonne : pas d'effet de chaîne)
+    changes = {a:b for a,b in anciens.items() if a!=b}
+    if changes:
+        SQL="""
+            select t.relname as tab, a.attname as col
+            from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
+            join pg_attribute a on a.attrelid=c.conrelid and a.attnum=c.conkey[1]
+            where c.contype='f' and cf.relname='uom_uom' and t.relname<>'uom_uom'
+        """
+        cr_dst.execute(SQL)
+        cas = ' '.join('when %s then %s'%(a,b) for a,b in changes.items())
+        ids = ','.join(str(a) for a in changes)
+        for row in cr_dst.fetchall():
+            cr_dst.execute("update "+row['tab']+" set "+row['col']+" = case "+row['col']+" "+cas+" end where "+row['col']+" in ("+ids+")")
+            if cr_dst.rowcount:
+                print("MigrationUnites : %s.%s : %s lignes converties"%(row['tab'],row['col'],cr_dst.rowcount))
+    cnx_dst.commit()
+    SetSequence(cr_dst,cnx_dst,'uom_uom')
+    print("MigrationUnites : %s unités copiées"%len(lignes))
+
+
+def MigrationIrPropertyJsonb(db_src,db_dst,model,property_src,field_dst=False,company_id=1,where=""):
+    """Propriété (ir_property, jusqu'à Odoo 17) => champ jsonb par société (Odoo 18 et plus) : {"1": valeur}.
+    Valeur typée comme le stocke Odoo : id (entier) pour un Many2one, nombre pour un Float / Integer, texte sinon.
+    Seules les valeurs propres à un enregistrement sont reprises (pas la valeur par défaut, res_id vide).
+    Les ids des Many2one sont repris tels quels (même id dans la destination : à convertir ensuite sinon).
+    where : filtre sur la valeur (ex : "value_reference like 'product.pricelist,%'")"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    field_dst = field_dst or property_src
+    table = model.replace('.','_')
+    SQL="""
+        select p.res_id,p.type,p.value_reference,p.value_float,p.value_integer,p.value_text
+        from ir_property p join ir_model_fields f on f.id=p.fields_id
+        where f.model=%s and f.name=%s and p.res_id is not null
+    """
+    if where:
+        SQL+=" and "+where
+    cr_src.execute(SQL,[model,property_src])
+    nb=0
+    for row in cr_src.fetchall():
+        if row['type']=='many2one':
+            if not row['value_reference']:
+                continue
+            valeur = int(row['value_reference'].split(',')[1])
+        elif row['type']=='float':
+            valeur = row['value_float']
+        elif row['type'] in ('integer','boolean'):
+            valeur = row['value_integer']
+        else:
+            valeur = row['value_text']
+        res_id = int(row['res_id'].split(',')[1])
+        SQL="update "+table+" set "+field_dst+"=coalesce("+field_dst+",'{}'::jsonb)||jsonb_build_object(%s,%s::jsonb) where id=%s"
+        cr_dst.execute(SQL,[str(company_id),json.dumps(valeur),res_id])
+        nb+=1
+    cnx_dst.commit()
+    print("MigrationIrPropertyJsonb : %s.%s => %s : %s valeurs"%(model,property_src,field_dst,nb))

@@ -22,7 +22,9 @@ cnx_dst,cr_dst=GetCR(db_dst)
 # Nouvelles colonnes en v20 : valeurs par défaut d'Odoo (autopost_bills, group_rfq et group_on sont obligatoires)
 # Propriétés comptables (comptes, conditions de paiement, positions fiscales) : à reprendre avec la comptabilité
 MigrationTable(db_src,db_dst,'res_partner_title','is_civilite')
-MigrationTable(db_src,db_dst,'res_partner',rename={'title':'is_civilite'},default={
+# is_emplacement_charge_id (3 partenaires, WH/JURAWOOD) : emplacements pas encore repris (ids différents en v20),
+# sinon « Enregistrement inexistant ou supprimé (stock.location(56,)) » sur la fiche => à reprendre avec le stock
+MigrationTable(db_src,db_dst,'res_partner',rename={'title':'is_civilite'},exclure=['is_emplacement_charge_id'],default={
     'autopost_bills'  : 'ask',
     'group_rfq'       : 'default',
     'group_on'        : 'default',
@@ -87,6 +89,12 @@ cr_dst.execute("select column_name from information_schema.columns where table_n
 exclure = [row['column_name'] for row in cr_dst.fetchall()]
 MigrationDonneesTable(db_src,db_dst,'res_company',exclure=exclure)
 
+# Vérification des TVA par VIES (activée en v16) : désactivée, sinon Odoo 20 vérifie tous les partenaires repris qui ont
+# un n° de TVA (531, un appel à VIES toutes les 3 secondes, une seule transaction qui bloque les partenaires)
+# => à réactiver après la bascule (Paramètres / Comptabilité) : les partenaires seront vérifiés au fil des modifications
+cr_dst.execute("update res_company set vat_check_vies=false")
+cnx_dst.commit()
+
 # Adresse de la société dans les en-têtes, slogan (texte en v16, traduisible en v20) et pied de page (déjà traduisible)
 cr_src.execute("select id,company_details,report_header,report_footer from res_company")
 for row in cr_src.fetchall():
@@ -124,6 +132,125 @@ tables=[
 ]
 for table in tables:
     MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
+# ** Unités de mesure *********************************************************
+# Copiées avec les ids de la v16 (34 unités) : les tables qui les utilisent se copient ensuite sans conversion
+# Chaque unité est rattachée à la référence de son ancienne catégorie (mlinéaire => 1 m, Boite (1600) => 1600 Unités...)
+# Identifiants externes uom.* repointés ; Pack de 6, Minutes, ml et KWH (absents de la v16) recréés en 35 à 38 ;
+# barcode_rule.associated_uom_id converti (voir MigrationUnites)
+# Attention : l'unité « mètre » de la v16 est le yard (uom.product_uom_yard, 21 articles), gardée telle quelle (à décider)
+MigrationUnites(db_src,db_dst)
+#******************************************************************************
+
+
+# ** Articles *****************************************************************
+# Catégories (67) : nom texte en v16, traduisible en v20 ; comptes des catégories : à reprendre avec la comptabilité
+MigrationTableJsonb(db_src,db_dst,'product_category')
+parent_store_compute(cr_dst,cnx_dst,'product_category','parent_id')
+
+# Étiquettes (25) : couleur entière en v16, code hexadécimal en v20 => non reprise
+MigrationTable(db_src,db_dst,'product_tag',exclure=['color'])
+MigrationTable(db_src,db_dst,'product_tag_product_template_rel')
+
+# Attributs (Longueur, Traitement, Dimension) et valeurs (229) ; les 5 attributs d'exemple de la v20 sont remplacés
+MigrationTable(db_src,db_dst,'product_attribute',default={'active':True})
+MigrationTable(db_src,db_dst,'product_attribute_value',default={'active':True})
+
+# Modèles d'articles (4 379)
+# sale_delay : nombre en v16, jsonb en v20, toujours à 0 => non repris ; expense_policy => reinvoice_policy (tous à « no »)
+# Nouvelles colonnes obligatoires en v20 : service_tracking, base_unit_count (valeurs par défaut d'Odoo)
+MigrationTable(db_src,db_dst,'product_template',rename={'expense_policy':'reinvoice_policy'},exclure=['sale_delay'],
+    default={'service_tracking':'no','base_unit_count':0})
+# Type « Article stockable » (product) supprimé en v18 => consommable (consu) avec la case « Suivre l'inventaire » (is_storable)
+cr_dst.execute("update product_template set is_storable=(type='product'), type=case when type='product' then 'consu' else type end")
+# Suivi « none » supprimé en v20 (seulement lot et serial) => vide ; sinon « Wrong value for product.template.store_by: 'none' »
+cr_dst.execute("update product_template set tracking=null where tracking='none'")
+# Favoris : priority='1' en v16 => is_favorite en v20 (469 articles)
+cr_src.execute("select id from product_template where priority='1'")
+ids = [row['id'] for row in cr_src.fetchall()]
+cr_dst.execute("update product_template set is_favorite=(id = any(%s))",[ids])
+cnx_dst.commit()
+
+# Variantes (10 000)
+MigrationTable(db_src,db_dst,'product_product',default={'base_unit_count':0})
+cr_dst.execute("update product_product p set is_favorite=t.is_favorite from product_template t where t.id=p.product_tmpl_id")
+cnx_dst.commit()
+
+# Attributs des articles et combinaisons des variantes
+for table in [
+    'product_attribute_product_template_rel',
+    'product_template_attribute_line',
+    'product_attribute_value_product_template_attribute_line_rel',
+    'product_template_attribute_value',
+    'product_variant_combination',
+]:
+    MigrationTable(db_src,db_dst,table)
+
+# Prix de vente des variantes (lst_price) : calculé et stocké en v20 (prix du modèle + suppléments des attributs)
+SQL="""
+    update product_product p set lst_price = t.list_price + coalesce((
+        select sum(v.price_extra)
+        from product_variant_combination c join product_template_attribute_value v on v.id=c.product_template_attribute_value_id
+        where c.product_product_id=p.id
+    ),0)
+    from product_template t where t.id=p.product_tmpl_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Coût des variantes (1 754 valeurs) et responsable des articles : propriétés en v16, champs jsonb par société en v20
+MigrationIrPropertyJsonb(db_src,db_dst,'product.product','standard_price')
+MigrationIrPropertyJsonb(db_src,db_dst,'product.template','responsible_id')
+
+# Listes de prix (12) et lignes : toutes à prix fixe ; discount_policy supprimé en v20
+# Lignes archivées (248) non reprises : plus d'archivage des lignes en v20, elles redeviendraient actives
+MigrationTable(db_src,db_dst,'product_pricelist')
+MigrationTable(db_src,db_dst,'product_pricelist_item',where="t.active")
+# Liste de prix des clients (5 872 partenaires) : propriété en v16, champ jsonb par société en v20
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_product_pricelist','specific_property_product_pricelist')
+
+# Prix fournisseurs (745) : unité d'achat de l'article (uom_po_id, supprimé en v20) => unité du prix fournisseur (obligatoire)
+MigrationTable(db_src,db_dst,'product_supplierinfo',default={'uom_id':1,'discount':0})
+cr_src.execute("select s.id,t.uom_po_id from product_supplierinfo s join product_template t on t.id=s.product_tmpl_id")
+for row in cr_src.fetchall():
+    cr_dst.execute("update product_supplierinfo set uom_id=%s where id=%s",[row['uom_po_id'],row['id']])
+cnx_dst.commit()
+
+# Nomenclatures (429, dont 333 de type « Commande client » d'is_jurabotec20) : product_uom_id => uom_id
+# Non repris (supprimés en v20) : consumption (toutes à « warning »), manual_consumption (33 lignes)
+MigrationTable(db_src,db_dst,'mrp_bom',rename={'product_uom_id':'uom_id'})
+MigrationTable(db_src,db_dst,'mrp_bom_line',rename={'product_uom_id':'uom_id'})
+MigrationTable(db_src,db_dst,'mrp_bom_byproduct',rename={'product_uom_id':'uom_id'})
+
+# Tables is_* liées aux articles
+for table in [
+    'is_product_template_calculateur_operation',
+    'is_qualite_bois_product_template_rel',
+    'is_contrat_fournisseur',
+    'is_contrat_fournisseur_ligne',
+]:
+    MigrationTable(db_src,db_dst,table)
+
+# Ids des devises : ids de la v16 => ids de la v20 (EUR = 1 en v16, 126 en v20)
+MigrationDevisesParCode(db_src,db_dst,['product_template','product_pricelist','product_pricelist_item','product_supplierinfo'])
+
+# Identifiants externes : catégories renommées en v20 (product_category_all => product_category_goods...),
+# attributs d'exemple de la v20 (pa_brand, pa_color...) supprimés
+cr_src.execute("select name,res_id from ir_model_data where model='product.category'")
+categories = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+MigrationIrModelData(db_src,db_dst,['product.category','product.attribute','product.pricelist'],correspondances={
+    'product.category': {
+        'product_category_goods'   : categories.get('product_category_all'),
+        'product_category_expenses': categories.get('cat_expense'),
+        'product_category_services': categories.get('product_category_1'),
+    },
+})
+
+# A reprendre avec la comptabilité : taxes des articles (product_taxes_rel, product_supplier_taxes_rel : ids des taxes
+# différents en v20), comptes des articles et des catégories
+# A reprendre avec les pièces jointes : images, plans (product_template_is_plan_rel), FDS (product_template_is_fds_rel)
 #******************************************************************************
 
 
