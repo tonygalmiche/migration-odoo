@@ -525,6 +525,274 @@ for code in ['sale.order','purchase.order','stock.lot.serial','is.contrat.fourni
 #******************************************************************************
 
 
+# ** Paramètres comptables ****************************************************
+# Plan comptable (1 905 comptes), groupes de taxes, taxes (69), positions fiscales, journaux (10) de la v16 copiés avec
+# leurs ids à la place de ceux créés par l10n_fr en v20 (ids différents) ; colonnes ajoutées par la v20 (codes Factur-X
+# des taxes, comptes de stock...) reprises de l'enregistrement v20 équivalent ; références de la v20 recalées
+# Voir Documentation/migration-odoo/migration-vers-odoo20.md § 3.7 et § 5.4
+
+# Lignes v20 et correspondance par identifiant externe, avant la copie
+avant, corr = {}, {}
+for table,suffixes in [('account_account',[]),('account_tax_group',[]),('account_tax',['_TTC','_ttc']),('account_fiscal_position',[])]:
+    avant[table], corr[table] = LireAvantCopie(db_src,db_dst,table,suffixes)
+avant['account_journal'], _ = LireAvantCopie(db_src,db_dst,'account_journal')
+# Journaux : pas d'identifiant externe en v16 => correspondance par code (FAC, OD, EXCH, CABA, BNK1, STJ), sinon par type
+# s'il n'y en a qu'un (achats : FACTU en v16, FACTURE en v20)
+cr_src.execute("select id,code,type from account_journal")
+journaux_src = cr_src.fetchall()
+corr['account_journal'] = {}
+for j20 in avant['account_journal'].values():
+    j16 = [j for j in journaux_src if j['code']==j20['code']] or [j for j in journaux_src if j['type']==j20['type']]
+    if len(j16)==1 and j16[0]['id'] not in corr['account_journal']:
+        corr['account_journal'][j16[0]['id']] = j20['id']
+print("Journaux (id v16 : id v20) : %s"%corr['account_journal'])
+inverse = {t:{id20:id_src for id_src,id20 in sorted(c.items(),reverse=True)} for t,c in corr.items()} # id v20 => id v16
+
+# Tables de la v20 liées aux anciens comptes et taxes, sans équivalent repris
+for table in [
+    'account_tax_filiation_rel',                # taxes groupées (aucune)
+    'account_fiscal_position_account',          # correspondances de comptes (aucune)
+    'account_fiscal_position_account_tax_rel',  # recréées plus bas à partir de la v16
+    'account_tax_alternatives',                 # recréées plus bas à partir de la v16
+    'account_reconcile_model_line',             # modèles de rapprochement : format changé, pas de relevés bancaires
+    'account_reconcile_model',
+]:
+    cr_dst.execute("delete from "+table)
+cnx_dst.commit()
+
+# Comptes : nom traduisible, code => code_store (par société), deprecated => active, société => account_account_res_company_rel
+MigrationTableJsonb(db_src,db_dst,'account_account')
+# Colonnes ajoutées par la v20 (description, comptes de stock...) d'abord : code_store et active sont posés juste après
+CompleterColonnesV20(db_src,db_dst,'account_account',avant['account_account'],corr['account_account'],inverse)
+cr_src.execute("select id,code,deprecated,company_id from account_account")
+comptes = cr_src.fetchall()
+cr_dst.execute("delete from account_account_res_company_rel")
+execute_values(cr_dst,"""
+    update account_account a set code_store=jsonb_build_object('1',s.code), active=not s.deprecated
+    from (values %s) as s(id,code,deprecated) where s.id=a.id
+""",[(row['id'],row['code'],bool(row['deprecated'])) for row in comptes],page_size=5000)
+execute_values(cr_dst,"insert into account_account_res_company_rel (account_account_id,res_company_id) values %s",
+    [(row['id'],row['company_id'] or 1) for row in comptes])
+cnx_dst.commit()
+parent_store_compute(cr_dst,cnx_dst,'account_account','parent_id') # hiérarchie des comptes (parent_path avec les ids v16)
+MigrationTable(db_src,db_dst,'account_account_tax_default_rel')
+
+# Groupes de taxes (société obligatoire en v20) et taxes : price_include => price_include_override (vide = réglage de la société)
+MigrationTableJsonb(db_src,db_dst,'account_tax_group',default={'company_id':1})
+CompleterColonnesV20(db_src,db_dst,'account_tax_group',avant['account_tax_group'],corr['account_tax_group'],inverse)
+MigrationTableJsonb(db_src,db_dst,'account_tax')
+# Colonnes ajoutées par la v20 (codes Factur-X, mentions) d'abord : price_include_override posé juste après,
+# is_domestic recalculé avec les positions fiscales
+CompleterColonnesV20(db_src,db_dst,'account_tax',avant['account_tax'],corr['account_tax'],inverse)
+cr_src.execute("select id from account_tax where price_include")
+cr_dst.execute("update account_tax set price_include_override=case when id = any(%s) then 'tax_included' end",[[row['id'] for row in cr_src.fetchall()]])
+cnx_dst.commit()
+# Lignes de répartition : invoice_tax_id / refund_tax_id => tax_id + document_type
+MigrationTable(db_src,db_dst,'account_tax_repartition_line',default={'document_type':'invoice'})
+cr_src.execute("select id,invoice_tax_id,refund_tax_id from account_tax_repartition_line")
+execute_values(cr_dst,"""
+    update account_tax_repartition_line r set tax_id=s.tax_id, document_type=s.document_type
+    from (values %s) as s(id,tax_id,document_type) where s.id=r.id
+""",[(row['id'],row['invoice_tax_id'] or row['refund_tax_id'],'invoice' if row['invoice_tax_id'] else 'refund') for row in cr_src.fetchall()])
+cnx_dst.commit()
+
+# Positions fiscales (4) ; correspondances de taxes (50) : en v20, portées par la taxe de remplacement
+MigrationTableJsonb(db_src,db_dst,'account_fiscal_position')
+CompleterColonnesV20(db_src,db_dst,'account_fiscal_position',avant['account_fiscal_position'],corr['account_fiscal_position'],inverse)
+cr_src.execute("select position_id,tax_src_id,tax_dest_id from account_fiscal_position_tax where tax_dest_id is not null")
+for row in cr_src.fetchall():
+    cr_dst.execute("insert into account_fiscal_position_account_tax_rel (account_tax_id,account_fiscal_position_id) values (%s,%s) on conflict do nothing",[row['tax_dest_id'],row['position_id']])
+    cr_dst.execute("insert into account_tax_alternatives (dest_tax_id,src_tax_id) values (%s,%s) on conflict do nothing",[row['tax_dest_id'],row['tax_src_id']])
+cr_dst.execute("update account_tax t set is_domestic = not exists (select 1 from account_fiscal_position_account_tax_rel r where r.account_tax_id=t.id)")
+cr_dst.execute("update account_fiscal_position set is_domestic=false")
+cnx_dst.commit()
+
+# Journaux (10) : alias de messagerie non repris ; modes de paiement des journaux
+MigrationTableJsonb(db_src,db_dst,'account_journal',default={'invoice_reference_type':'invoice','invoice_reference_model':'odoo'})
+cr_dst.execute("update account_journal set alias_id=null")
+cnx_dst.commit()
+CompleterColonnesV20(db_src,db_dst,'account_journal',avant['account_journal'],corr['account_journal'],inverse)
+MigrationTable(db_src,db_dst,'account_payment_method_line')
+
+# Étiquettes des comptes et des lignes de taxes (déclaration de TVA) : étiquettes de la v20, liens convertis par nom
+MigrationEtiquettesTaxes(db_src,db_dst,[
+    ('account_account_account_tag','account_account_id'),
+    ('account_account_tag_account_tax_repartition_line_rel','account_tax_repartition_line_id'),
+])
+
+# Devises : EUR = 1 en v16, 126 en v20
+MigrationDevisesParCode(db_src,db_dst,['account_account','account_journal'])
+
+# Champs comptables de la société et valeurs par défaut (comptes clients / fournisseurs, comptes des catégories,
+# journal de stock...) : valeur de la v16 (colonne de la société, propriété sans res_id), sinon valeur de la v20
+# convertie par la correspondance (champs ajoutés en v20 : arrondis l10n_fr, acompte...), sinon vidée
+tables_compta = {'account_account','account_tax','account_journal','account_fiscal_position','account_tax_group'}
+colonnes_src = GetTypesChamps(cr_src,'res_company')
+cr_src.execute("select * from res_company where id=1")
+societe_src = cr_src.fetchone()
+cr_dst.execute("select * from res_company where id=1")
+societe_dst = cr_dst.fetchone()
+for colonne,ref in GetClesEtrangeres(cr_dst,'res_company').items():
+    if ref in tables_compta:
+        valeur = societe_src[colonne] if colonne in colonnes_src else inverse.get(ref,{}).get(societe_dst[colonne])
+        cr_dst.execute("update res_company set "+colonne+"=%s where id=1",[valeur])
+SQL="""
+    select d.id, f.model, f.name, f.relation, d.json_value
+    from ir_default d join ir_model_fields f on f.id=d.field_id
+    where f.relation in ('account.account','account.journal','account.tax','account.fiscal.position')
+"""
+cr_dst.execute(SQL)
+for row in cr_dst.fetchall():
+    cr_src.execute("""
+        select p.value_reference from ir_property p join ir_model_fields f on f.id=p.fields_id
+        where f.model=%s and f.name=%s and p.res_id is null and p.value_reference is not null
+    """,[row['model'],row['name']])
+    prop = cr_src.fetchone()
+    valeur = int(prop['value_reference'].split(',')[1]) if prop else inverse.get(row['relation'].replace('.','_'),{}).get(json.loads(row['json_value']))
+    if valeur:
+        cr_dst.execute("update ir_default set json_value=%s where id=%s",[json.dumps(valeur),row['id']])
+    else:
+        cr_dst.execute("delete from ir_default where id=%s",[row['id']])
+cnx_dst.commit()
+
+# Propriétés par enregistrement (ir_property en v16 => colonnes jsonb par société en v20)
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_account_receivable_id')
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_account_payable_id')
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_account_position_id')   # 16 partenaires
+MigrationIrPropertyJsonb(db_src,db_dst,'product.template','property_account_income_id')
+MigrationIrPropertyJsonb(db_src,db_dst,'product.template','property_account_expense_id')
+MigrationIrPropertyJsonb(db_src,db_dst,'product.category','property_account_income_categ_id')   # 54 catégories
+MigrationIrPropertyJsonb(db_src,db_dst,'product.category','property_account_expense_categ_id')  # 49 catégories
+
+# Taxes des articles, des lignes de commande de vente et d'achat (ids des taxes de la v16)
+for table in ['product_taxes_rel','product_supplier_taxes_rel','account_tax_sale_order_line_rel','account_tax_purchase_order_line_rel']:
+    MigrationTable(db_src,db_dst,table)
+
+# Identifiants externes des modèles repris (journaux : par la correspondance par code, sans identifiant en v16)
+MigrationIrModelData(db_src,db_dst,['account.account','account.tax.group','account.tax','account.fiscal.position'])
+cr_dst.execute("select id,res_id from ir_model_data where model='account.journal'")
+for row in cr_dst.fetchall():
+    id16 = inverse['account_journal'].get(row['res_id'])
+    if id16:
+        cr_dst.execute("update ir_model_data set res_id=%s where id=%s",[id16,row['id']])
+    else:
+        cr_dst.execute("delete from ir_model_data where id=%s",[row['id']])
+cr_dst.execute("delete from ir_model_data where model in ('account.reconcile.model','account.reconcile.model.line')")
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Pièces comptables ********************************************************
+# 5 593 pièces (2 751 factures, 43 avoirs, 4 factures fournisseurs, 2 793 pièces de paiement), 33 407 lignes
+# v16 : aucune pièce « à vérifier », aucune extourne (storno), aucune comptabilisation automatique, aucun litige (blocked)
+# to_check => review_state ; payment_id => origin_payment_id (après la copie des paiements) ; document_tax_mode :
+# obligatoire pour les factures et avoirs, vide pour les autres pièces (comme _compute_document_tax_mode)
+MigrationTable(db_src,db_dst,'account_move',default={'review_state':'no_review','document_tax_mode':'tax_excluded'})
+SQL="""
+    update account_move set
+        amount_untaxed_in_currency_signed = amount_untaxed_signed,
+        invoice_currency_rate = 1,
+        document_tax_mode = case when move_type in ('out_invoice','out_refund','out_receipt','in_invoice','in_refund','in_receipt')
+                                 then (select account_price_include from res_company c where c.id=account_move.company_id) end
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Lignes : display_type déjà renseigné en v16 ; invoice_date stockée sur la ligne en v20
+MigrationTable(db_src,db_dst,'account_move_line')
+cr_dst.execute("update account_move_line l set invoice_date=m.invoice_date from account_move m where m.id=l.move_id")
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'account_move_line_account_tax_rel')
+MigrationEtiquettesTaxes(db_src,db_dst,[('account_account_tag_account_move_line_rel','account_move_line_id')])
+
+# Lettrages
+MigrationTable(db_src,db_dst,'account_full_reconcile')
+MigrationTable(db_src,db_dst,'account_partial_reconcile')
+
+# Paiements (2 793) : nom, date, journal, société et mémo portés par la pièce en v16 ; état : draft / canceled selon la
+# pièce, sinon comme Odoo 20 (_compute_state) : reconciled si les lignes de liquidité sont soldées, sinon paid
+MigrationTable(db_src,db_dst,'account_payment',default={'company_id':1,'date':'2000-01-01','journal_id':1,'state':'draft'})
+SQL="""
+    update account_payment p set
+        name       = m.name,
+        date       = m.date,
+        journal_id = m.journal_id,
+        company_id = m.company_id,
+        memo       = m.ref,
+        currency_id = m.currency_id,
+        commercial_partner_id = (select commercial_partner_id from res_partner r where r.id=p.partner_id),
+        amount_company_currency_signed = case when p.payment_type='outbound' then -m.amount_total_signed else m.amount_total_signed end,
+        is_sent    = false,
+        state = case
+            when m.state='draft'  then 'draft'
+            when m.state='cancel' then 'canceled'
+            when coalesce((
+                select sum(l.amount_residual) from account_move_line l join account_journal j on j.id=m.journal_id
+                where l.move_id=m.id and l.account_id=coalesce(p.outstanding_account_id,j.default_account_id)
+            ),0)=0 then 'reconciled'
+            else 'paid'
+        end
+    from account_move m
+    where m.id=p.move_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Pièce de chaque paiement : payment_id de la pièce en v16 => origin_payment_id
+cr_src.execute("select id,payment_id from account_move where payment_id is not null")
+execute_values(cr_dst,"update account_move m set origin_payment_id=s.payment_id from (values %s) as s(id,payment_id) where s.id=m.id",
+    [(row['id'],row['payment_id']) for row in cr_src.fetchall()])
+cnx_dst.commit()
+
+# Factures réglées par chaque paiement (invoice_ids du paiement) : d'après les lettrages de la v16
+cr_dst.execute("delete from account_move__account_payment")
+SQL="""
+    select distinct l_facture.move_id invoice_id, m.payment_id
+    from account_partial_reconcile r
+    join account_move_line ld on ld.id=r.debit_move_id
+    join account_move_line lc on lc.id=r.credit_move_id
+    join account_move m on m.id in (ld.move_id,lc.move_id) and m.payment_id is not null
+    join account_move_line l_facture on l_facture.id in (ld.id,lc.id) and l_facture.move_id<>m.id
+    join account_move f on f.id=l_facture.move_id and f.move_type<>'entry'
+"""
+cr_src.execute(SQL)
+execute_values(cr_dst,"insert into account_move__account_payment (invoice_id,payment_id) values %s on conflict do nothing",
+    [(row['invoice_id'],row['payment_id']) for row in cr_src.fetchall()])
+cnx_dst.commit()
+
+# Paiements « paid » => « reconciled » comme Odoo 20 (_compute_state) quand le compte d'attente n'est pas un compte de
+# trésorerie et que toutes les factures réglées par le paiement sont payées
+SQL="""
+    update account_payment p set state='reconciled'
+    from account_journal j
+    where j.id=p.journal_id and p.state='paid'
+    and (select account_type from account_account a where a.id=coalesce(p.outstanding_account_id,j.default_account_id))<>'asset_cash'
+    and exists (select 1 from account_move__account_payment r where r.payment_id=p.id)
+    and not exists (select 1 from account_move__account_payment r join account_move f on f.id=r.invoice_id
+                    where r.payment_id=p.id and f.payment_state<>'paid')
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Pièce jointe principale des pièces (323) : vidée tant que les pièces jointes ne sont pas reprises (elle pointerait sur
+# une pièce jointe absente ou sur une autre pièce jointe de la v20) => à remettre avec les pièces jointes
+cr_dst.execute("update account_move set message_main_attachment_id=null")
+cnx_dst.commit()
+
+# Liens avec les commandes : lignes de commande de vente => lignes de factures, commandes d'achat => factures
+MigrationTable(db_src,db_dst,'sale_order_line_invoice_rel')
+MigrationTable(db_src,db_dst,'account_move_purchase_order_rel')
+
+# Devises : EUR = 1 en v16, 126 en v20
+MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','account_payment','account_partial_reconcile','account_full_reconcile'])
+
+# Export compta (119 exports, 10 565 lignes) et éco-contribution Valobat des factures (42)
+# Pièces jointes des exports (is_export_compta_attachment_rel) : avec les pièces jointes
+for table in ['is_export_compta','is_export_compta_ligne','is_account_move_valobat']:
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
 # ** Thème de l'entreprise (is_theme_entreprise) ******************************
 # Couleurs choisies dans jurabotec20 le 10/10/2026 (pas de thème en v16)
 SQL="""

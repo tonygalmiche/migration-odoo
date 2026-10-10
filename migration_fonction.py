@@ -433,11 +433,12 @@ def GetTypesChamps(cr,table):
     return {row['column_name']: row['data_type'] for row in cr.fetchall()}
 
 
-def MigrationTableJsonb(db_src,db_dst,table,rename={}):
+def MigrationTableJsonb(db_src,db_dst,table,rename={},default={}):
     """Copie ligne à ligne d'une petite table dont des champs texte sont devenus traduisibles (jsonb) :
     valeur => {"en_US": valeur, "fr_FR": traduction ou valeur}. La traduction est lue dans ir_translation
     si elle existe dans la source (v14, v15). Remplace MigrationTable(text2jsonb=True) quand la source est
-    en v16 ou plus (ir_translation supprimée). rename : {colonne source: colonne destination}"""
+    en v16 ou plus (ir_translation supprimée). rename : {colonne source: colonne destination}
+    default : {colonne destination: valeur} pour les colonnes absentes de la source ou vides (ex : obligatoires en v20)"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     types_src = GetTypesChamps(cr_src,table)
@@ -457,8 +458,20 @@ def MigrationTableJsonb(db_src,db_dst,table,rename={}):
                 if ir_translation and 'id' in row:
                     fr = GetTraduction(cr_src,table.replace('_','.'),c,row['id']) or row[c]
                 row[c] = json.dumps({"en_US": row[c], "fr_FR": fr})
-        SQL="insert into "+table+" ("+','.join(rename.get(c,c) for c in communs)+") values ("+','.join(['%s']*len(communs))+")"
-        cr_dst.execute(SQL,[row[c] for c in communs])
+        for c in communs:
+            if isinstance(row[c],(dict,list)): # déjà en jsonb dans la source
+                row[c] = json.dumps(row[c])
+        colonnes = [rename.get(c,c) for c in communs]
+        valeurs  = [row[c] for c in communs]
+        for c,v in default.items():
+            if c in colonnes:
+                i = colonnes.index(c)
+                valeurs[i] = valeurs[i] if valeurs[i] not in (None,'') else v
+            else:
+                colonnes.append(c)
+                valeurs.append(v)
+        SQL="insert into "+table+" ("+','.join('"%s"'%c for c in colonnes)+") values ("+','.join(['%s']*len(colonnes))+")"
+        cr_dst.execute(SQL,valeurs)
     cr_dst.execute("alter table "+table+" enable trigger all")
     cnx_dst.commit()
     SetSequence(cr_dst,cnx_dst,table)
@@ -2349,3 +2362,93 @@ def MigrationConditionsPaiement(db_src,db_dst):
     cnx_dst.commit()
     SetSequence(cr_dst,cnx_dst,'account_payment_term_line')
     MigrationIrModelData(db_src,db_dst,['account.payment.term'])
+
+
+def LireAvantCopie(db_src,db_dst,table,suffixes=[]):
+    """À appeler AVANT de copier une table avec les ids de la source : lignes de la destination (créées par la v20,
+    ex : taxes de l10n_fr) et correspondance {id v20: id source} par nom d'identifiant externe (module ignoré ;
+    suffixes : terminaisons à retirer du nom de la source pour retrouver l'équivalent v20, ex : ['_TTC','_ttc'] pour
+    rapprocher les taxes TTC de la v16, supprimées en v20, de la taxe HT correspondante). À passer ensuite à
+    CompleterColonnesV20."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    modele = table.replace('_','.')
+    cr_dst.execute("select * from "+table)
+    avant = {row['id']:row for row in cr_dst.fetchall()}
+    cr_dst.execute("select name,res_id from ir_model_data where model=%s",[modele])
+    xmlids_dst = {row['name']:row['res_id'] for row in cr_dst.fetchall()}
+    cr_src.execute("select name,res_id from ir_model_data where model=%s",[modele])
+    corr = {} # id source => id v20 (plusieurs ids source possibles pour un même id v20)
+    for row in cr_src.fetchall():
+        nom = row['name']
+        id20 = xmlids_dst.get(nom) or xmlids_dst.get('1_'+nom) # préfixe de société ajouté en v17 (tax_group_tva_20 => 1_tax_group_tva_20)
+        for suffixe in suffixes:
+            if not id20 and nom.endswith(suffixe):
+                id20 = xmlids_dst.get(nom[:-len(suffixe)])
+        if id20 in avant:
+            corr[row['res_id']] = id20
+    return avant, corr
+
+
+def CompleterColonnesV20(db_src,db_dst,table,avant,corr,correspondances={}):
+    """Après la copie d'une table avec les ids de la source : les colonnes ajoutées par la v20 (absentes de la source)
+    reprennent la valeur de l'enregistrement v20 équivalent (LireAvantCopie) : codes Factur-X et mentions des taxes
+    (ubl_cii_*, invoice_label, invoice_legal_notes), comptes de stock des comptes... Une colonne qui pointe vers une
+    autre table reprise est convertie avec correspondances {table: {id v20: id source}} (sinon laissée vide).
+    ⚠️ À appeler juste après la copie, AVANT de remplir les colonnes renommées entre les versions (ex : code => code_store,
+    deprecated => active, price_include => price_include_override) : elles sont absentes de la source, donc vues comme
+    ajoutées par la v20, et seraient écrasées par la valeur de l'enregistrement v20."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    types_src = GetTypesChamps(cr_src,table)
+    ajoutees = [c for c in GetTypesChamps(cr_dst,table) if c not in types_src]
+    fk = GetClesEtrangeres(cr_dst,table)
+    nb=0
+    for id_src,id20 in corr.items():
+        valeurs = {}
+        for col in ajoutees:
+            v = avant[id20][col]
+            if v is None:
+                continue
+            if col in fk and fk[col] not in ('res_company','res_country','res_currency','res_users','res_partner'):
+                v = correspondances.get(fk[col],{}).get(v)
+                if v is None:
+                    continue
+            valeurs[col] = json.dumps(v) if isinstance(v,(dict,list)) else v
+        if valeurs:
+            cr_dst.execute("update "+table+" set "+','.join('"%s"=%%s'%c for c in valeurs)+" where id=%s",list(valeurs.values())+[id_src])
+            nb+=1
+    cnx_dst.commit()
+    print("CompleterColonnesV20 : %s : %s lignes complétées (%s)"%(table,nb,', '.join(ajoutees)))
+
+
+def MigrationEtiquettesTaxes(db_src,db_dst,relations):
+    """Étiquettes de taxes (cases de la déclaration de TVA) : la v20 garde ses étiquettes (utilisées par ses rapports),
+    sans signe (« 08_base » au lieu de « +08_base » / « -08_base » en v16, tax_negate supprimé : le signe vient du
+    type de pièce). Les liens de la source sont convertis par nom (signe retiré) et applicabilité.
+    relations : [(table de relation, colonne de l'enregistrement)], ex :
+        [('account_account_tag_account_move_line_rel','account_move_line_id'), ...]"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_dst.execute("select id, name->>'en_US' as name, applicability from account_account_tag")
+    tags_dst = {(row['name'],row['applicability']):row['id'] for row in cr_dst.fetchall()}
+    cr_src.execute("select id, name, applicability from account_account_tag")
+    corr = {}
+    sans = set()
+    for row in cr_src.fetchall():
+        nom = row['name'].get('en_US') if isinstance(row['name'],dict) else row['name']
+        cle = (nom.lstrip('+-') if row['applicability']=='taxes' else nom, row['applicability'])
+        if cle in tags_dst:
+            corr[row['id']] = tags_dst[cle]
+        else:
+            sans.add(nom)
+    for table,colonne in relations:
+        cr_dst.execute("delete from "+table)
+        cr_src.execute("select "+colonne+" as rec, account_account_tag_id as tag from "+table)
+        lignes = [(row['rec'],corr[row['tag']]) for row in cr_src.fetchall() if row['tag'] in corr]
+        if lignes:
+            psycopg2.extras.execute_values(cr_dst,"insert into "+table+" ("+colonne+",account_account_tag_id) values %s on conflict do nothing",lignes,page_size=5000)
+        print("MigrationEtiquettesTaxes : %s : %s liens"%(table,len(lignes)))
+    cnx_dst.commit()
+    if sans:
+        print("MigrationEtiquettesTaxes : étiquettes de la source sans équivalent (liens non repris) : %s"%sorted(sans))
