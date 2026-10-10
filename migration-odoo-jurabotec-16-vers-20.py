@@ -3,6 +3,7 @@
 # Reprise des données de Jurabotec : Odoo 16 (is_jurabotec) => Odoo 20 (is_jurabotec20)
 # Documentation : Documentation/migration-odoo/migration-is_jurabotec16-vers-is_jurabotec20.md
 from migration_fonction import *
+from psycopg2.extras import execute_values
 
 
 #** Paramètres ****************************************************************
@@ -312,6 +313,215 @@ for table in [
     'is_scan_deplacement_charge',
 ]:
     MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
+# ** Équipes commerciales *****************************************************
+# 4 équipes (Ventes, et 3 archivées) : ids identiques pour les 3 standard ; eBay en plus en v16
+MigrationTable(db_src,db_dst,'crm_team')
+MigrationTable(db_src,db_dst,'crm_team_member')
+MigrationTable(db_src,db_dst,'crm_tag')
+MigrationIrModelData(db_src,db_dst,['crm.team'])
+#******************************************************************************
+
+
+# ** Conditions de paiement ***************************************************
+# 17 conditions (10 standard en v20, ids différents pour certaines) copiées avec les ids de la v16, échéances converties
+# au format v20 (voir MigrationConditionsPaiement) : utilisées par les commandes, sinon « Enregistrement manquant »
+MigrationConditionsPaiement(db_src,db_dst)
+# Conditions des clients (5 116) et des fournisseurs (97) : propriétés en v16, champs jsonb par société en v20
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_payment_term_id')
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_supplier_payment_term_id')
+#******************************************************************************
+
+
+# ** Ventes *******************************************************************
+# Commandes (5 127) : aucune à l'état « done » (supprimé en v17) ; procurement_group_id => stock_reference (plus bas)
+# document_tax_mode : obligatoire en v20, réglage de la société (prix hors taxe)
+MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excluded','locked':False})
+# Lignes (21 048) : product_uom => product_uom_id ; customer_lead : décimal en v16, entier en v20, toujours à 0
+# Taxes des lignes (account_tax_sale_order_line_rel) : avec la comptabilité (ids des taxes différents)
+MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'},exclure=['customer_lead'],default={'customer_lead':0})
+# Prix technique (nouveau, prix unitaire avant modification manuelle) et entrepôt de la ligne (stocké en v20)
+cr_dst.execute("update sale_order_line set technical_price_unit=price_unit where technical_price_unit is null")
+cr_dst.execute("update sale_order_line l set warehouse_id=o.warehouse_id from sale_order o where o.id=l.order_id")
+cnx_dst.commit()
+MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
+
+# Colis Hekipia (7 076) et composants (39 769)
+MigrationTable(db_src,db_dst,'is_sale_order_colis')
+MigrationTable(db_src,db_dst,'is_sale_order_colisage_composant')
+#******************************************************************************
+
+
+# ** Achats *******************************************************************
+# Commandes (845) : notes => note ; état « done » (1 commande) => « purchase » verrouillée (locked)
+MigrationTable(db_src,db_dst,'purchase_order',rename={'notes':'note'},default={'document_tax_mode':'tax_excluded','locked':False})
+cr_dst.execute("update purchase_order set state='purchase', locked=true where state='done'")
+cnx_dst.commit()
+# Lignes (2 603) : product_uom => uom_id ; remise (nouvelle) à 0 ; prix technique = prix unitaire
+MigrationTable(db_src,db_dst,'purchase_order_line',rename={'product_uom':'uom_id'},default={'discount':0})
+SQL="""
+    update purchase_order_line l set
+        technical_price_unit   = l.price_unit,
+        price_unit_product_uom = case when l.display_type is null then l.price_unit * pu.factor / lu.factor end,
+        qty_to_invoice_raw     = l.product_qty - coalesce(l.qty_invoiced,0)
+    from product_product p, product_template t, uom_uom pu, uom_uom lu
+    where p.id=l.product_id and t.id=p.product_tmpl_id and pu.id=t.uom_id and lu.id=l.uom_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'purchase_order_stock_picking_rel')
+MigrationDevisesParCode(db_src,db_dst,['purchase_order','purchase_order_line'])
+#******************************************************************************
+
+
+# Les mises à jour qui suivent la copie se font sans contrôle des clés étrangères, comme la copie (MigrationTable) :
+# PostgreSQL revérifie tous les liens d'une ligne modifiée deux fois dans la même transaction (ex : mouvement d'un OF
+# pas encore copié) ; les liens orphelins sont contrôlés après le lancement
+import atexit
+sans_controle = set()
+def ControleCles(tables,actif):
+    for table in tables:
+        cr_dst.execute("alter table "+table+(" enable" if actif else " disable")+" trigger all")
+        (sans_controle.discard if actif else sans_controle.add)(table)
+    cnx_dst.commit()
+@atexit.register
+def RetablirControleCles():
+    # Le script s'est arrêté (erreur) avant de réactiver les contrôles : réactivés avec une nouvelle connexion
+    if sans_controle:
+        cnx,cr = GetCR(db_dst)
+        for table in sans_controle:
+            cr.execute("alter table "+table+" enable trigger all")
+        cnx.commit()
+        print("Contrôles des clés étrangères réactivés : %s"%sorted(sans_controle))
+
+
+# ** Fabrication **************************************************************
+# Ordres de fabrication (268) : product_uom_id => uom_id ; date_planned_start / finished => date_start / date_finished
+# (date_start obligatoire en v20) ; lot_producing_id => lot_producing_ids ; procurement_group_id => production_group_id
+MigrationTable(db_src,db_dst,'mrp_production',rename={'product_uom_id':'uom_id'},default={'date_start':'1970-01-01'})
+ControleCles(['mrp_production'],False)
+cr_src.execute("select id, date_planned_start, date_planned_finished, date_start, date_finished, lot_producing_id, procurement_group_id, name from mrp_production")
+productions = cr_src.fetchall()
+cr_dst.execute("delete from mrp_production_stock_lot_rel; delete from mrp_production_group_rel; update mrp_production set production_group_id=null; delete from mrp_production_group;")
+for p in productions:
+    cr_dst.execute("update mrp_production set date_start=%s, date_finished=%s where id=%s",
+        [p['date_start'] or p['date_planned_start'], p['date_finished'] or p['date_planned_finished'], p['id']])
+    if p['lot_producing_id']:
+        cr_dst.execute("insert into mrp_production_stock_lot_rel (mrp_production_id,stock_lot_id) values (%s,%s)",[p['id'],p['lot_producing_id']])
+# Groupe de production (reliquats d'un même OF) : un par groupe d'approvisionnement de la v16 (même id, même nom)
+cr_src.execute("select distinct g.id, g.name, g.create_uid, g.create_date, g.write_uid, g.write_date from procurement_group g join mrp_production p on p.procurement_group_id=g.id")
+for g in cr_src.fetchall():
+    cr_dst.execute("insert into mrp_production_group (id,name,create_uid,create_date,write_uid,write_date) values (%s,%s,%s,%s,%s,%s)",
+        [g['id'],g['name'],g['create_uid'],g['create_date'],g['write_uid'],g['write_date']])
+for p in productions:
+    if p['procurement_group_id']:
+        cr_dst.execute("update mrp_production set production_group_id=%s where id=%s",[p['procurement_group_id'],p['id']])
+cnx_dst.commit()
+ControleCles(['mrp_production'],True)
+SetSequence(cr_dst,cnx_dst,'mrp_production_group')
+#******************************************************************************
+
+
+# ** Transferts et mouvements de stock ****************************************
+# Transferts (10 837) : group_id => stock_reference (plus bas), date et immediate_transfer supprimés
+MigrationTable(db_src,db_dst,'stock_picking')
+# Retour de (return_id, nouveau en v20) : transfert d'origine des mouvements retournés (93 mouvements)
+SQL="""
+    update stock_picking p set return_id=r.picking_id
+    from (
+        select m.picking_id as id, min(om.picking_id) as picking_id
+        from stock_move m join stock_move om on om.id=m.origin_returned_move_id
+        where m.picking_id is not null and om.picking_id is not null group by m.picking_id
+    ) r
+    where r.id=p.id
+"""
+
+# Mouvements (41 091) : product_uom => uom_id ; quantity_done => quantity + picked (calculés plus bas avec les lignes) ;
+# scrapped => is_scrap ; description_picking => description_picking_manual (libellé saisi, ex : ligne de commande)
+# Non repris (supprimés en v20) : name, product_packaging_id, created_purchase_line_id, manual_consumption
+MigrationTable(db_src,db_dst,'stock_move',rename={'product_uom':'uom_id','scrapped':'is_scrap','description_picking':'description_picking_manual'})
+
+# Lignes de mouvement (42 789) : product_uom_id => uom_id ; qty_done (fait) et reserved_uom_qty (réservé) => quantity,
+# picked si une quantité est faite (en v20, une seule quantité : réservée tant que picked est faux)
+MigrationTable(db_src,db_dst,'stock_move_line',rename={'product_uom_id':'uom_id'})
+ControleCles(['stock_picking','stock_move','stock_move_line'],False)
+cr_dst.execute(SQL) # return_id des transferts (mouvements nécessaires)
+cnx_dst.commit()
+cr_src.execute("select id, qty_done, reserved_uom_qty from stock_move_line")
+lignes = cr_src.fetchall()
+execute_values(cr_dst,"""
+    update stock_move_line l set
+        quantity = case when s.qty_done<>0 then s.qty_done else s.reserved_uom_qty end,
+        picked   = s.qty_done<>0
+    from (values %s) as s(id, qty_done, reserved_uom_qty)
+    where s.id=l.id
+""",[(r['id'],r['qty_done'] or 0,r['reserved_uom_qty'] or 0) for r in lignes],page_size=5000)
+cnx_dst.commit()
+# Mouvements : quantité = quantité faite si le mouvement est fait, sinon somme de ses lignes (dans l'unité du mouvement)
+cr_src.execute("select id, quantity_done from stock_move where state='done'")
+execute_values(cr_dst,"""
+    update stock_move m set quantity=s.quantity_done, picked=true
+    from (values %s) as s(id, quantity_done) where s.id=m.id
+""",[(r['id'],r['quantity_done'] or 0) for r in cr_src.fetchall()],page_size=5000)
+SQL="""
+    update stock_move m set
+        quantity = coalesce((select sum(l.quantity * lu.factor / mu.factor)
+                             from stock_move_line l join uom_uom lu on lu.id=l.uom_id where l.move_id=m.id),0),
+        picked   = exists (select 1 from stock_move_line l where l.move_id=m.id and l.picked)
+    from uom_uom mu
+    where mu.id=m.uom_id and m.state<>'done'
+"""
+cr_dst.execute(SQL)
+# Quantités dans l'unité de l'article (stockées en v20)
+precision = "(select digits from decimal_precision where name='Product Unit')"
+for table in ['stock_move','stock_move_line']:
+    SQL="""
+        update """+table+""" x set quantity_product_uom = round((x.quantity * xu.factor / pu.factor)::numeric, """+precision+""")
+        from uom_uom xu, product_product p, product_template t, uom_uom pu
+        where xu.id=x.uom_id and p.id=x.product_id and t.id=p.product_tmpl_id and pu.id=t.uom_id
+    """
+    cr_dst.execute(SQL)
+cnx_dst.commit()
+ControleCles(['stock_picking','stock_move','stock_move_line'],True)
+MigrationTable(db_src,db_dst,'stock_move_move_rel')
+MigrationTable(db_src,db_dst,'stock_move_line_consume_rel')
+# Non repris pour l'instant : valorisation des mouvements (is_in, is_out, value, stock_valuation_layer) : avec la comptabilité
+#******************************************************************************
+
+
+# ** Groupes d'approvisionnement => références de stock ***********************
+# procurement_group (5 633, supprimé en v20) => stock_reference (mêmes ids) et ses liens avec les mouvements, les
+# commandes de vente et d'achat et les ordres de fabrication
+MigrationTable(db_src,db_dst,'procurement_group','stock_reference')
+cr_dst.execute("delete from stock_reference_move_rel; delete from stock_reference_sale_rel; delete from stock_reference_purchase_rel; delete from stock_reference_production_rel;")
+liens = [
+    ("stock_reference_move_rel",       "move_id",       "select id, group_id from stock_move where group_id is not null"),
+    ("stock_reference_sale_rel",       "sale_id",       "select id, procurement_group_id from sale_order where procurement_group_id is not null union select sale_id, id from procurement_group where sale_id is not null"),
+    ("stock_reference_purchase_rel",   "purchase_id",   "select id, group_id from purchase_order where group_id is not null"),
+    ("stock_reference_production_rel", "production_id", "select id, procurement_group_id from mrp_production where procurement_group_id is not null"),
+]
+for table,colonne,SQL in liens:
+    cr_src.execute(SQL)
+    lignes = [tuple(row.values()) for row in cr_src.fetchall()]
+    execute_values(cr_dst,"insert into "+table+" ("+colonne+",reference_id) values %s on conflict do nothing",lignes,page_size=5000)
+    print("%s : %s liens"%(table,len(lignes)))
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Séquences ****************************************************************
+# Commandes de vente (CDE), d'achat (P), lots, contrats fournisseurs, export compta, inventaires
+for code in ['sale.order','purchase.order','stock.lot.serial','is.contrat.fournisseur','is.export.compta','is.inventaire']:
+    cr_src.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
+    seq_src = cr_src.fetchone()
+    cr_dst.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
+    seq_dst = cr_dst.fetchone()
+    if seq_src and seq_dst:
+        MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
+    else:
+        print("Séquence %s : absente (source %s, destination %s)"%(code,seq_src,seq_dst))
 #******************************************************************************
 
 

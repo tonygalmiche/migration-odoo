@@ -2298,3 +2298,54 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
         sans = [id20 for id20 in dst[t] if id20 not in corr[t]]
         print("MigrationConfigurationStock : %s : %s copiés, %s de la v20 sans équivalent non repris %s"%(t,len(src[t]),len(sans),sans))
     return corr
+
+
+def MigrationConditionsPaiement(db_src,db_dst):
+    """Conditions de paiement d'Odoo 16 vers Odoo 20, copiées avec les ids de la source, échéances converties :
+    - v16 : échéance = date + months + days, puis fin de mois si end_month, puis + days_after jours
+    - v20 : nb_days et delay_type (days_after, days_after_end_of_next_month, days_end_of_month_on_the + days_next_month)
+      sans end_month : days_after, nb_days = months x 30 + days
+      fin de mois, 1 mois sans jours ni jours après : days_after_end_of_next_month, 0 (fin du mois suivant)
+      fin de mois sinon : days_end_of_month_on_the, nb_days = months x 30 + days, days_next_month = days_after
+      (0 = fin du mois) : ex. « 30 jours fin de mois le 15 » = 30 jours, puis le 15 du mois suivant
+    - value « balance » (solde) supprimé : pourcentage = 100 - les autres pourcentages de la condition
+    - escompte (discount_percentage / discount_days sur la ligne en v16) : sur la condition en v20 (early_discount),
+      calcul de la société de la source (early_pay_discount_computation)
+    Identifiants externes account.* recalés par nom (MigrationIrModelData)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    MigrationTable(db_src,db_dst,'account_payment_term')
+    cr_src.execute("select early_pay_discount_computation from res_company order by id limit 1")
+    calcul = (cr_src.fetchone() or {}).get('early_pay_discount_computation') or 'included'
+    cr_src.execute("select * from account_payment_term_line order by payment_id, id")
+    lignes = cr_src.fetchall()
+    pourcentages = {}
+    for l in lignes:
+        if l['value']=='percent':
+            pourcentages[l['payment_id']] = pourcentages.get(l['payment_id'],0) + float(l['value_amount'] or 0)
+    cr_dst.execute("alter table account_payment_term_line disable trigger all; delete from account_payment_term_line;")
+    for l in lignes:
+        mois, jours, apres = l['months'] or 0, l['days'] or 0, l['days_after'] or 0
+        nb_days = mois*30 + jours
+        if not l['end_month']:
+            delay_type, days_next_month = 'days_after', '10'
+        elif mois==1 and jours==0 and apres==0:
+            delay_type, days_next_month, nb_days = 'days_after_end_of_next_month', '10', 0
+        else:
+            delay_type, days_next_month = 'days_end_of_month_on_the', str(apres)
+        value, montant = l['value'], l['value_amount']
+        if value=='balance':
+            value, montant = 'percent', 100 - pourcentages.get(l['payment_id'],0)
+        SQL="""
+            insert into account_payment_term_line (id,payment_id,value,value_amount,delay_type,nb_days,days_next_month,create_uid,create_date,write_uid,write_date)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """
+        cr_dst.execute(SQL,[l['id'],l['payment_id'],value,montant,delay_type,nb_days,days_next_month,l['create_uid'],l['create_date'],l['write_uid'],l['write_date']])
+        if l.get('discount_percentage') and l.get('discount_days'):
+            cr_dst.execute("update account_payment_term set early_discount=true, discount_percentage=%s, discount_days=%s where id=%s",
+                [l['discount_percentage'],l['discount_days'],l['payment_id']])
+    cr_dst.execute("update account_payment_term set early_pay_discount_computation=%s",[calcul])
+    cr_dst.execute("alter table account_payment_term_line enable trigger all")
+    cnx_dst.commit()
+    SetSequence(cr_dst,cnx_dst,'account_payment_term_line')
+    MigrationIrModelData(db_src,db_dst,['account.payment.term'])
