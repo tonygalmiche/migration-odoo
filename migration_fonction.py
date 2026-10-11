@@ -2452,3 +2452,57 @@ def MigrationEtiquettesTaxes(db_src,db_dst,relations):
     cnx_dst.commit()
     if sans:
         print("MigrationEtiquettesTaxes : étiquettes de la source sans équivalent (liens non repris) : %s"%sorted(sans))
+
+
+def MigrationValorisationStock(db_src,db_dst):
+    """Valorisation des stocks d'Odoo 13 à 16 vers Odoo 20 (stock_valuation_layer supprimé en v20) :
+    - stock_move.value = somme des couches du mouvement, réévaluations comprises (négative pour une sortie, comme en v20)
+    - is_in, is_out, is_dropship (calculés et stockés en v20) : même calcul que _is_in / _is_out d'Odoo 20 : mouvement
+      fait avec une ligne faite (picked), sans propriétaire autre que la société, d'un emplacement non valorisé vers un
+      emplacement valorisé (interne ou transit de la société) pour une entrée, l'inverse pour une sortie, hors dropship
+    - couches sans mouvement (modifications manuelles du coût) : non reprises (historique product_value en v20) ; sans
+      elles, la valeur à une date passée est calculée avec le coût actuel de l'article (standard_price, à reprendre avant)
+    A appeler après la reprise de stock_move et stock_move_line (quantity, picked) avec les ids de la source."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_dst.execute("update stock_move set value=0")
+    cr_src.execute("select stock_move_id, sum(value) as value from stock_valuation_layer where stock_move_id is not null group by stock_move_id")
+    lignes = cr_src.fetchall()
+    psycopg2.extras.execute_values(cr_dst,"update stock_move m set value=s.value from (values %s) as s(id, value) where s.id=m.id",
+        [(r['stock_move_id'],r['value']) for r in lignes],page_size=5000)
+    SQL="""
+        with ligne as (
+            select l.move_id,
+                (src.usage in ('internal','transit') and src.company_id=l.company_id) as src_valorise,
+                (dst.usage in ('internal','transit') and dst.company_id=l.company_id) as dst_valorise
+            from stock_move_line l
+            join stock_location src on src.id=l.location_id
+            join stock_location dst on dst.id=l.location_dest_id
+            join res_company c on c.id=l.company_id
+            where l.picked and (l.owner_id is null or l.owner_id=c.partner_id)
+        ),
+        mouvement as (
+            select m.id,
+                (src.usage='supplier' or (src.usage='transit' and src.company_id is null))
+                    and (dst.usage='customer' or (dst.usage='transit' and dst.company_id is null)) as dropship,
+                (src.usage='customer' or (src.usage='transit' and src.company_id is null))
+                    and (dst.usage='supplier' or (dst.usage='transit' and dst.company_id is null)) as dropship_retour
+            from stock_move m
+            join stock_location src on src.id=m.location_id
+            join stock_location dst on dst.id=m.location_dest_id
+            where m.state='done'
+        )
+        update stock_move m set
+            is_in       = coalesce(x.id is not null and not x.dropship_retour
+                                   and exists (select 1 from ligne l where l.move_id=m.id and not l.src_valorise and l.dst_valorise),false),
+            is_out      = coalesce(x.id is not null and not x.dropship
+                                   and exists (select 1 from ligne l where l.move_id=m.id and l.src_valorise and not l.dst_valorise),false),
+            is_dropship = coalesce(x.dropship or x.dropship_retour,false)
+        from stock_move m2 left join mouvement x on x.id=m2.id
+        where m2.id=m.id
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    cr_dst.execute("select count(*) filter (where is_in) as entrees, count(*) filter (where is_out) as sorties from stock_move")
+    row = cr_dst.fetchone()
+    print("MigrationValorisationStock : %s mouvements valorisés, %s entrées, %s sorties"%(len(lignes),row['entrees'],row['sorties']))

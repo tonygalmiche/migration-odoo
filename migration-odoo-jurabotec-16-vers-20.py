@@ -119,6 +119,9 @@ cr_src.execute("select pb.id,b.name,b.bic from res_partner_bank pb join res_bank
 for row in cr_src.fetchall():
     cr_dst.execute("update res_partner_bank set bank_name=%s,bank_bic=%s where id=%s",[row['name'],row['bic'],row['id']])
 cr_dst.execute("update res_partner_bank b set country_id=p.country_id from res_partner p where p.id=b.partner_id and b.country_id is null")
+# Compte de la société « fiable » (allow_out_payment, bouton « Envoyer de l'argent ») : en v20, une facture client ne
+# peut plus être confirmée avec un compte de la société non fiable (contrôle absent en v16, compte non fiable en v16)
+cr_dst.execute("update res_partner_bank set allow_out_payment=true where partner_id in (select partner_id from res_company)")
 cnx_dst.commit()
 #******************************************************************************
 
@@ -141,8 +144,30 @@ for table in tables:
 # Chaque unité est rattachée à la référence de son ancienne catégorie (mlinéaire => 1 m, Boite (1600) => 1600 Unités...)
 # Identifiants externes uom.* repointés ; Pack de 6, Minutes, ml et KWH (absents de la v16) recréés en 35 à 38 ;
 # barcode_rule.associated_uom_id converti (voir MigrationUnites)
-# Attention : l'unité « mètre » de la v16 est le yard (uom.product_uom_yard, 21 articles), gardée telle quelle (à décider)
 MigrationUnites(db_src,db_dst)
+
+# Unité « mètre » (id 19, 21 articles dont PRESTATION ML) : yard renommé en v16 (facteur 0,9144 m, Factur-X YRD)
+# => vrai mètre (facteur 1, MTR), détachée de uom.product_uom_yard ; les quantités des documents ne changent pas (stockées
+# dans l'unité du document), seules les conversions (2 lignes de vente de 2023) utilisaient le facteur du yard
+# Vrai yard recréé archivé (39), comme les autres unités v20 absentes de la v16 (données noupdate d'account_edi_ubl_cii)
+# Relançable : MigrationUnites remet le yard sur 19 (identifiant externe de la v16), corrigé ensuite ici
+cr_dst.execute("select max(id)+1 as id from uom_uom")
+yard_id = cr_dst.fetchone()['id']
+SQL="""
+    update uom_uom set relative_factor=1, factor=1, sequence=100, unece_code='MTR',
+        name=jsonb_set(name,'{en_US}',to_jsonb(coalesce(name->>'fr_FR','mètre')))
+    where id=19;
+    insert into uom_uom (id, name, relative_uom_id, relative_factor, factor, parent_path, sequence, active, unece_code,
+                         create_uid, create_date, write_uid, write_date)
+    values (%(id)s, '{"en_US": "yd"}', 5, 0.9144, 0.9144, '5/'||%(id)s||'/', 91, false, 'YRD', 1, now(), 1, now());
+    update ir_model_data set res_id=%(id)s where module='uom' and name='product_uom_yard';
+    update barcode_rule set associated_uom_id=%(id)s where associated_uom_id=19;
+    select setval('uom_uom_id_seq', (select max(id) from uom_uom));
+"""
+cr_dst.execute(SQL,{'id':yard_id})
+# mlinéaire (id 27, unité maison) : pas de code Factur-X => mètre
+cr_dst.execute("update uom_uom set unece_code='MTR' where id=27")
+cnx_dst.commit()
 #******************************************************************************
 
 
@@ -487,7 +512,16 @@ cnx_dst.commit()
 ControleCles(['stock_picking','stock_move','stock_move_line'],True)
 MigrationTable(db_src,db_dst,'stock_move_move_rel')
 MigrationTable(db_src,db_dst,'stock_move_line_consume_rel')
-# Non repris pour l'instant : valorisation des mouvements (is_in, is_out, value, stock_valuation_layer) : avec la comptabilité
+#******************************************************************************
+
+
+# ** Valorisation des stocks **************************************************
+# stock_valuation_layer (32 159 couches, supprimé en v20) => valeur du mouvement (stock_move.value) : somme des couches
+# du mouvement, réévaluations comprises (négative pour une sortie, comme en v20) ; price_unit déjà repris avec le mouvement
+# Entrées / sorties valorisées (is_in, is_out) calculées comme en v20 (voir MigrationValorisationStock)
+# Couches sans mouvement (142 : modifications manuelles du coût, rien en comptabilité) : non reprises, le coût des
+# articles est déjà repris (standard_price) ; méthode de coût standard partout (aucune propriété en v16)
+MigrationValorisationStock(db_src,db_dst)
 #******************************************************************************
 
 
