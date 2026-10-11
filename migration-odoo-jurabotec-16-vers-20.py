@@ -721,12 +721,11 @@ for table in ['product_taxes_rel','product_supplier_taxes_rel','account_tax_sale
 # « Frais bancaires » (bouton de contre-passation, compte 627800) => modèle manuel (rule_type reco_model)
 # « Factures totalement / partiellement réconciliées » (invoice_matching, supprimé en v20) : non repris, le rapprochement
 # avec les factures est intégré aux relevés en v20 (une règle matching_rule doit être automatique)
-MigrationTable(db_src,db_dst,'account_reconcile_model',where="rule_type='writeoff_button'",text2jsonb=True,exclure=['rule_type'],default={
-    'rule_type'        : 'reco_model',
-    'trigger'          : 'manual',
-    'payment_tolerance': 0,
-})
-MigrationTable(db_src,db_dst,'account_reconcile_model_line',where="model_id in (select id from account_reconcile_model where rule_type='writeoff_button')",text2jsonb=True)
+MigrationTableJsonb(db_src,db_dst,'account_reconcile_model',default={'trigger':'manual','payment_tolerance':0})
+MigrationTableJsonb(db_src,db_dst,'account_reconcile_model_line')
+cr_dst.execute("delete from account_reconcile_model where rule_type<>'writeoff_button'") # lignes supprimées en cascade
+cr_dst.execute("update account_reconcile_model set rule_type='reco_model', trigger='manual'")
+cnx_dst.commit()
 
 # Identifiants externes des modèles repris (journaux : par la correspondance par code, sans identifiant en v16)
 MigrationIrModelData(db_src,db_dst,['account.account','account.tax.group','account.tax','account.fiscal.position'])
