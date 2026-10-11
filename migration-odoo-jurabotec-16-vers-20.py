@@ -147,14 +147,15 @@ for table in tables:
 MigrationUnites(db_src,db_dst)
 
 # Unité « mètre » (id 19, 21 articles dont PRESTATION ML) : yard renommé en v16 (facteur 0,9144 m, Factur-X YRD)
-# => vrai mètre (facteur 1, MTR), détachée de uom.product_uom_yard ; les quantités des documents ne changent pas (stockées
+# => vrai mètre (facteur 1), détachée de uom.product_uom_yard ; code Factur-X unique en v20 (MTR déjà pris par m) =>
+# sans code (Factur-X : C62, unité) ; les quantités des documents ne changent pas (stockées
 # dans l'unité du document), seules les conversions (2 lignes de vente de 2023) utilisaient le facteur du yard
 # Vrai yard recréé archivé (39), comme les autres unités v20 absentes de la v16 (données noupdate d'account_edi_ubl_cii)
 # Relançable : MigrationUnites remet le yard sur 19 (identifiant externe de la v16), corrigé ensuite ici
 cr_dst.execute("select max(id)+1 as id from uom_uom")
 yard_id = cr_dst.fetchone()['id']
 SQL="""
-    update uom_uom set relative_factor=1, factor=1, sequence=100, unece_code='MTR',
+    update uom_uom set relative_factor=1, factor=1, sequence=100, unece_code=null,
         name=jsonb_set(name,'{en_US}',to_jsonb(coalesce(name->>'fr_FR','mètre')))
     where id=19;
     insert into uom_uom (id, name, relative_uom_id, relative_factor, factor, parent_path, sequence, active, unece_code,
@@ -165,8 +166,8 @@ SQL="""
     select setval('uom_uom_id_seq', (select max(id) from uom_uom));
 """
 cr_dst.execute(SQL,{'id':yard_id})
-# mlinéaire (id 27, unité maison) : pas de code Factur-X => mètre
-cr_dst.execute("update uom_uom set unece_code='MTR' where id=27")
+# mlinéaire (id 27, unité maison) : pas de code Factur-X => LM (mètre linéaire de la recommandation 20 de l'UN/ECE)
+cr_dst.execute("update uom_uom set unece_code='LM' where id=27")
 cnx_dst.commit()
 #******************************************************************************
 
@@ -176,9 +177,15 @@ cnx_dst.commit()
 MigrationTableJsonb(db_src,db_dst,'product_category')
 parent_store_compute(cr_dst,cnx_dst,'product_category','parent_id')
 
-# Étiquettes (25) : couleur entière en v16, code hexadécimal en v20 => non reprise
+# Étiquettes (25) : couleur = n° de la palette d'Odoo (0 à 11) en v16, code hexadécimal en v20 => code de la palette
+# v20 ($o-colors de web/static/src/scss/primary_variables.scss) ; 0 (sans couleur) => vide
 MigrationTable(db_src,db_dst,'product_tag',exclure=['color'])
 MigrationTable(db_src,db_dst,'product_tag_product_template_rel')
+palette = ['#a2a2a2','#ee2d2d','#dc8534','#e8bb1d','#5794dd','#9f628f','#db8865','#41a9a2','#304be0','#ee2f8a','#61c36e','#9872e6']
+cr_src.execute("select id, color from product_tag where color between 1 and 11")
+execute_values(cr_dst,"update product_tag t set color=s.color from (values %s) as s(id, color) where s.id=t.id",
+    [(r['id'],palette[r['color']]) for r in cr_src.fetchall()])
+cnx_dst.commit()
 
 # Attributs (Longueur, Traitement, Dimension) et valeurs (229) ; les 5 attributs d'exemple de la v20 sont remplacés
 MigrationTable(db_src,db_dst,'product_attribute',default={'active':True})
@@ -249,6 +256,14 @@ cnx_dst.commit()
 MigrationTable(db_src,db_dst,'mrp_bom',rename={'product_uom_id':'uom_id'})
 MigrationTable(db_src,db_dst,'mrp_bom_line',rename={'product_uom_id':'uom_id'})
 MigrationTable(db_src,db_dst,'mrp_bom_byproduct',rename={'product_uom_id':'uom_id'})
+
+# Poste de travail « Poste 1 » et son opération « Opération 1 » (nomenclature 5) : copiés avec les ids de la v16, ressource
+# du poste comprise (seule ressource de type « material » ; calendrier 1 = 40 heures/semaine, même id en v20)
+# Non repris : default_capacity (1, supprimé en v20), costs_hour_account_id (vide, expense_account_id en v20),
+# worksheet_* (supprimés en v20)
+MigrationTable(db_src,db_dst,'resource_resource',where="resource_type='material'")
+MigrationTable(db_src,db_dst,'mrp_workcenter')
+MigrationTable(db_src,db_dst,'mrp_routing_workcenter')
 
 # Tables is_* liées aux articles
 for table in [
@@ -701,6 +716,17 @@ MigrationIrPropertyJsonb(db_src,db_dst,'product.category','property_account_expe
 # Taxes des articles, des lignes de commande de vente et d'achat (ids des taxes de la v16)
 for table in ['product_taxes_rel','product_supplier_taxes_rel','account_tax_sale_order_line_rel','account_tax_purchase_order_line_rel']:
     MigrationTable(db_src,db_dst,table)
+
+# Modèles de rapprochement bancaire (jamais utilisés : aucun relevé bancaire en v16), ceux de la v20 supprimés plus haut
+# « Frais bancaires » (bouton de contre-passation, compte 627800) => modèle manuel (rule_type reco_model)
+# « Factures totalement / partiellement réconciliées » (invoice_matching, supprimé en v20) : non repris, le rapprochement
+# avec les factures est intégré aux relevés en v20 (une règle matching_rule doit être automatique)
+MigrationTable(db_src,db_dst,'account_reconcile_model',where="rule_type='writeoff_button'",text2jsonb=True,exclure=['rule_type'],default={
+    'rule_type'        : 'reco_model',
+    'trigger'          : 'manual',
+    'payment_tolerance': 0,
+})
+MigrationTable(db_src,db_dst,'account_reconcile_model_line',where="model_id in (select id from account_reconcile_model where rule_type='writeoff_button')",text2jsonb=True)
 
 # Identifiants externes des modèles repris (journaux : par la correspondance par code, sans identifiant en v16)
 MigrationIrModelData(db_src,db_dst,['account.account','account.tax.group','account.tax','account.fiscal.position'])
