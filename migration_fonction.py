@@ -2114,7 +2114,9 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
     5. Références de la v20 recalées : colonnes de res_company, ir_default (emplacements par défaut des partenaires et
        des articles), identifiants externes (ceux sans équivalent sont supprimés)
     6. Emplacements vues de la source supprimés en v18 (Physical Locations, Partners, Virtual Locations) : retirés,
-       leurs enfants deviennent des racines comme en v20 ; complete_name et parent_path recalculés
+       leurs enfants deviennent des racines comme en v20, sauf les emplacements internes (ex : « Virtual Locations/A
+       sortir ») qui gardent leur vue (archivée) et donc leur nom complet ; vues encore utilisées par des données gardées,
+       archivées ; complete_name et parent_path recalculés
     Relançable : les tables sont recopiées à chaque lancement (à lancer sur une base dont la configuration du stock
     est celle créée par la v20 : après un premier lancement, la correspondance par rôle retrouve les mêmes ids)."""
     cnx_src,cr_src=GetCR(db_src)
@@ -2313,9 +2315,14 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
     cr_src.execute("select res_id from ir_model_data where model='stock.location' and name in ('stock_location_locations','stock_location_locations_partner','stock_location_locations_virtual')")
     vues = [row['res_id'] for row in cr_src.fetchall()]
     if vues:
-        cr_dst.execute("update stock_location set location_id=null where location_id = any(%s)",[vues])
+        # Emplacements internes de la source rangés sous une vue (ex : « Virtual Locations/A sortir ») : gardés sous leur
+        # vue (archivée), sinon leur nom complet change (« A sortir ») et les filtres ou recherches par nom ne marchent plus ;
+        # les autres enfants deviennent des racines comme en v20
+        cr_dst.execute("update stock_location set location_id=null where location_id = any(%s) and usage<>'internal'",[vues])
+        cr_dst.execute("select distinct location_id as id from stock_location where location_id = any(%s)",[vues])
+        parents = {r['id'] for r in cr_dst.fetchall()}
         # Vue encore utilisée par des données de la source (ex : déplacements vers « Partners ») : gardée, archivée
-        utilisees = set()
+        utilisees = set(parents)
         cr_src.execute("""
             select t.relname as tab, a.attname as col
             from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
