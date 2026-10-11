@@ -848,37 +848,71 @@ def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/shar
     return ids
 
 
-def MigrationIrFilters(db_src,db_dst,modules={}):
-    """Migration des filtres favoris (ir_filters) :
+def MigrationIrFilters(db_src,db_dst,modules={},actions={}):
+    """Migration des filtres favoris (ir_filters), copiés avec les ids de la source :
     - action_id : l'id des actions change d'une version à l'autre => on retrouve l'action de la base destination
       par son identifiant externe (ir_model_data). modules permet de gérer les modules renommés
-      (ex : {'is_kmymoney18': 'is_kmymoney20'}). Si l'action n'est pas retrouvée, action_id est vidé
-      (le filtre, et surtout un filtre par défaut, s'applique alors à tous les menus du modèle)
+      (ex : {'is_kmymoney18': 'is_kmymoney20'}), actions les actions renommées ou remplacées
+      (ex : {'stock.dashboard_open_quants': 'stock.stock_quant_action'}). Si l'action n'est pas retrouvée,
+      action_id est vidé (le filtre s'applique alors à tous les menus du modèle) et le filtre n'est plus
+      « par défaut » (sinon il s'imposerait dans tous ces menus)
+    - filtres créés par les modules de la destination (identifiant externe absent de la source, ex : stock_account
+      en v20) : recréés avec un nouvel id, sinon leur identifiant pointerait sur un filtre de la source de même id,
+      écrasé au prochain -u du module ; identifiants communs repointés sur l'id de la source
     - utilisateur : correspondance par login. À partir d'Odoo 19, user_id est remplacé par la table
       de liaison ir_filters_res_users_rel (sans cette reprise, les filtres personnels deviennent partagés)
     """
-    MigrationTable(db_src,db_dst,'ir_filters')
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
 
+    # ** Filtres des modules de la destination absents de la source ***********
+    cr_src.execute("select module, name, res_id from ir_model_data where model='ir.filters'")
+    xmlids_src = {(r['module'],r['name']):r['res_id'] for r in cr_src.fetchall()}
+    cr_dst.execute("""
+        select d.id as data_id, d.module as data_module, d.name as data_name, f.*
+        from ir_model_data d join ir_filters f on f.id=d.res_id
+        where d.model='ir.filters' order by f.id
+    """)
+    a_recreer = [r for r in cr_dst.fetchall() if (r['data_module'],r['data_name']) not in xmlids_src]
+    MigrationTable(db_src,db_dst,'ir_filters')
+    cr_dst.execute("select coalesce(max(id),0) as id from ir_filters")
+    nouvel_id = cr_dst.fetchone()['id']
+    for r in a_recreer:
+        nouvel_id+=1
+        valeurs = {c:v for c,v in r.items() if c not in ('data_id','data_module','data_name')}
+        valeurs['id'] = nouvel_id
+        cr_dst.execute("insert into ir_filters ("+','.join('"%s"'%c for c in valeurs)+") values ("+','.join(['%s']*len(valeurs))+")",list(valeurs.values()))
+        cr_dst.execute("update ir_model_data set res_id=%s where id=%s",[nouvel_id,r['data_id']])
+        print("MigrationIrFilters : %s.%s recréé (id %s)"%(r['data_module'],r['data_name'],nouvel_id))
+    for (module,name),res_id in xmlids_src.items():
+        cr_dst.execute("update ir_model_data set res_id=%s where model='ir.filters' and module=%s and name=%s",[res_id,module,name])
+    SetSequence(cr_dst,cnx_dst,'ir_filters')
+
     # ** action_id ************************************************************
     SQL="""
-        select f.id, d.module, d.name
-        from ir_filters f inner join ir_model_data d on d.model like 'ir.actions.%%' and d.res_id=f.action_id
+        select f.id, f.is_default, d.module, d.name
+        from ir_filters f inner join ir_model_data d on d.model like 'ir.actions.%%' and d.model<>'ir.actions.act_window.view' and d.res_id=f.action_id
         where f.action_id is not null
     """
     cr_src.execute(SQL)
     rows = cr_src.fetchall()
-    cr_dst.execute("update ir_filters set action_id=NULL")
+    cr_dst.execute("update ir_filters set action_id=NULL where id<=%s",[nouvel_id-len(a_recreer)]) # filtres de la source
+    retrouves = set()
     for row in rows:
-        module = modules.get(row['module'], row['module'])
-        SQL="""
-            update ir_filters set action_id=(
-                select res_id from ir_model_data where model like 'ir.actions.%%' and module=%s and name=%s limit 1
-            )
-            where id=%s
-        """
-        cr_dst.execute(SQL,(module,row['name'],row['id']))
+        xmlid = actions.get(row['module']+'.'+row['name'], modules.get(row['module'], row['module'])+'.'+row['name'])
+        module, name = xmlid.split('.',1)
+        cr_dst.execute("select res_id from ir_model_data where model like 'ir.actions.%%' and model<>'ir.actions.act_window.view' and module=%s and name=%s limit 1",[module,name])
+        action = cr_dst.fetchone()
+        if action:
+            cr_dst.execute("update ir_filters set action_id=%s where id=%s",[action['res_id'],row['id']])
+            retrouves.add(row['id'])
+        else:
+            print("MigrationIrFilters : filtre %s, action %s absente%s"%(row['id'],xmlid," => plus par défaut" if row['is_default'] else ""))
+    # Action non retrouvée (ou sans identifiant externe dans la source) : le filtre n'est plus « par défaut »
+    cr_src.execute("select id from ir_filters where action_id is not null")
+    perdus = [r['id'] for r in cr_src.fetchall() if r['id'] not in retrouves]
+    if perdus:
+        cr_dst.execute("update ir_filters set is_default=false where id = any(%s)",[perdus])
     cnx_dst.commit()
 
     # ** Utilisateur ***********************************************************

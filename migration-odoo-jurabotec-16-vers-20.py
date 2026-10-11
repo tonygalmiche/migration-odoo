@@ -852,6 +852,16 @@ for table in ['is_export_compta','is_export_compta_ligne','is_account_move_valob
 #******************************************************************************
 
 
+# ** Filtres favoris **********************************************************
+# 39 filtres (dont 34 liés à une action) ; actions retrouvées par identifiant externe, is_jurabotec => is_jurabotec20
+# Actions supprimées en v20 : stock.dashboard_open_quants (Analyse / Emplacements) => stock.stock_quant_action (action
+# ouverte par ce menu en v20) ; sale.action_orders_to_invoice (menu « Commandes à facturer » supprimé) et
+# product.product_normal_action_sell (menu des variantes supprimé) : sans action, plus par défaut
+# Identifiants is_jurabotec.* : seulement la structure du module (vues, menus, actions...), recréée par is_jurabotec20
+MigrationIrFilters(db_src,db_dst,modules={'is_jurabotec':'is_jurabotec20'},actions={'stock.dashboard_open_quants':'stock.stock_quant_action'})
+#******************************************************************************
+
+
 # ** Thème de l'entreprise (is_theme_entreprise) ******************************
 # Couleurs choisies dans jurabotec20 le 10/10/2026 (pas de thème en v16)
 SQL="""
