@@ -74,7 +74,9 @@ MigrationTable(db_src,db_dst,'res_partner_category')
 MigrationTable(db_src,db_dst,'res_partner_res_partner_category_rel')
 
 # Groupes : correspondance par nom d'identifiant externe
-# Les groupes des modules absents en v20 (hr, project, is_vllm2odoo) sont ignorés
+# Les groupes des modules absents en v20 (hr, project) sont ignorés ; is_vllm2odoo => is_llm2odoo (mêmes noms
+# group_ia_recherche_generale et group_ia_admin, à installer avant le script) ; group_ia_gestionnaire_prompts (discussion
+# is.chat.vllm, non reprise) ignoré
 MigrationResGroups(db_src,db_dst)
 
 # base.default_user supprimé en v19 : public et portaltemplate ont un id de moins en v20 (3 et 4 au lieu de 4 et 5)
@@ -859,6 +861,34 @@ for table in ['is_export_compta','is_export_compta_ligne','is_account_move_valob
 # product.product_normal_action_sell (menu des variantes supprimé) : sans action, plus par défaut
 # Identifiants is_jurabotec.* : seulement la structure du module (vues, menus, actions...), recréée par is_jurabotec20
 MigrationIrFilters(db_src,db_dst,modules={'is_jurabotec':'is_jurabotec20'},actions={'stock.dashboard_open_quants':'stock.stock_quant_action'})
+#******************************************************************************
+
+
+# ** Recherche générale par IA (is_vllm2odoo => is_llm2odoo) ******************
+# is_llm2odoo doit être installé dans jurabotec20 avant le script (sinon étape ignorée)
+# Configuration du serveur VLLM de la société, recherches (18) et leur séquence ; model_id : ids de ir_model différents
+# en v20 => retrouvé par le nom du modèle ; type de vue « tree » => « list » ; discussion is.chat.vllm (1) non reprise
+if GetChamps(cr_dst,'is_search_general'):
+    cr_src.execute("select id, is_vllm_url, is_vllm_api_key, is_vllm_model, is_vllm_temperature, is_vllm_max_tokens from res_company")
+    for row in cr_src.fetchall():
+        cr_dst.execute("""
+            update res_company set is_vllm_url=%(is_vllm_url)s, is_vllm_api_key=%(is_vllm_api_key)s,
+                is_vllm_model=%(is_vllm_model)s, is_vllm_temperature=%(is_vllm_temperature)s,
+                is_vllm_max_tokens=%(is_vllm_max_tokens)s
+            where id=%(id)s
+        """,row)
+    MigrationTable(db_src,db_dst,'is_search_general',exclure=['filter_id','message_main_attachment_id'])
+    cr_dst.execute("update is_search_general s set model_id=(select m.id from ir_model m where m.model=s.model_name)")
+    cr_dst.execute("update is_search_general set view_type='list' where view_type='tree'")
+    cnx_dst.commit()
+    cr_src.execute("select id from ir_sequence where code='is.search.general' order by id limit 1")
+    seq_src = cr_src.fetchone()
+    cr_dst.execute("select id from ir_sequence where code='is.search.general' order by id limit 1")
+    seq_dst = cr_dst.fetchone()
+    if seq_src and seq_dst:
+        MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
+else:
+    print("is_llm2odoo non installé dans %s : recherche générale par IA non reprise"%db_dst)
 #******************************************************************************
 
 
