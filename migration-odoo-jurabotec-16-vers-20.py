@@ -862,6 +862,13 @@ MigrationIrFilters(db_src,db_dst,modules={'is_jurabotec':'is_jurabotec20'},actio
 #******************************************************************************
 
 
+# ** Chatter des essais en v20 ************************************************
+# Abonnés, messages et activités des enregistrements créés pendant les essais dans jurabotec20, supprimés par la relance
+# (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet » sur le transfert qui reprend leur id)
+SupprimerChatterOrphelin(db_dst)
+#******************************************************************************
+
+
 # ** Thème de l'entreprise (is_theme_entreprise) ******************************
 # Couleurs choisies dans jurabotec20 le 10/10/2026 (pas de thème en v16)
 SQL="""

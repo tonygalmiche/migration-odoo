@@ -2547,3 +2547,23 @@ def MigrationValorisationStock(db_src,db_dst):
     cr_dst.execute("select count(*) filter (where is_in) as entrees, count(*) filter (where is_out) as sorties from stock_move")
     row = cr_dst.fetchone()
     print("MigrationValorisationStock : %s mouvements valorisés, %s entrées, %s sorties"%(len(lignes),row['entrees'],row['sorties']))
+
+
+def SupprimerChatterOrphelin(db_dst):
+    """Abonnés (mail_followers), messages (mail_message) et activités (mail_activity) dont l'enregistrement n'existe plus
+    dans la destination : supprimés. Cas d'une relance de la reprise après des essais dans la destination : les tables
+    reprises sont vidées et recopiées, mais pas le chatter des enregistrements créés pendant les essais ; leurs ids sont
+    redonnés par les séquences et Odoo refuse alors d'abonner de nouveau le même partenaire (« Erreur, un partenaire ne
+    peut pas suivre deux fois le même objet », contrainte mail_followers_res_partner_res_model_id_uniq).
+    A appeler en fin de reprise (après toutes les tables) et avant la reprise du chatter de la source."""
+    cnx_dst,cr_dst=GetCR(db_dst)
+    for table,model in [('mail_followers','res_model'),('mail_message','model'),('mail_activity','res_model')]:
+        cr_dst.execute("select distinct "+model+" as model from "+table+" where "+model+" is not null and res_id is not null")
+        for row in cr_dst.fetchall():
+            table_model = row['model'].replace('.','_')
+            if not GetChamps(cr_dst,table_model):
+                continue
+            cr_dst.execute("delete from "+table+" t where t."+model+"=%s and t.res_id>0 and not exists (select 1 from "+table_model+" r where r.id=t.res_id)",[row['model']])
+            if cr_dst.rowcount:
+                print("SupprimerChatterOrphelin : %s : %s : %s lignes supprimées"%(table,row['model'],cr_dst.rowcount))
+    cnx_dst.commit()
