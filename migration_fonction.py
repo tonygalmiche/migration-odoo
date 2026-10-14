@@ -2037,10 +2037,15 @@ def MigrationUnites(db_src,db_dst):
         lignes.append(ligne)
 
     # Unités de la destination absentes de la source : rattachées à la référence de même racine (racines d'abord)
+    # Seulement celles qui ont un identifiant externe (unités standard de la v20) : une unité sans identifiant qui n'est
+    # pas un id de la source est une copie laissée par un lancement précédent (ex : unité maison détachée de son
+    # identifiant par le script, recréée en double à chaque relance) => supprimée par la copie
     nouvel_id = max(u['id'] for u in unites)
+    cr_dst.execute("select distinct res_id from ir_model_data where model='uom.uom'")
+    avec_xmlid = {row['res_id'] for row in cr_dst.fetchall()}
     # Ordre stable d'un lancement à l'autre (mêmes ids) : racines d'abord, puis par identifiant externe
     noms_xmlids = {row['res_id']:row['name'] for row in xmlids_dst}
-    for id_dst in sorted([i for i in dst if i not in anciens], key=lambda i: (dst[i]['parent_path'].count('/'),noms_xmlids.get(i,''),i)):
+    for id_dst in sorted([i for i in dst if i not in anciens and i in avec_xmlid], key=lambda i: (dst[i]['parent_path'].count('/'),noms_xmlids.get(i,''),i)):
         e = dst[id_dst]
         nouvel_id+=1
         anciens[id_dst] = nouvel_id
