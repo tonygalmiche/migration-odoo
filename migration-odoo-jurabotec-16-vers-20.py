@@ -4,6 +4,7 @@
 # Documentation : Documentation/migration-odoo/migration-is_jurabotec16-vers-is_jurabotec20.md
 from migration_fonction import *
 from psycopg2.extras import execute_values
+import atexit
 
 
 #** Paramètres ****************************************************************
@@ -13,6 +14,15 @@ db_dst = "jurabotec20"
 
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
+
+# Heures de début et de fin, durée : affichées aussi en cas d'arrêt (sys.exit, erreur)
+debut = datetime.now()
+print("Début : %s"%debut.strftime('%d/%m/%Y %H:%M:%S'))
+@atexit.register
+def AfficherDuree():
+    fin = datetime.now()
+    print("Fin   : %s"%fin.strftime('%d/%m/%Y %H:%M:%S'))
+    print("Durée : %s"%str(fin-debut).split('.')[0])
 
 
 # ** res_partner et res_users *************************************************
@@ -426,7 +436,6 @@ MigrationDevisesParCode(db_src,db_dst,['purchase_order','purchase_order_line'])
 # Les mises à jour qui suivent la copie se font sans contrôle des clés étrangères, comme la copie (MigrationTable) :
 # PostgreSQL revérifie tous les liens d'une ligne modifiée deux fois dans la même transaction (ex : mouvement d'un OF
 # pas encore copié) ; les liens orphelins sont contrôlés après le lancement
-import atexit
 sans_controle = set()
 def ControleCles(tables,actif):
     for table in tables:
@@ -955,6 +964,51 @@ cnx_dst.commit()
 # Abonnés, messages et activités des enregistrements créés pendant les essais dans jurabotec20, supprimés par la relance
 # (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet » sur le transfert qui reprend leur id)
 SupprimerChatterOrphelin(db_dst)
+#******************************************************************************
+
+
+# ** Chatter ******************************************************************
+# 104 465 messages et 61 836 abonnés des modèles repris avec les ids de la v16 ; nouveaux ids de messages (la v20 a
+# déjà les siens) ; suivi des modifications (47 317 valeurs) ajouté au corps (format v20)
+# Non repris : modèles absents ou non repris en v20 (account.account.template, calendar.event, project.*, hr.*,
+# stock.scrap, is.chat.vllm, account.reconcile.model : 1 seul modèle en v20), discussions (mail.channel), mails sans
+# modèle, notifications, chatter orphelin de la v16 (1 011 messages et 966 abonnés d'enregistrements supprimés, dont
+# 919 « Variante d'article créé »)
+ids_messages = MigrationChatter(db_src,db_dst,[
+    'stock.picking',
+    'sale.order',
+    'account.move',
+    'product.product',
+    'stock.lot',
+    'purchase.order',
+    'product.template',
+    'account.payment',
+    'res.partner',
+    'mrp.production',
+    'account.account',
+    'mrp.bom',
+    'is.search.general',
+    'crm.team',
+    'crm.team.member',
+    'res.partner.bank',
+    'res.company',
+    'account.journal',
+])
+
+# Type « snailmail » (courrier, 1 message sur une facture) : module snailmail non installé en v20 => notification
+cr_dst.execute("update mail_message set message_type='notification' where message_type='snailmail'")
+cnx_dst.commit()
+
+# Pièces jointes des messages (2 819 ; 10 non reprises : événements, discussions, messages d'enregistrements supprimés)
+cr_src.execute("select message_id,attachment_id from message_attachment_rel")
+execute_values(cr_dst,"insert into message_attachment_rel (message_id,attachment_id) values %s on conflict do nothing",
+    [(ids_messages[row['message_id']],ids_pj[row['attachment_id']]) for row in cr_src.fetchall()
+     if row['message_id'] in ids_messages and row['attachment_id'] in ids_pj])
+cnx_dst.commit()
+
+# Activités des commandes et des transferts (90 ; 2 de projets non reprises) : exceptions (80) et ventes incitatives (10)
+# (sale.mail_act_sale_upsell, supprimé en v20 : Odoo 20 crée une activité « À faire » => mail.mail_activity_data_todo)
+MigrationActivites(db_src,db_dst,['sale.order','stock.picking'],types={'sale.mail_act_sale_upsell':'mail.mail_activity_data_todo'})
 #******************************************************************************
 
 

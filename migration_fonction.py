@@ -705,13 +705,13 @@ def SubtypeId2SubtypeId(cr_src,cr_dst):
     return {row['res_id']: dst.get((row['module'],row['name'])) for row in cr_src.fetchall()}
 
 
-def TrackingValues2Html(cr_src,message_id):
-    """Suivi des modifications d'un message (table mail_tracking_value, v14 à v18) au format HTML de la v20
-    (gabarit mail.mail_tracking_template : "ancienne valeur → <b>nouvelle valeur</b> <i>(libellé)</i>").
-    En v20, mail_tracking_value n'existe que si le module mail_tracking est installé : le suivi est dans le corps."""
-    cr_src.execute("select * from mail_tracking_value where mail_message_id=%s order by tracking_sequence, id",[message_id])
+def TrackingValues2Html(valeurs):
+    """Suivi des modifications d'un message (lignes de mail_tracking_value, v14 à v18, triées par tracking_sequence
+    et id) au format HTML de la v20 (gabarit mail.mail_tracking_template : "ancienne valeur → <b>nouvelle valeur</b>
+    <i>(libellé)</i>"). En v20, mail_tracking_value n'existe que si le module mail_tracking est installé : le suivi
+    est dans le corps."""
     lignes=[]
-    for t in cr_src.fetchall():
+    for t in valeurs:
         valeurs=[]
         for sens in ('old','new'):
             v=None
@@ -737,6 +737,7 @@ def MigrationChatter(db_src,db_dst,models):
       sont insérés avec de nouveaux ids (parent_id recalculé)
     - sous-types (subtype_id) : correspondance par identifiant externe
     - suivi des modifications (mail_tracking_value) : ajouté au corps du message, comme le fait la v20
+    - messages et abonnés d'enregistrements absents de la destination (supprimés dans la source) : non repris
     Les notifications ne sont pas reprises. Pièces jointes des messages (message_attachment_rel) : non reprises ici ;
     la fonction retourne la correspondance {id message source: id message destination} pour les recoller ensuite."""
     cnx_src,cr_src=GetCR(db_src)
@@ -746,47 +747,115 @@ def MigrationChatter(db_src,db_dst,models):
     tracking = bool(GetTypesChamps(cr_src,'mail_tracking_value'))
 
     # ** Messages ****************************************************************
+    # Suivi des modifications lu en une seule requête (une requête par message : trop long sur 100 000 messages)
+    suivis={}
+    if tracking:
+        SQL="""
+            select t.* from mail_tracking_value t join mail_message m on m.id=t.mail_message_id
+            where m.model in %s order by t.mail_message_id, t.tracking_sequence, t.id
+        """
+        cr_src.execute(SQL,[tuple(models)])
+        for t in cr_src.fetchall():
+            suivis.setdefault(t['mail_message_id'],[]).append(t)
+    # Enregistrements de la destination : messages et abonnés d'enregistrements supprimés dans la source (chatter
+    # orphelin, ex : 919 « Variante d'article créé » chez Jurabotec) non repris
+    existants={}
+    for model in models:
+        cr_dst.execute("select id from "+model.replace('.','_'))
+        existants[model] = {row['id'] for row in cr_dst.fetchall()}
     cr_dst.execute("delete from mail_message where model in %s",[tuple(models)])
     cr_src.execute("select * from mail_message where model in %s order by id",[tuple(models)])
-    ids={}
-    nb=0
-    for row in cr_src.fetchall():
-        vals = {c: row[c] for c in champs}
-        vals['subtype_id'] = subtypes.get(row['subtype_id'])
-        vals['parent_id']  = ids.get(row['parent_id'])
-        if tracking:
-            html_tracking = TrackingValues2Html(cr_src,row['id'])
-            if html_tracking:
-                vals['body'] = (row['body'] or '')+html_tracking
-        SQL="insert into mail_message ("+','.join(vals)+") values ("+','.join(['%s']*len(vals))+") returning id"
-        cr_dst.execute(SQL,list(vals.values()))
-        ids[row['id']] = cr_dst.fetchone()['id']
-        nb+=1
+    rows = cr_src.fetchall()
+    nb_orphelins = len(rows)
+    rows = [row for row in rows if row['res_id'] in existants[row['model']]]
+    nb_orphelins -= len(rows)
+    # Nouveaux ids réservés d'avance par la séquence : insertion par lots, sans un aller-retour par message
+    cr_dst.execute("select nextval('mail_message_id_seq') as id from generate_series(1,%s)",[len(rows)])
+    ids = {row['id']: new['id'] for row,new in zip(rows,cr_dst.fetchall())}
+    lignes=[]
+    for row in rows:
+        body = row['body']
+        if row['id'] in suivis:
+            body = (body or '')+TrackingValues2Html(suivis[row['id']])
+        lignes.append([ids[row['id']],ids.get(row['parent_id']),subtypes.get(row['subtype_id']),body]+[row[c] for c in champs if c!='body'])
+    colonnes = ['id','parent_id','subtype_id','body']+[c for c in champs if c!='body']
+    psycopg2.extras.execute_values(cr_dst,"insert into mail_message ("+','.join(colonnes)+") values %s",lignes,page_size=1000)
+    nb=len(rows)
     cnx_dst.commit()
 
     # ** Abonnés *****************************************************************
+    # Ids réservés d'avance comme les messages ; sous-types lus en une seule requête ; insertions par lots
+    # (pas de conflit possible : abonnés de ces modèles supprimés de la destination, uniques dans la source)
+    SQL="""
+        select r.mail_followers_id, r.mail_message_subtype_id
+        from mail_followers_mail_message_subtype_rel r join mail_followers f on f.id=r.mail_followers_id
+        where f.res_model in %s
+    """
+    cr_src.execute(SQL,[tuple(models)])
+    subtypes_followers={}
+    for rel in cr_src.fetchall():
+        subtypes_followers.setdefault(rel['mail_followers_id'],[]).append(rel['mail_message_subtype_id'])
     cr_dst.execute("delete from mail_followers where res_model in %s",[tuple(models)])
     cr_src.execute("select * from mail_followers where res_model in %s and partner_id is not null order by id",[tuple(models)])
-    nb_followers=0
-    for row in cr_src.fetchall():
-        SQL="""
-            insert into mail_followers (res_model,res_id,partner_id) values (%s,%s,%s)
-            on conflict do nothing returning id
-        """
-        cr_dst.execute(SQL,[row['res_model'],row['res_id'],row['partner_id']])
-        res = cr_dst.fetchone()
-        if not res:
-            continue
-        nb_followers+=1
-        cr_src.execute("select mail_message_subtype_id from mail_followers_mail_message_subtype_rel where mail_followers_id=%s",[row['id']])
-        for rel in cr_src.fetchall():
-            subtype_id = subtypes.get(rel['mail_message_subtype_id'])
+    rows = cr_src.fetchall()
+    nb_followers_orphelins = len(rows)
+    rows = [row for row in rows if row['res_id'] in existants[row['res_model']]]
+    nb_followers_orphelins -= len(rows)
+    cr_dst.execute("select nextval('mail_followers_id_seq') as id from generate_series(1,%s)",[len(rows)])
+    ids_followers = {row['id']: new['id'] for row,new in zip(rows,cr_dst.fetchall())}
+    followers=[]
+    rels=[]
+    for row in rows:
+        followers.append((ids_followers[row['id']],row['res_model'],row['res_id'],row['partner_id']))
+        for subtype_src in subtypes_followers.get(row['id'],[]):
+            subtype_id = subtypes.get(subtype_src)
             if subtype_id:
-                SQL="insert into mail_followers_mail_message_subtype_rel (mail_followers_id,mail_message_subtype_id) values (%s,%s) on conflict do nothing"
-                cr_dst.execute(SQL,[res['id'],subtype_id])
+                rels.append((ids_followers[row['id']],subtype_id))
+    psycopg2.extras.execute_values(cr_dst,"insert into mail_followers (id,res_model,res_id,partner_id) values %s",followers,page_size=5000)
+    psycopg2.extras.execute_values(cr_dst,"insert into mail_followers_mail_message_subtype_rel (mail_followers_id,mail_message_subtype_id) values %s on conflict do nothing",rels,page_size=5000)
+    nb_followers=len(rows)
     cnx_dst.commit()
-    print("MigrationChatter : %s messages et %s abonnés repris"%(nb,nb_followers))
+    print("MigrationChatter : %s messages et %s abonnés repris (%s messages et %s abonnés d'enregistrements supprimés ignorés)"%(nb,nb_followers,nb_orphelins,nb_followers_orphelins))
     return ids
+
+
+def MigrationActivites(db_src,db_dst,models,types={}):
+    """Migration des activités (mail_activity) des modèles donnés, d'une v14, v15 ou v16 vers une v19 ou v20 :
+    - les activités existantes de ces modèles dans la destination sont supprimées, puis celles de la source sont
+      insérées avec de nouveaux ids (les enregistrements doivent avoir les mêmes ids dans les 2 bases)
+    - type (activity_type_id) : correspondance par identifiant externe ; types permet de remplacer un type supprimé,
+      ex : {'sale.mail_act_sale_upsell': 'mail.mail_activity_data_todo'} (vente incitative en v20)
+    - modèle (res_model_id) : retrouvé par son nom (ids de ir_model différents)
+    - colonnes communes aux 2 bases, sauf les liens vers des tables aux ids différents (types précédent et recommandé,
+      événement du calendrier) ; active (nouveau en v17) à vrai"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_dst.execute("select d.module||'.'||d.name as xmlid, d.res_id from ir_model_data d where d.model='mail.activity.type'")
+    types_dst = {row['xmlid']:row['res_id'] for row in cr_dst.fetchall()}
+    cr_dst.execute("select model, id from ir_model")
+    models_dst = {row['model']:row['id'] for row in cr_dst.fetchall()}
+    exclure = ('id','activity_type_id','res_model_id','previous_activity_type_id','recommended_activity_type_id','calendar_event_id')
+    champs = [c for c in GetChampsCommuns(cr_src,cr_dst,'mail_activity') if c not in exclure]
+    active = 'active' in GetChamps(cr_dst,'mail_activity') and 'active' not in champs
+    cr_dst.execute("delete from mail_activity where res_model in %s",[tuple(models)])
+    SQL="""
+        select a.*, d.module||'.'||d.name as xmlid
+        from mail_activity a left join ir_model_data d on d.model='mail.activity.type' and d.res_id=a.activity_type_id
+        where a.res_model in %s order by a.id
+    """
+    cr_src.execute(SQL,[tuple(models)])
+    nb=0
+    for row in cr_src.fetchall():
+        vals = {c: row[c] for c in champs}
+        vals['activity_type_id'] = types_dst.get(types.get(row['xmlid'],row['xmlid']))
+        vals['res_model_id']     = models_dst[row['res_model']]
+        if active:
+            vals['active'] = True
+        SQL="insert into mail_activity ("+','.join(vals)+") values ("+','.join(['%s']*len(vals))+")"
+        cr_dst.execute(SQL,list(vals.values()))
+        nb+=1
+    cnx_dst.commit()
+    print("MigrationActivites : %s activités reprises"%nb)
 
 
 def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore",copier_fichiers=True,garder_ids=False):
