@@ -123,6 +123,16 @@ cnx_dst.commit()
 cr_dst.execute("insert into ir_config_parameter (key,value) values ('report.url','http://localhost:8069') on conflict (key) do nothing")
 cnx_dst.commit()
 
+# Inscription libre fermée comme en v16 (b2b : sur invitation ; b2c par défaut en v20 : tout le monde peut se créer un
+# compte portail depuis la page de connexion)
+cr_src.execute("select value from ir_config_parameter where key='auth_signup.invitation_scope'")
+row = cr_src.fetchone()
+if row:
+    cr_dst.execute("update ir_config_parameter set value=%s where key='auth_signup.invitation_scope'",[row['value']])
+# Digest périodique (mail récapitulatif d'Odoo, hebdomadaire par défaut en v20, mensuel en v16) : désactivé
+cr_dst.execute("update digest_digest set state='deactivated'")
+cnx_dst.commit()
+
 # Compte bancaire de la société (IBAN de la facture) : res.bank supprimé en v20 => nom et BIC de la banque sur le compte
 # clearing_label_id : nouvelle colonne obligatoire en v20 => libellé par défaut (base.clearing_label_all, aucun libellé pour la France)
 # country_id : nouvelle colonne en v20 => pays du partenaire (même calcul qu'Odoo)
