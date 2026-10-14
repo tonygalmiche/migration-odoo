@@ -108,6 +108,11 @@ for row in cr_src.fetchall():
         cr_dst.execute("update res_company set report_footer=%s where id=%s",[json.dumps(row['report_footer']),row['id']])
 cnx_dst.commit()
 
+# URL utilisée par wkhtmltopdf pour charger les CSS et images des rapports : web.base.url (https://jurabotec20) n'est
+# pas joignable depuis le serveur => PDF sans mise en page ; non écrasée si déjà présente (port ou hébergement différent)
+cr_dst.execute("insert into ir_config_parameter (key,value) values ('report.url','http://localhost:8069') on conflict (key) do nothing")
+cnx_dst.commit()
+
 # Compte bancaire de la société (IBAN de la facture) : res.bank supprimé en v20 => nom et BIC de la banque sur le compte
 # clearing_label_id : nouvelle colonne obligatoire en v20 => libellé par défaut (base.clearing_label_all, aucun libellé pour la France)
 # country_id : nouvelle colonne en v20 => pays du partenaire (même calcul qu'Odoo)
@@ -889,6 +894,60 @@ if GetChamps(cr_dst,'is_search_general'):
         MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
 else:
     print("is_llm2odoo non installé dans %s : recherche générale par IA non reprise"%db_dst)
+#******************************************************************************
+
+
+# ** Pièces jointes ***********************************************************
+# Le filestore de production (odoo.jurabotec.com) est copié par rsync directement dans le filestore de jurabotec20
+# => données seulement, store_fname conservé (copier_fichiers=False) ; ids de la v16 conservés (garder_ids)
+# Repris : factures (3 267), commandes de vente (2 196, et 17 signatures) et d'achat (373), plans et FDS des articles,
+# pièces jointes des articles, des variantes, des partenaires et du transfert, exports compta (113), images des
+# articles et des partenaires
+# Non repris : pièces jointes techniques (vues, menus, icônes de paiement, tableaux de bord, langues, favicon), modèles
+# de mail, invitations des événements, discussions, brouillons de mails, courrier, et 8 pièces jointes d'articles sans
+# enregistrement (ni res_id, ni plan, ni FDS)
+modeles = ('account.move','sale.order','purchase.order','product.template','product.product','res.partner',
+           'is.export.compta','stock.picking')
+cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles]) # pièces jointes de test de la v20
+cnx_dst.commit()
+where = """
+    res_model in ('account.move','sale.order','purchase.order','product.template','product.product','res.partner',
+                  'is.export.compta','stock.picking')
+    and coalesce(res_field,'') in ('','signature','image_1920','image_1024','image_512','image_256','image_128')
+    and (coalesce(res_id,0)<>0 or id in (select attachment_id from product_template_is_plan_rel
+                                          union select attachment_id from product_template_is_fds_rel))
+"""
+ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False,garder_ids=True)
+
+# Plans et FDS des articles (Many2many) et pièces jointes des exports compta (mêmes ids)
+for table in ['product_template_is_plan_rel','product_template_is_fds_rel','is_export_compta_attachment_rel']:
+    MigrationTable(db_src,db_dst,table)
+
+# Pièce jointe principale des factures (325) ; supprimée en v20 sur les commandes, les articles et les partenaires
+cr_src.execute("select id, message_main_attachment_id from account_move where message_main_attachment_id is not null")
+execute_values(cr_dst,"update account_move m set message_main_attachment_id=s.attachment_id from (values %s) as s(id, attachment_id) where s.id=m.id",
+    [(row['id'],ids_pj[row['message_main_attachment_id']]) for row in cr_src.fetchall() if row['message_main_attachment_id'] in ids_pj])
+cnx_dst.commit()
+
+# Ids qui auraient changé (collision avec les pièces jointes techniques de la v20) : remplacés partout
+RemplacerIdsPiecesJointes(db_dst,ids_pj)
+
+# Plans ajoutés sur un article pas encore enregistré (42, sans res_id) : rattachés à leur article
+RattacherPiecesJointes(db_dst,[
+    ('product_template_is_plan_rel','product_id','product.template'),
+    ('product_template_is_fds_rel' ,'product_id','product.template'),
+])
+
+# PDF des factures et avoirs clients validés (2 785) : en v16, gardés par le rapport (attachment, nommés FAC_2026_00773.pdf)
+# En v20, PDF officiel = pièce jointe du champ invoice_pdf_report_file (envoi, portail, téléchargement : pas régénéré)
+SQL="""
+    update ir_attachment a set res_field='invoice_pdf_report_file'
+    from account_move m
+    where a.res_model='account.move' and a.res_id=m.id and a.res_field is null
+    and m.move_type in ('out_invoice','out_refund') and m.state='posted' and a.name=replace(m.name,'/','_')||'.pdf'
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************
 
 
