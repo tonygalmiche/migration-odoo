@@ -135,3 +135,119 @@ for row in cr_src.fetchall():
 cr_dst.execute("update res_partner_bank b set country_id=p.country_id from res_partner p where p.id=b.partner_id and b.country_id is null")
 cnx_dst.commit()
 #******************************************************************************
+
+
+# ** Unités de mesure *********************************************************
+# Copiées avec les ids de la v16 (27 unités) : les tables qui les utilisent se copient ensuite sans conversion
+# Chaque unité est rattachée à la référence de son ancienne catégorie ; identifiants externes uom.* repointés,
+# unités v20 absentes de la v16 recréées (voir MigrationUnites)
+# Longueurs : la référence est le mm en v16 (m = 1000 mm), nom français du mm = « m » (15 articles) : repris tels quels
+# Unité maison « Unités » (id 27, catégorie « Unsorted/Imported Units ») : unité racine à part
+MigrationUnites(db_src,db_dst)
+#******************************************************************************
+
+
+# ** Articles *****************************************************************
+# Devises : EUR active en v16 (2 listes de prix en euros), inactive dans une base v20 suisse => activée
+cr_src.execute("select name from res_currency where active")
+devises = [row['name'] for row in cr_src.fetchall()]
+cr_dst.execute("update res_currency set active=true where name = any(%s)",[devises])
+cnx_dst.commit()
+
+# Catégories (8) : nom texte en v16, traduisible en v20 ; comptes des catégories : à reprendre avec la comptabilité
+MigrationTableJsonb(db_src,db_dst,'product_category')
+parent_store_compute(cr_dst,cnx_dst,'product_category','parent_id')
+
+# Étiquettes (2, sur aucun article) : couleur = n° de la palette d'Odoo (0 à 11) en v16, code hexadécimal en v20
+# => code de la palette v20 ($o-colors de web/static/src/scss/primary_variables.scss) ; 0 (sans couleur) => vide
+MigrationTable(db_src,db_dst,'product_tag',exclure=['color'])
+MigrationTable(db_src,db_dst,'product_tag_product_template_rel')
+palette = ['#a2a2a2','#ee2d2d','#dc8534','#e8bb1d','#5794dd','#9f628f','#db8865','#41a9a2','#304be0','#ee2f8a','#61c36e','#9872e6']
+cr_src.execute("select id, color from product_tag where color between 1 and 11")
+for row in cr_src.fetchall():
+    cr_dst.execute("update product_tag set color=%s where id=%s",[palette[row['color']],row['id']])
+cnx_dst.commit()
+
+# Attributs (1) et valeurs (4) ; les attributs d'exemple de la v20 sont remplacés
+MigrationTable(db_src,db_dst,'product_attribute',default={'active':True})
+MigrationTable(db_src,db_dst,'product_attribute_value',default={'active':True})
+
+# Modèles d'articles (741), pas de favoris en v16
+# sale_delay (délai de livraison client, 28 articles) : nombre en v16, entier jsonb par société en v20 => repris ci-dessous
+# expense_policy => reinvoice_policy (tous à « no »)
+# Nouvelles colonnes obligatoires en v20 : service_tracking, base_unit_count (valeurs par défaut d'Odoo)
+MigrationTable(db_src,db_dst,'product_template',rename={'expense_policy':'reinvoice_policy'},exclure=['sale_delay'],
+    default={'service_tracking':'no','base_unit_count':0})
+cr_src.execute("select id,sale_delay from product_template where coalesce(sale_delay,0)<>0")
+for row in cr_src.fetchall():
+    cr_dst.execute("update product_template set sale_delay=jsonb_build_object('1',%s::int) where id=%s",[int(row['sale_delay']),row['id']])
+# Type « Article stockable » (product, 564 articles) supprimé en v18 => consommable (consu) avec « Suivre l'inventaire » (is_storable)
+cr_dst.execute("update product_template set is_storable=(type='product'), type=case when type='product' then 'consu' else type end")
+# Suivi « none » supprimé en v20 (seulement lot et serial) => vide ; sinon « Wrong value for product.template.store_by: 'none' »
+cr_dst.execute("update product_template set tracking=null where tracking='none'")
+cnx_dst.commit()
+
+# Variantes (741, une par modèle)
+MigrationTable(db_src,db_dst,'product_product',default={'base_unit_count':0})
+
+# Attributs des articles et combinaisons des variantes
+for table in [
+    'product_attribute_product_template_rel',
+    'product_template_attribute_line',
+    'product_attribute_value_product_template_attribute_line_rel',
+    'product_template_attribute_value',
+    'product_variant_combination',
+]:
+    MigrationTable(db_src,db_dst,table)
+
+# Prix de vente des variantes (lst_price) : calculé et stocké en v20 (prix du modèle + suppléments des attributs)
+SQL="""
+    update product_product p set lst_price = t.list_price + coalesce((
+        select sum(v.price_extra)
+        from product_variant_combination c join product_template_attribute_value v on v.id=c.product_template_attribute_value_id
+        where c.product_product_id=p.id
+    ),0)
+    from product_template t where t.id=p.product_tmpl_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Coût des variantes (233 valeurs, 3 autres sur des variantes supprimées en v16) et responsable des articles (741) : propriétés en v16, champs jsonb par société en v20
+# Propriétés de la société 2 (Delta Line, non reprise) ignorées
+MigrationIrPropertyJsonb(db_src,db_dst,'product.product','standard_price',where="p.company_id=1")
+MigrationIrPropertyJsonb(db_src,db_dst,'product.template','responsible_id',where="p.company_id=1")
+
+# Listes de prix (5 : 3 en CHF, 2 en EUR) et lignes (148, toutes actives) ; discount_policy supprimé en v20
+# Odoo 20 recrée une liste « Par défaut » (société 1, séquence 10, _activate_or_create_pricelists) : après « Prix EUR » et
+# « Prix CH » (séquence 1), elle ne change pas la liste par défaut des clients
+MigrationTable(db_src,db_dst,'product_pricelist')
+MigrationTable(db_src,db_dst,'product_pricelist_item')
+# Liste de prix des clients (29 partenaires ; la 30e valeur est la valeur par défaut de la société 2) : propriété en v16, champ jsonb par société en v20
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_product_pricelist','specific_property_product_pricelist',where="p.company_id=1")
+
+# Prix fournisseurs (317) : unité d'achat de l'article (uom_po_id, supprimé en v20) => unité du prix fournisseur (obligatoire)
+MigrationTable(db_src,db_dst,'product_supplierinfo',default={'uom_id':1,'discount':0})
+cr_src.execute("select s.id,t.uom_po_id from product_supplierinfo s join product_template t on t.id=s.product_tmpl_id")
+for row in cr_src.fetchall():
+    cr_dst.execute("update product_supplierinfo set uom_id=%s where id=%s",[row['uom_po_id'],row['id']])
+cnx_dst.commit()
+
+# Ids des devises : ids de la v16 => ids de la v20
+MigrationDevisesParCode(db_src,db_dst,['product_template','product_pricelist','product_pricelist_item','product_supplierinfo'])
+
+# Identifiants externes : catégories renommées en v20 (product_category_all => product_category_goods...),
+# attributs d'exemple de la v20 (pa_brand, pa_color...) supprimés
+cr_src.execute("select name,res_id from ir_model_data where model='product.category'")
+categories = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+MigrationIrModelData(db_src,db_dst,['product.category','product.attribute','product.pricelist'],correspondances={
+    'product.category': {
+        'product_category_goods'   : categories.get('product_category_all'),
+        'product_category_expenses': categories.get('cat_expense'),
+        'product_category_services': categories.get('product_category_1'),
+    },
+})
+
+# A reprendre avec la comptabilité : taxes des articles (product_taxes_rel, product_supplier_taxes_rel : ids des taxes
+# différents en v20), comptes des articles et des catégories
+# A reprendre avec les pièces jointes : images des articles
+#******************************************************************************
