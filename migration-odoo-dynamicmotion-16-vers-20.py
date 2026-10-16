@@ -347,7 +347,53 @@ for row in cr_src.fetchall():
 cnx_dst.commit()
 
 # Opérations (148, dont 1 archivée) ; cost_mode : nouvelle colonne en v20 (valeur par défaut d'Odoo : temps réel)
-# Instructions des opérations (note, 28 opérations, fiche de travail de type texte) : champ supprimé en v20
+# Instructions des opérations (note, 29 opérations, fiche de travail de type texte) : champ supprimé en v20
 # => is_instructions d'is_dynamicmotion20, affiché aussi sur les ordres de travail
 MigrationTable(db_src,db_dst,'mrp_routing_workcenter',where=where_bom_id,rename={'note':'is_instructions'},default={'cost_mode':'actual'})
+#******************************************************************************
+
+
+# ** Configuration du stock ***************************************************
+# Entrepôts, emplacements, types d'opérations, routes, règles copiés avec les ids de la v16 ; correspondance par rôle
+# avec ceux créés par la v20 (entrepôt WH) pour recaler ses références ; voir MigrationConfigurationStock
+# Société 1 seulement : 3 entrepôts (WH, M24, DM) ; la configuration de la société 2 (entrepôt Delta, ses emplacements,
+# types d'opérations, routes et règles) n'est pas reprise
+MigrationConfigurationStock(db_src,db_dst,societes=[1])
+# Routes des entrepôts (12, sans l'entrepôt Delta), des articles (761), règles de rangement (5)
+MigrationTable(db_src,db_dst,'stock_route_warehouse',where="t.warehouse_id in (select id from stock_warehouse where company_id=1)")
+MigrationTable(db_src,db_dst,'stock_route_product',where="t.route_id in (select id from stock_route where company_id is null or company_id=1)")
+MigrationTable(db_src,db_dst,'stock_putaway_rule',default={'sublocation':'no'})
+#******************************************************************************
+
+
+# ** Stock ********************************************************************
+# Pas de lots en v16
+# Colis (11, tous livrés chez des clients) : stock_quant_package => stock_package (mêmes colonnes, package_use supprimé)
+MigrationTable(db_src,db_dst,'stock_quant_package','stock_package')
+# Quants (1 259 : 376 sur WH/Stock, 4 sur Stock DM universel, 2 sur DM/Stock, 1 sur DM/Stock/Stock Archivé, les autres
+# sur les emplacements virtuels) ; storage_category_id supprimé en v20 ; réservations à vérifier avec les mouvements
+MigrationTable(db_src,db_dst,'stock_quant')
+
+# Règles de réapprovisionnement (56, dont 53 automatiques) : qty_to_order => qty_to_order_manual ; nouvelles colonnes
+# obligatoires en v20 : valeurs par défaut d'Odoo ; qty_multiple (0 ou 1 partout) et vendor_id (supplier_id) supprimés
+MigrationTable(db_src,db_dst,'stock_warehouse_orderpoint',rename={'qty_to_order':'qty_to_order_manual'},default={
+    'min_max_based_on'       : 'one_month',
+    'min_max_based_on_factor': 100,
+    'daily_demand'           : 0,
+})
+
+# Entrepôts multiples : option automatique en v20 à la création d'un 2e entrepôt (stock_warehouse.py), non déclenchée
+# par une copie en SQL => groupe impliqué par Utilisateur interne et donné à ses membres, comme le fait Odoo (_apply_group)
+SQL="""
+    insert into res_groups_implied_rel (gid,hid)
+    select u.res_id, w.res_id from ir_model_data u, ir_model_data w
+    where u.module='base' and u.name='group_user' and w.module='stock' and w.name='group_stock_multi_warehouses'
+    on conflict do nothing;
+    insert into res_groups_users_rel (gid,uid)
+    select w.res_id, r.uid from ir_model_data w, ir_model_data u join res_groups_users_rel r on r.gid=u.res_id
+    where u.module='base' and u.name='group_user' and w.module='stock' and w.name='group_stock_multi_warehouses'
+    on conflict do nothing;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
 #******************************************************************************

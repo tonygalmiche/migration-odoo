@@ -2170,7 +2170,7 @@ def CopierIrSequence(cr_src,cr_dst,id_src):
     return id_dst
 
 
-def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
+def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes=False):
     """Configuration du stock d'une version ≤ 16 vers Odoo 20, copiée avec les ids de la source (comme MigrationUnites) :
     entrepôts, emplacements, types d'opérations, routes, règles (tables stock_warehouse, stock_location,
     stock_picking_type, stock_route, stock_rule). Les tables qui les utilisent (quants, lots, mouvements, transferts,
@@ -2192,10 +2192,13 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
        sortir ») qui gardent leur vue (archivée) et donc leur nom complet ; vues encore utilisées par des données gardées,
        archivées ; complete_name et parent_path recalculés
     Relançable : les tables sont recopiées à chaque lancement (à lancer sur une base dont la configuration du stock
-    est celle créée par la v20 : après un premier lancement, la correspondance par rôle retrouve les mêmes ids)."""
+    est celle créée par la v20 : après un premier lancement, la correspondance par rôle retrouve les mêmes ids).
+    societes : ids des sociétés reprises (ex : [1]) ; la configuration des autres sociétés de la source n'est pas copiée
+    (enregistrements sans société toujours copiés) ; par défaut, toutes les sociétés."""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     tables = ['stock_location','stock_picking_type','stock_route','stock_rule','stock_warehouse']
+    where = "t.company_id is null or t.company_id in (%s)"%','.join(str(s) for s in societes) if societes else ""
     modeles = {t:t.replace('_','.') for t in tables}
 
     # Destination avant la copie
@@ -2205,7 +2208,7 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
         dst[t] = {row['id']:row for row in cr_dst.fetchall()}
     src = {}
     for t in tables:
-        cr_src.execute("select * from "+t)
+        cr_src.execute("select * from "+t+" t"+(" where "+where if where else ""))
         src[t] = {row['id']:row for row in cr_src.fetchall()}
     fk = {t:GetClesEtrangeres(cr_dst,t) for t in tables}
     corr = {t:{} for t in tables} # id v20 => id source
@@ -2249,7 +2252,7 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
     # => 0 pendant la copie, puis calculés comme Odoo 20 (_compute_default_location_src_id / _dest_id)
     for t in tables:
         defaut = {'move_type':'direct','default_location_src_id':0,'default_location_dest_id':0} if t=='stock_picking_type' else {}
-        MigrationTable(db_src,db_dst,t,default=defaut)
+        MigrationTable(db_src,db_dst,t,default=defaut,where=where)
     cr_src.execute("select name,res_id from ir_model_data where module='stock' and name in ('stock_location_suppliers','stock_location_customers')")
     emplacements = {row['name']:row['res_id'] for row in cr_src.fetchall()}
     SQL="""
@@ -2300,9 +2303,12 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
         SetSequence(cr_dst,cnx_dst,t)
 
     # 4. Colonnes ajoutées en v20 : valeurs de l'enregistrement v20 correspondant
+    # Clés étrangères non vérifiées pendant la mise à jour : les types d'opérations ont encore les séquences de la source
+    # (ids absents de la destination, ex : sequence_id 40 chez Dynamic Motion), recalées juste après
     for t in tables:
         types_src = GetTypesChamps(cr_src,t)
         ajoutees = [c for c in GetTypesChamps(cr_dst,t) if c not in types_src]
+        cr_dst.execute("alter table "+t+" disable trigger all")
         for id20,id in corr[t].items():
             if id20 in nouveaux[t].keys() or id20 not in dst[t]:
                 continue
@@ -2312,6 +2318,7 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
                     v = corr[fk[t][col]].get(v)
                 if v is not None:
                     cr_dst.execute("update "+t+" set "+col+"=%s where id=%s",[json.dumps(v) if isinstance(v,(dict,list)) else v,id])
+        cr_dst.execute("alter table "+t+" enable trigger all")
     # Séquences des types d'opérations copiés de la source
     sequences = {} # séquence source => séquence destination (types qui partagent une séquence)
     for t16 in src['stock_picking_type'].values():
@@ -2362,6 +2369,8 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={}):
             from ir_property p join ir_model_fields f on f.id=p.fields_id
             where f.relation in %s and p.value_reference is not null
         """
+        if societes:
+            SQL+=" and (p.company_id is null or p.company_id in (%s))"%','.join(str(s) for s in societes)
         cr_src.execute(SQL,[tuple(modeles.values())])
         for row in cr_src.fetchall():
             valeur = int(row['value_reference'].split(',')[1])
