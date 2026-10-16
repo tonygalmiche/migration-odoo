@@ -347,6 +347,7 @@ for row in cr_src.fetchall():
 cnx_dst.commit()
 
 # Opérations (148, dont 1 archivée) ; cost_mode : nouvelle colonne en v20 (valeur par défaut d'Odoo : temps réel)
-# Instructions des opérations (note, 28 opérations) : champ supprimé en v20, non repris (à décider)
-MigrationTable(db_src,db_dst,'mrp_routing_workcenter',where=where_bom_id,default={'cost_mode':'actual'})
+# Instructions des opérations (note, 28 opérations, fiche de travail de type texte) : champ supprimé en v20
+# => is_instructions d'is_dynamicmotion20, affiché aussi sur les ordres de travail
+MigrationTable(db_src,db_dst,'mrp_routing_workcenter',where=where_bom_id,rename={'note':'is_instructions'},default={'cost_mode':'actual'})
 #******************************************************************************
