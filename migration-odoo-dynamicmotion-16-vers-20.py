@@ -28,10 +28,15 @@ def AfficherDuree():
 # Copiés avec les ids de la source (749 partenaires, 16 utilisateurs dans dynamicmotion16)
 # mobile (44 partenaires, dont 20 sans téléphone) et title (civilité, 163 partenaires) : supprimés d'Odoo en v20, non repris
 # siret, company_registry : vides dans la source
-# Nouvelle colonne obligatoire en v20 : autopost_bills (valeur par défaut d'Odoo)
+# Nouvelles colonnes en v20 : valeurs par défaut d'Odoo (autopost_bills, group_rfq et group_on sont obligatoires)
 # Propriétés comptables (comptes, conditions de paiement, positions fiscales) : à reprendre avec la comptabilité
 MigrationTable(db_src,db_dst,'res_partner',default={
-    'autopost_bills': 'ask',
+    'autopost_bills'  : 'ask',
+    'group_rfq'       : 'default',
+    'group_on'        : 'default',
+    'suggest_based_on': '30_days',
+    'suggest_days'    : 7,
+    'suggest_percent' : 100,
 })
 MigrationTable(db_src,db_dst,'res_users')
 
@@ -79,7 +84,8 @@ MigrationTable(db_src,db_dst,'res_partner_res_partner_category_rel')
 
 # Groupes : correspondance par nom d'identifiant externe
 # Les groupes des modules absents en v20 (purchase, crm, hr, project, repair, is_vllm2odoo...) sont ignorés
-# Hors périmètre (chiffrage) : feuilles de temps, employés, présences, congés et tracker de liens, à ne pas reprendre
+# Hors périmètre (chiffrage) : feuilles de temps, présences, congés et tracker de liens, à ne pas reprendre
+# (employés finalement repris, voir plus bas)
 MigrationResGroups(db_src,db_dst)
 
 # base.default_user supprimé en v19 : public et portaltemplate ont un id de moins en v20
@@ -250,4 +256,97 @@ MigrationIrModelData(db_src,db_dst,['product.category','product.attribute','prod
 # A reprendre avec la comptabilité : taxes des articles (product_taxes_rel, product_supplier_taxes_rel : ids des taxes
 # différents en v20), comptes des articles et des catégories
 # A reprendre avec les pièces jointes : images des articles
+#******************************************************************************
+
+
+# ** Calendriers de travail ***************************************************
+# Copiés avec les ids de la v16 (5 calendriers, 40 horaires) : les postes de travail utilisent les calendriers 1 et 6,
+# l'id 1 n'est pas le même calendrier en v20 (40 h) qu'en v16 (« Standard 17 hours/week », renommé)
+# Horaires : structure v20 (récurrence, durée) => horaire hebdomadaire fixe à heures fixes, comme en v16
+# tz et two_weeks_calendar supprimés en v20 (tous les calendriers en Europe/Paris, aucun sur deux semaines)
+# Absences (resource_calendar_leaves, 745, toutes rattachées à une ressource) : congés des employés, hors périmètre
+# Doit précéder les employés et les postes de travail (MigrationHrEmployee remplace les calendriers absents)
+# Calendrier 4 « Standard 40 heures/semaine » de la société 2 (Delta Line, non reprise), utilisé par elle seule : non repris
+where_calendrier = "t.company_id is distinct from 2"
+MigrationTable(db_src,db_dst,'resource_calendar',where=where_calendrier,default={'calendar_type':'fixed'})
+MigrationTable(db_src,db_dst,'resource_calendar_attendance',where="t.calendar_id in (select id from resource_calendar t where "+where_calendrier+")",default={
+    'duration_based'     : False,
+    'recurrency_type'    : 'weeks',
+    'recurrency_interval': 1,
+    'recurrency_end_type': 'forever',
+    'recurrency_count'   : 1,
+})
+# Colonnes calculées et stockées en v20 (même calcul qu'Odoo : _compute_duration_hours, _compute_hours_per_week...)
+cr_dst.execute("update resource_calendar_attendance set duration_hours=hour_to-hour_from")
+SQL="""
+    update resource_calendar c set
+        hours_per_week = coalesce((select sum(a.duration_hours) from resource_calendar_attendance a where a.calendar_id=c.id),0),
+        days_per_week  = (select count(distinct a.dayofweek) from resource_calendar_attendance a where a.calendar_id=c.id);
+    update resource_calendar set hours_per_day = case when days_per_week>0 then hours_per_week/days_per_week else 0 end;
+"""
+cr_dst.execute(SQL)
+# Calendrier de la société (6, « Standard 40 hours/week ») ; temps plein = heures du calendrier de la société
+cr_src.execute("select id,resource_calendar_id from res_company where id=1")
+for row in cr_src.fetchall():
+    cr_dst.execute("update res_company set resource_calendar_id=%s where id=%s",[row['resource_calendar_id'],row['id']])
+SQL="""
+    update resource_calendar c set full_time_required_hours = coalesce((
+        select r.hours_per_week from res_company rc join resource_calendar r on r.id=rc.resource_calendar_id where rc.id=c.company_id
+    ), c.hours_per_week);
+    update resource_calendar set work_time_rate = case when full_time_required_hours>0 then hours_per_week/full_time_required_hours else 1 end;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+# Identifiants externes : resource_calendar_std (1), _35h (2), _38h (3) de la v16 ; mrp.mrp_workcenter_calendar (absent de
+# la v16) supprimé, recréé au -u de mrp
+MigrationIrModelData(db_src,db_dst,['resource.calendar'])
+#******************************************************************************
+
+
+# ** Employés *****************************************************************
+# Repris (décision du 16/10/2026, contrairement au chiffrage) : les ordres de travail et temps passés des OF y font
+# référence ; feuilles de temps, présences et congés restent hors périmètre
+# 6 employés, ressources (employés et postes de travail), départements, postes, catégories, une hr_version par employé
+# (voir MigrationHrEmployee) ; nécessite hr en v20, sinon seules les ressources des postes de travail sont reprises
+cr_dst.execute("select 1 from information_schema.tables where table_name='hr_employee'")
+if cr_dst.fetchone():
+    MigrationHrEmployee(db_src,db_dst)
+else:
+    print("ATTENTION : hr non installé en v20 => employés non repris")
+    MigrationTable(db_src,db_dst,'resource_resource',where="t.resource_type='material' and t.id in (select resource_id from mrp_workcenter)")
+#******************************************************************************
+
+
+# ** Postes de travail, nomenclatures, opérations *****************************
+
+# Postes de travail (14) : default_capacity (1, supprimé en v20) et costs_hour_account_id (vide) non repris
+MigrationTable(db_src,db_dst,'mrp_workcenter')
+
+# Nomenclatures (95, dont 1 de sous-traitance) : product_uom_id => uom_id ; consumption (supprimé en v20) non repris
+# Sous-traitance : nécessite mrp_subcontracting en v20 (type « subcontract », sous-traitants) ; sinon nomenclature non reprise
+cr_dst.execute("select 1 from information_schema.tables where table_name='mrp_bom_subcontractor'")
+sous_traitance = bool(cr_dst.fetchone())
+where_bom = "" if sous_traitance else "t.type<>'subcontract'"
+where_bom_id = "" if sous_traitance else "t.bom_id in (select id from mrp_bom where type<>'subcontract')"
+if not sous_traitance:
+    print("ATTENTION : mrp_subcontracting non installé en v20 => nomenclature de sous-traitance non reprise")
+MigrationTable(db_src,db_dst,'mrp_bom',rename={'product_uom_id':'uom_id'},where=where_bom)
+MigrationTable(db_src,db_dst,'mrp_bom_line',rename={'product_uom_id':'uom_id'},where=where_bom_id)
+if sous_traitance:
+    MigrationTable(db_src,db_dst,'mrp_bom_subcontractor')
+
+# Délais de fabrication et de préparation des OF : sur l'article en v16 (produce_delay : 71 articles), sur la
+# nomenclature en v20 => valeurs de l'article reportées sur ses nomenclatures (19)
+cr_src.execute("""
+    select b.id,t.produce_delay,t.days_to_prepare_mo from mrp_bom b join product_template t on t.id=b.product_tmpl_id
+    where coalesce(t.produce_delay,0)<>0 or coalesce(t.days_to_prepare_mo,0)<>0
+""")
+for row in cr_src.fetchall():
+    cr_dst.execute("update mrp_bom set produce_delay=%s,days_to_prepare_mo=%s where id=%s",
+        [int(row['produce_delay'] or 0),int(row['days_to_prepare_mo'] or 0),row['id']])
+cnx_dst.commit()
+
+# Opérations (148, dont 1 archivée) ; cost_mode : nouvelle colonne en v20 (valeur par défaut d'Odoo : temps réel)
+# Instructions des opérations (note, 28 opérations) : champ supprimé en v20, non repris (à décider)
+MigrationTable(db_src,db_dst,'mrp_routing_workcenter',where=where_bom_id,default={'cost_mode':'actual'})
 #******************************************************************************
