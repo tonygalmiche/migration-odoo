@@ -3,6 +3,7 @@
 # Reprise des données de Dynamic Motion : Odoo 16 (is_dynamicmotion) => Odoo 20 (is_dynamicmotion20)
 # Documentation : Documentation/migration-odoo/migration-is_dynamicmotion16-vers-is_dynamicmotion20.md
 from migration_fonction import *
+from psycopg2.extras import execute_values
 import atexit
 
 
@@ -264,7 +265,8 @@ MigrationIrModelData(db_src,db_dst,['product.category','product.attribute','prod
 # l'id 1 n'est pas le même calendrier en v20 (40 h) qu'en v16 (« Standard 17 hours/week », renommé)
 # Horaires : structure v20 (récurrence, durée) => horaire hebdomadaire fixe à heures fixes, comme en v16
 # tz et two_weeks_calendar supprimés en v20 (tous les calendriers en Europe/Paris, aucun sur deux semaines)
-# Absences (resource_calendar_leaves, 745, toutes rattachées à une ressource) : congés des employés, hors périmètre
+# Absences (resource_calendar_leaves, 745) : 739 blocages du planning des postes de travail par les ordres de travail,
+# repris avec eux (Fabrication) ; 6 congés d'employés, hors périmètre
 # Doit précéder les employés et les postes de travail (MigrationHrEmployee remplace les calendriers absents)
 # Calendrier 4 « Standard 40 heures/semaine » de la société 2 (Delta Line, non reprise), utilisé par elle seule : non repris
 where_calendrier = "t.company_id is distinct from 2"
@@ -396,4 +398,311 @@ SQL="""
 """
 cr_dst.execute(SQL)
 cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Équipes commerciales *****************************************************
+# 6 équipes (Ventes, R&D, Prod, et 3 archivées) : ids identiques pour les 3 standard ; eBay, R&D, Prod en plus en v16
+# Étiquettes CRM (58) : reprises ici, utilisées aussi par les devis ; pistes CRM avec la reprise 6
+MigrationTable(db_src,db_dst,'crm_team')
+MigrationTable(db_src,db_dst,'crm_team_member')
+MigrationTable(db_src,db_dst,'crm_tag')
+MigrationIrModelData(db_src,db_dst,['crm.team'])
+#******************************************************************************
+
+
+# ** Conditions de paiement ***************************************************
+# 6 conditions copiées avec les ids de la v16, échéances converties au format v20 (voir MigrationConditionsPaiement)
+MigrationConditionsPaiement(db_src,db_dst)
+# Conditions des clients et des fournisseurs : propriétés en v16, champs jsonb par société en v20 (société 1 seulement)
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_payment_term_id',where="p.company_id=1")
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_supplier_payment_term_id',where="p.company_id=1")
+#******************************************************************************
+
+
+# ** Ventes *******************************************************************
+# Modèle de devis « Devis DM V1 » (utilisé par 231 commandes, sans lignes ni options) : groupe supprimé en v20, modèles
+# toujours disponibles ; template_type : nouvelle colonne obligatoire (valeur par défaut d'Odoo) ; name : texte en v16,
+# traduisible (jsonb) en v20
+MigrationTable(db_src,db_dst,'sale_order_template',text2jsonb=True,default={'template_type':'quotation'})
+MigrationTable(db_src,db_dst,'sale_order_template_line')
+
+# Méthodes de livraison (5, prix fixe : Poste A 15.-, Express International...), utilisées par 3 commandes et 1 transfert
+MigrationTable(db_src,db_dst,'delivery_carrier')
+MigrationIrModelData(db_src,db_dst,['delivery.carrier'])
+
+# Commandes (397) ; procurement_group_id => stock_reference (plus bas)
+# Positions fiscales (384 commandes) : avec la comptabilité (ids différents en v20, l10n_ch)
+# document_tax_mode : obligatoire en v20, réglage de la société (prix hors taxe)
+MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excluded','locked':False})
+# État « done » (verrouillée, 9 commandes) supprimé en v17 => « sale » verrouillée (locked)
+cr_dst.execute("update sale_order set state='sale', locked=true where state='done'")
+cnx_dst.commit()
+# Lignes (1 266) : product_uom => product_uom_id ; customer_lead (délai client, 60 lignes) : décimal en v16, entier en v20
+# Taxes des lignes (account_tax_sale_order_line_rel) : avec la comptabilité (ids des taxes différents)
+MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'},exclure=['customer_lead'],default={'customer_lead':0})
+cr_src.execute("select id,customer_lead from sale_order_line where coalesce(customer_lead,0)<>0")
+execute_values(cr_dst,"update sale_order_line l set customer_lead=s.customer_lead from (values %s) as s(id, customer_lead) where s.id=l.id",
+    [(r['id'],int(round(r['customer_lead']))) for r in cr_src.fetchall()])
+# Prix technique (nouveau, prix unitaire avant modification manuelle) et entrepôt de la ligne (stocké en v20)
+cr_dst.execute("update sale_order_line set technical_price_unit=price_unit where technical_price_unit is null")
+cr_dst.execute("update sale_order_line l set warehouse_id=o.warehouse_id from sale_order o where o.id=l.order_id")
+cnx_dst.commit()
+MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
+# Incoterm des commandes (2, EXW) : ids différents en v20 => par le code
+cr_src.execute("select s.id,i.code from sale_order s join account_incoterms i on i.id=s.incoterm")
+for row in cr_src.fetchall():
+    cr_dst.execute("update sale_order set incoterm=(select id from account_incoterms where code=%s) where id=%s",[row['code'],row['id']])
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Achats *******************************************************************
+# Commandes (195) : notes => note ; pas d'état « done » en v16
+MigrationTable(db_src,db_dst,'purchase_order',rename={'notes':'note'},default={'document_tax_mode':'tax_excluded','locked':False})
+cr_dst.execute("update purchase_order set state='purchase', locked=true where state='done'")
+cnx_dst.commit()
+# Lignes (377) : product_uom => uom_id ; remise (nouvelle) à 0 ; prix technique = prix unitaire
+MigrationTable(db_src,db_dst,'purchase_order_line',rename={'product_uom':'uom_id'},default={'discount':0})
+SQL="""
+    update purchase_order_line l set
+        technical_price_unit   = l.price_unit,
+        price_unit_product_uom = case when l.display_type is null then l.price_unit * pu.factor / lu.factor end,
+        qty_to_invoice_raw     = l.product_qty - coalesce(l.qty_invoiced,0)
+    from product_product p, product_template t, uom_uom pu, uom_uom lu
+    where p.id=l.product_id and t.id=p.product_tmpl_id and pu.id=t.uom_id and lu.id=l.uom_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'purchase_order_stock_picking_rel')
+MigrationDevisesParCode(db_src,db_dst,['purchase_order','purchase_order_line'])
+#******************************************************************************
+
+
+# Les mises à jour qui suivent la copie se font sans contrôle des clés étrangères, comme la copie (MigrationTable) :
+# PostgreSQL revérifie tous les liens d'une ligne modifiée deux fois dans la même transaction (ex : mouvement d'un OF
+# pas encore copié) ; les liens orphelins sont contrôlés après le lancement
+sans_controle = set()
+def ControleCles(tables,actif):
+    for table in tables:
+        cr_dst.execute("alter table "+table+(" enable" if actif else " disable")+" trigger all")
+        (sans_controle.discard if actif else sans_controle.add)(table)
+    cnx_dst.commit()
+@atexit.register
+def RetablirControleCles():
+    # Le script s'est arrêté (erreur) avant de réactiver les contrôles : réactivés avec une nouvelle connexion
+    if sans_controle:
+        cnx,cr = GetCR(db_dst)
+        for table in sans_controle:
+            cr.execute("alter table "+table+" enable trigger all")
+        cnx.commit()
+        print("Contrôles des clés étrangères réactivés : %s"%sorted(sans_controle))
+
+
+# ** Fabrication **************************************************************
+# Ordres de fabrication (287) : product_uom_id => uom_id ; date_planned_start / finished => date_start / date_finished
+# (date_start obligatoire en v20) ; pas de lots ; procurement_group_id => production_group_id
+# Champs d'is_dynamicmotion20 (is_date_planifiee, is_duree, is_date_livraison, is_sale_id) repris avec la table ;
+# is_date_fin (calculé et stocké, nouveau) calculé plus bas
+MigrationTable(db_src,db_dst,'mrp_production',rename={'product_uom_id':'uom_id'},default={'date_start':'1970-01-01'})
+ControleCles(['mrp_production'],False)
+cr_src.execute("select id, date_planned_start, date_planned_finished, date_start, date_finished, procurement_group_id from mrp_production")
+productions = cr_src.fetchall()
+cr_dst.execute("delete from mrp_production_stock_lot_rel; delete from mrp_production_group_rel; update mrp_production set production_group_id=null; delete from mrp_production_group;")
+for p in productions:
+    cr_dst.execute("update mrp_production set date_start=%s, date_finished=%s where id=%s",
+        [p['date_start'] or p['date_planned_start'], p['date_finished'] or p['date_planned_finished'], p['id']])
+# Groupe de production (reliquats d'un même OF) : un par groupe d'approvisionnement de la v16 (même id, même nom)
+cr_src.execute("select distinct g.id, g.name, g.create_uid, g.create_date, g.write_uid, g.write_date from procurement_group g join mrp_production p on p.procurement_group_id=g.id")
+for g in cr_src.fetchall():
+    cr_dst.execute("insert into mrp_production_group (id,name,create_uid,create_date,write_uid,write_date) values (%s,%s,%s,%s,%s,%s)",
+        [g['id'],g['name'],g['create_uid'],g['create_date'],g['write_uid'],g['write_date']])
+for p in productions:
+    if p['procurement_group_id']:
+        cr_dst.execute("update mrp_production set production_group_id=%s where id=%s",[p['procurement_group_id'],p['id']])
+# Date de fin planifiée du calendrier des OF (is_date_fin, is_dynamicmotion20) : même calcul que _compute_is_date_fin
+cr_dst.execute("update mrp_production set is_date_fin = case when is_date_planifiee is not null then is_date_planifiee + coalesce(is_duree,0) * interval '1 hour' end")
+cnx_dst.commit()
+ControleCles(['mrp_production'],True)
+SetSequence(cr_dst,cnx_dst,'mrp_production_group')
+
+# Ordres de travail (838) : date_planned_start / finished => date_start / date_finished (dates réelles si commencé, sinon
+# planifiées, comme les OF) ; product_id, product_uom_id : liés à l'OF en v20 ; dépendances entre ordres de travail (596)
+MigrationTable(db_src,db_dst,'mrp_workorder')
+ControleCles(['mrp_workorder'],False)
+cr_src.execute("select id, date_planned_start, date_planned_finished, date_start, date_finished from mrp_workorder")
+execute_values(cr_dst,"update mrp_workorder w set date_start=s.date_start, date_finished=s.date_finished from (values %s) as s(id, date_start, date_finished) where s.id=w.id",
+    [(r['id'], r['date_start'] or r['date_planned_start'], r['date_finished'] or r['date_planned_finished']) for r in cr_src.fetchall()],
+    template="(%s, %s::timestamp, %s::timestamp)")
+cnx_dst.commit()
+ControleCles(['mrp_workorder'],True)
+MigrationTable(db_src,db_dst,'mrp_workorder_dependencies_rel')
+# Blocages du planning des postes de travail par les ordres de travail (mrp_workorder.leave_id) : absences des
+# ressources des postes (739 des 745 resource_calendar_leaves ; les 6 autres sont des congés d'employés, hors périmètre)
+# holiday_id et time_type supprimés en v20
+MigrationTable(db_src,db_dst,'resource_calendar_leaves',where="t.id in (select leave_id from mrp_workorder where leave_id is not null)")
+
+# Suivi des temps des ordres de travail (3 436) : types de pertes identiques en v20 (mêmes ids et identifiants
+# externes mrp.block_reason*) ; loss_type (lié au type de perte en v20) et cost_already_recorded non repris
+MigrationTable(db_src,db_dst,'mrp_workcenter_productivity')
+#******************************************************************************
+
+
+# ** Démontages ***************************************************************
+# Repris avant les mouvements : 23 mouvements de la v16 pointent vers un démontage (unbuild_id, consume_unbuild_id)
+# 3 démontages ; product_uom_id => uom_id ; pas de lots
+# Rebuts (stock_scrap, 2) : modèle supprimé en v20, le rebut est le mouvement lui-même (scrapped => is_scrap, repris
+# avec les mouvements)
+MigrationTable(db_src,db_dst,'mrp_unbuild',rename={'product_uom_id':'uom_id'})
+#******************************************************************************
+
+
+# ** Réparations (en-têtes) ***************************************************
+# Reprises avant les mouvements : 47 mouvements de la v16 pointent vers une réparation (stock_move.repair_id)
+# 26 réparations, toutes sur WH/Stock ; product_uom => uom_id
+# Nouvelles colonnes obligatoires en v20 : type d'opération « Réparations » de l'entrepôt de l'emplacement de la v16 et
+# emplacements de ce type (comme les calculs d'Odoo : location_dest_id, parts_location_id, recycle_location_id) ;
+# produit réparé pris et remis sur l'emplacement de la v16 (product_location_src_id / dest_id)
+# A reprendre avec la reprise 6 : pièces (repair_line, 24) et prestations (repair_fee, 23), description (23) et notes du
+# devis (18) (champs supprimés en v20), garantie (guarantee_limit => under_warranty), facturation (invoice_id, 15)
+# schedule_date : obligatoire en v20, vide sur 5 réparations => date de création (valeur par défaut d'Odoo : maintenant)
+MigrationTable(db_src,db_dst,'repair_order',rename={'product_uom':'uom_id'},default={
+    'schedule_date'           : '1970-01-01',
+    'picking_type_id'         : 0,
+    'location_dest_id'        : 0,
+    'parts_location_id'       : 0,
+    'recycle_location_id'     : 0,
+    'product_location_src_id' : 0,
+    'product_location_dest_id': 0,
+})
+ControleCles(['repair_order'],False)
+SQL="""
+    update repair_order r set
+        picking_type_id          = t.id,
+        product_location_src_id  = r.location_id,
+        product_location_dest_id = r.location_id,
+        location_dest_id         = t.default_location_dest_id,
+        parts_location_id        = t.default_remove_location_dest_id,
+        recycle_location_id      = t.default_recycle_location_dest_id
+    from stock_picking_type t join stock_warehouse w on w.id=t.warehouse_id
+    where t.code='repair_operation' and w.lot_stock_id=r.location_id
+"""
+cr_dst.execute(SQL)
+cr_src.execute("select id,create_date from repair_order where schedule_date is null")
+for row in cr_src.fetchall():
+    cr_dst.execute("update repair_order set schedule_date=%s where id=%s",[row['create_date'],row['id']])
+cr_dst.execute("select name from repair_order where picking_type_id=0")
+sans_type = [row['name'] for row in cr_dst.fetchall()]
+if sans_type:
+    print("ATTENTION : réparations sans type d'opération (emplacement hors stock d'un entrepôt) : %s"%sans_type)
+cnx_dst.commit()
+ControleCles(['repair_order'],True)
+#******************************************************************************
+
+
+# ** Transferts et mouvements de stock ****************************************
+# Transferts (749) : group_id => stock_reference (plus bas), date et immediate_transfer supprimés
+MigrationTable(db_src,db_dst,'stock_picking')
+# Retour de (return_id, nouveau en v20) : transfert d'origine des mouvements retournés
+SQL_RETOUR="""
+    update stock_picking p set return_id=r.picking_id
+    from (
+        select m.picking_id as id, min(om.picking_id) as picking_id
+        from stock_move m join stock_move om on om.id=m.origin_returned_move_id
+        where m.picking_id is not null and om.picking_id is not null group by m.picking_id
+    ) r
+    where r.id=p.id
+"""
+
+# Mouvements (4 345) : product_uom => uom_id ; quantity_done => quantity + picked (calculés plus bas avec les lignes) ;
+# scrapped => is_scrap ; description_picking => description_picking_manual (libellé saisi, ex : ligne de commande)
+# Non repris (supprimés en v20) : name, product_packaging_id, created_purchase_line_id, manual_consumption, package_level_id
+MigrationTable(db_src,db_dst,'stock_move',rename={'product_uom':'uom_id','scrapped':'is_scrap','description_picking':'description_picking_manual'})
+
+# Lignes de mouvement (3 835) : product_uom_id => uom_id ; qty_done (fait) et reserved_uom_qty (réservé) => quantity,
+# picked si une quantité est faite (en v20, une seule quantité : réservée tant que picked est faux)
+MigrationTable(db_src,db_dst,'stock_move_line',rename={'product_uom_id':'uom_id'})
+ControleCles(['stock_picking','stock_move','stock_move_line'],False)
+cr_dst.execute(SQL_RETOUR) # return_id des transferts (mouvements nécessaires)
+cnx_dst.commit()
+cr_src.execute("select id, qty_done, reserved_uom_qty from stock_move_line")
+lignes = cr_src.fetchall()
+execute_values(cr_dst,"""
+    update stock_move_line l set
+        quantity = case when s.qty_done<>0 then s.qty_done else s.reserved_uom_qty end,
+        picked   = s.qty_done<>0
+    from (values %s) as s(id, qty_done, reserved_uom_qty)
+    where s.id=l.id
+""",[(r['id'],r['qty_done'] or 0,r['reserved_uom_qty'] or 0) for r in lignes],page_size=5000)
+cnx_dst.commit()
+# Mouvements : quantité = quantité faite si le mouvement est fait, sinon somme de ses lignes (dans l'unité du mouvement)
+cr_src.execute("select id, quantity_done from stock_move where state='done'")
+execute_values(cr_dst,"""
+    update stock_move m set quantity=s.quantity_done, picked=true
+    from (values %s) as s(id, quantity_done) where s.id=m.id
+""",[(r['id'],r['quantity_done'] or 0) for r in cr_src.fetchall()],page_size=5000)
+SQL="""
+    update stock_move m set
+        quantity = coalesce((select sum(l.quantity * lu.factor / mu.factor)
+                             from stock_move_line l join uom_uom lu on lu.id=l.uom_id where l.move_id=m.id),0),
+        picked   = exists (select 1 from stock_move_line l where l.move_id=m.id and l.picked)
+    from uom_uom mu
+    where mu.id=m.uom_id and m.state<>'done'
+"""
+cr_dst.execute(SQL)
+# Quantités dans l'unité de l'article (stockées en v20)
+precision = "(select digits from decimal_precision where name='Product Unit')"
+for table in ['stock_move','stock_move_line']:
+    SQL="""
+        update """+table+""" x set quantity_product_uom = round((x.quantity * xu.factor / pu.factor)::numeric, """+precision+""")
+        from uom_uom xu, product_product p, product_template t, uom_uom pu
+        where xu.id=x.uom_id and p.id=x.product_id and t.id=p.product_tmpl_id and pu.id=t.uom_id
+    """
+    cr_dst.execute(SQL)
+cnx_dst.commit()
+ControleCles(['stock_picking','stock_move','stock_move_line'],True)
+MigrationTable(db_src,db_dst,'stock_move_move_rel')
+MigrationTable(db_src,db_dst,'stock_move_line_consume_rel')
+#******************************************************************************
+
+
+# ** Valorisation des stocks **************************************************
+# stock_valuation_layer (3 490 couches, supprimé en v20) => valeur du mouvement (stock_move.value) ; voir
+# MigrationValorisationStock ; catégorie en coût standard, valorisation manuelle (périodique) en v16
+MigrationValorisationStock(db_src,db_dst)
+#******************************************************************************
+
+
+# ** Groupes d'approvisionnement => références de stock ***********************
+# procurement_group (807, supprimé en v20) => stock_reference (mêmes ids) et ses liens avec les mouvements, les
+# commandes de vente et d'achat et les ordres de fabrication
+MigrationTable(db_src,db_dst,'procurement_group','stock_reference')
+cr_dst.execute("delete from stock_reference_move_rel; delete from stock_reference_sale_rel; delete from stock_reference_purchase_rel; delete from stock_reference_production_rel;")
+liens = [
+    ("stock_reference_move_rel",       "move_id",       "select id, group_id from stock_move where group_id is not null"),
+    ("stock_reference_sale_rel",       "sale_id",       "select id, procurement_group_id from sale_order where procurement_group_id is not null union select sale_id, id from procurement_group where sale_id is not null"),
+    ("stock_reference_purchase_rel",   "purchase_id",   "select id, group_id from purchase_order where group_id is not null"),
+    ("stock_reference_production_rel", "production_id", "select id, procurement_group_id from mrp_production where procurement_group_id is not null"),
+]
+for table,colonne,SQL in liens:
+    cr_src.execute(SQL)
+    lignes = [tuple(row.values()) for row in cr_src.fetchall()]
+    if lignes:
+        execute_values(cr_dst,"insert into "+table+" ("+colonne+",reference_id) values %s on conflict do nothing",lignes,page_size=5000)
+    print("%s : %s liens"%(table,len(lignes)))
+cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Séquences ****************************************************************
+# Commandes de vente et d'achat (les OF et transferts ont la séquence de leur type d'opération, déjà recalée)
+for code in ['sale.order','purchase.order']:
+    cr_src.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
+    seq_src = cr_src.fetchone()
+    cr_dst.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
+    seq_dst = cr_dst.fetchone()
+    if seq_src and seq_dst:
+        MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
+    else:
+        print("Séquence %s : absente (source %s, destination %s)"%(code,seq_src,seq_dst))
 #******************************************************************************

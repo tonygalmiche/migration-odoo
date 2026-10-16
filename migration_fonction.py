@@ -1514,6 +1514,10 @@ def GetFiscalPositionPartner(cr,partner_id):
 
 
 def GetTraduction(cr,model,field,res_id):
+    # ir_translation supprimé en v16 (traductions dans des colonnes jsonb) : pas de traduction à chercher
+    cr.execute("select to_regclass('ir_translation') as t")
+    if not cr.fetchone()['t']:
+        return False
     name=model+","+field
     SQL="""
         SELECT value 
