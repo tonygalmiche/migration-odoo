@@ -182,6 +182,72 @@ def Reprise6():
     #**************************************************************************
 
 
+    # ** Agenda ***************************************************************
+    # Calendriers des utilisateurs (nouveaux en v20) : chaque utilisateur interne a son calendrier principal
+    # (calendar_calendar et calendar_user propriétaire), créé avec l'utilisateur (_generate_primary_calendar) ; les
+    # utilisateurs copiés en SQL n'en ont pas => créés comme le fait Odoo (nom de l'utilisateur, confidentialité du paramètre
+    # calendar.default_privacy), puis primary_calendar_id (calculé et stocké) recalculé
+    cr_dst.execute("select value from ir_config_parameter where key='calendar.default_privacy'")
+    res = cr_dst.fetchone()
+    confidentialite = res['value'] if res else 'public'
+    cr_dst.execute("""
+        select u.id, p.name from res_users u join res_partner p on p.id=u.partner_id
+        where not u.share and not exists (select 1 from calendar_user c where c.user_id=u.id and c.is_primary and c.access_role='owner')
+    """)
+    for row in cr_dst.fetchall():
+        cr_dst.execute("insert into calendar_calendar (name,calendar_default_privacy,create_uid,write_uid,create_date,write_date) values (%s,%s,1,1,now(),now()) returning id",[row['name'],confidentialite])
+        cr_dst.execute("""
+            insert into calendar_user (calendar_id,user_id,name,access_role,is_primary,is_filter_active,is_filter_checked,create_uid,write_uid,create_date,write_date)
+            values (%s,%s,%s,'owner',true,true,true,1,1,now(),now())
+        """,[cr_dst.fetchone()['id'],row['id'],row['name']])
+    cr_dst.execute("update res_users u set primary_calendar_id=c.calendar_id from calendar_user c where c.user_id=u.id and c.is_primary and c.access_role='owner'")
+    cnx_dst.commit()
+
+    # Rendez-vous (1 765 dont 8 sans organisateur), participants (1 812), rappels (1), filtres de l'agenda (21)
+    # Rendez-vous des congés (6, hr.leave, hors périmètre) et leurs participants : non repris
+    # Aucune récurrence, aucune catégorie ; google_id / need_sync : synchronisation Google jamais utilisée
+    evenements = "select id from calendar_event where res_model is distinct from 'hr.leave'"
+    MigrationTable(db_src,db_dst,'calendar_event',where="t.res_model is distinct from 'hr.leave'",default={'is_draft':False})
+    MigrationTable(db_src,db_dst,'calendar_attendee',where="t.event_id in ("+evenements+")")
+    MigrationTable(db_src,db_dst,'calendar_event_res_partner_rel',where="t.calendar_event_id in ("+evenements+")")
+    MigrationTable(db_src,db_dst,'calendar_alarm_calendar_event_rel',where="t.calendar_event_id in ("+evenements+")")
+    # Filtres : case cochée = partner_checked en v16, active en v20 (filtre décoché = archivé, supprimé au bout d'un mois)
+    MigrationTable(db_src,db_dst,'calendar_filters',rename={'partner_checked':'active'},exclure=['active'])
+
+    # Calendriers des collègues : en v16, les personnes suivies (calendar_filters) restaient d'une ouverture à l'autre ;
+    # en v20, « Rencontre avec » est vidé à chaque ouverture de l'agenda (init_partner_filters), seuls les calendriers
+    # partagés restent (calendar_user, rôle « writer » : modification des rendez-vous non privés, comme en v16)
+    # => calendrier de chaque utilisateur interne actif partagé avec tous ses collègues, décoché par défaut, coché pour
+    # ceux qu'il suivait en v16 (filtre coché) ; OdooBot exclu
+    cr_dst.execute("delete from calendar_user where access_role<>'owner'")
+    cr_src.execute("""
+        select f.user_id, u.id as suivi_id from calendar_filters f join res_users u on u.partner_id=f.partner_id
+        where f.active and f.partner_checked
+    """)
+    suivis = {(row['user_id'],row['suivi_id']) for row in cr_src.fetchall()}
+    cr_dst.execute("""
+        select u.id, u.primary_calendar_id, p.name from res_users u join res_partner p on p.id=u.partner_id
+        where u.active and not u.share and u.id<>1 and u.primary_calendar_id is not null order by u.id
+    """)
+    utilisateurs = cr_dst.fetchall()
+    for u in utilisateurs:
+        for collegue in utilisateurs:
+            if collegue['id']==u['id']:
+                continue
+            cr_dst.execute("""
+                insert into calendar_user (calendar_id,user_id,name,access_role,is_primary,is_filter_active,is_filter_checked,
+                    filter_color,create_uid,write_uid,create_date,write_date)
+                values (%s,%s,%s,'writer',false,true,%s,%s,1,1,now(),now())
+            """,[collegue['primary_calendar_id'],u['id'],collegue['name'],(u['id'],collegue['id']) in suivis,collegue['id']%11+1])
+    cnx_dst.commit()
+    # Modèle du document lié (1 piste CRM) : ids d'ir_model différents => par le nom ; calendrier : celui de l'organisateur
+    # (même calcul que _compute_calendar_id), aucun pour les rendez-vous sans organisateur
+    cr_dst.execute("update calendar_event e set res_model_id=m.id from ir_model m where m.model=e.res_model")
+    cr_dst.execute("update calendar_event e set calendar_id=u.primary_calendar_id from res_users u where u.id=e.user_id")
+    cnx_dst.commit()
+    #**************************************************************************
+
+
     # ** Contenu des réparations **********************************************
     # Pièces : repair_line supprimé en v20, les pièces sont des mouvements de stock de la réparation (repair_line_type)
     # - 23 pièces faites : mouvement déjà repris avec les transferts (move_id de la ligne) => type « add »
@@ -447,6 +513,14 @@ MigrationIrPropertyJsonb(db_src,db_dst,'product.template','responsible_id',where
 # « Prix CH » (séquence 1), elle ne change pas la liste par défaut des clients
 MigrationTable(db_src,db_dst,'product_pricelist')
 MigrationTable(db_src,db_dst,'product_pricelist_item')
+# Groupe de pays des listes de prix (« Suisse et Liechtenstein », 2 listes) : ids différents en v20 (5 => 7) => par le nom
+cr_dst.execute("delete from res_country_group_pricelist_rel")
+cr_src.execute("select r.pricelist_id, g.name->>'en_US' as nom from res_country_group_pricelist_rel r join res_country_group g on g.id=r.res_country_group_id")
+for row in cr_src.fetchall():
+    cr_dst.execute("insert into res_country_group_pricelist_rel (pricelist_id,res_country_group_id) select %s,id from res_country_group where name->>'en_US'=%s on conflict do nothing",[row['pricelist_id'],row['nom']])
+cnx_dst.commit()
+# Produits optionnels (1 lien)
+MigrationTable(db_src,db_dst,'product_optional_rel')
 # Liste de prix des clients (29 partenaires ; la 30e valeur est la valeur par défaut de la société 2) : propriété en v16, champ jsonb par société en v20
 MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_product_pricelist','specific_property_product_pricelist',where="p.company_id=1")
 
@@ -626,6 +700,7 @@ MigrationTable(db_src,db_dst,'crm_team')
 # Alias e-mail des équipes (obligatoire) : ids de la v16 absents en v20 => recréés
 MigrationMailAlias(db_src,db_dst,'crm_team')
 MigrationTable(db_src,db_dst,'crm_team_member')
+MigrationTable(db_src,db_dst,'team_favorite_user_rel')  # équipes favorites des utilisateurs (6)
 MigrationTable(db_src,db_dst,'crm_tag')
 MigrationIrModelData(db_src,db_dst,['crm.team'])
 #******************************************************************************
@@ -650,6 +725,10 @@ MigrationTable(db_src,db_dst,'sale_order_template_line')
 # Méthodes de livraison (5, prix fixe : Poste A 15.-, Express International...), utilisées par 3 commandes et 1 transfert
 MigrationTable(db_src,db_dst,'delivery_carrier')
 MigrationIrModelData(db_src,db_dst,['delivery.carrier'])
+# Pays des méthodes de livraison (3 méthodes limitées à la Suisse, même id en v20) et préfixe postal « CH » (lié à aucune)
+MigrationTable(db_src,db_dst,'delivery_carrier_country_rel')
+MigrationTable(db_src,db_dst,'delivery_zip_prefix')
+MigrationTable(db_src,db_dst,'delivery_zip_prefix_rel')
 
 # Commandes (397) ; procurement_group_id => stock_reference (plus bas)
 # Positions fiscales (384 commandes) : avec la comptabilité (ids différents en v20, l10n_ch)
@@ -658,6 +737,8 @@ MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excl
 # État « done » (verrouillée, 9 commandes) supprimé en v17 => « sale » verrouillée (locked)
 cr_dst.execute("update sale_order set state='sale', locked=true where state='done'")
 cnx_dst.commit()
+# Étiquettes des commandes (66 liens sur 55 commandes, étiquettes CRM reprises avec les équipes)
+MigrationTable(db_src,db_dst,'sale_order_tag_rel')
 # Lignes (1 266) : product_uom => product_uom_id ; customer_lead (délai client, 60 lignes) : décimal en v16, entier en v20
 # Taxes des lignes (account_tax_sale_order_line_rel) : avec la comptabilité (ids des taxes différents)
 MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'},exclure=['customer_lead'],default={'customer_lead':0})
@@ -1081,7 +1162,8 @@ MigrationIrPropertyJsonb(db_src,db_dst,'product.template','property_account_expe
 MigrationIrPropertyJsonb(db_src,db_dst,'product.category','property_stock_valuation_account_id',where="p.company_id=1") # 3 catégories
 
 # Taxes des articles, des lignes de commande de vente et d'achat (ids des taxes de la v16)
-for table in ['product_taxes_rel','product_supplier_taxes_rel','account_tax_sale_order_line_rel','account_tax_purchase_order_line_rel']:
+# Taxes groupées : taxe 95 (TVA 7,7 % sur service à l'étranger, autoliquidation, archivée) = taxes 91 et 92
+for table in ['product_taxes_rel','product_supplier_taxes_rel','account_tax_sale_order_line_rel','account_tax_purchase_order_line_rel','account_tax_filiation_rel']:
     MigrationTable(db_src,db_dst,table)
 
 # Identifiants externes des modèles repris (journaux : par la correspondance par code, sans identifiant en v16)
