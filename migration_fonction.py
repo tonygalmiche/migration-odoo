@@ -2654,3 +2654,87 @@ def SupprimerChatterOrphelin(db_dst):
             if cr_dst.rowcount:
                 print("SupprimerChatterOrphelin : %s : %s : %s lignes supprimées"%(table,row['model'],cr_dst.rowcount))
     cnx_dst.commit()
+
+
+def MigrationMailAlias(db_src,db_dst,table):
+    """Alias e-mail (mail_alias) des enregistrements d'une table copiée avec les ids de la source (crm_team, project_project...) :
+    la table garde les alias_id de la source, absents de la destination ou qui y désignent un autre alias (ids différents),
+    alors que alias_id est obligatoire (équipes commerciales, projets).
+    Les alias de la source sont recréés : modèles retrouvés par leur nom, domaine de la société de l'enregistrement,
+    statut « not_tested » comme à la création en v20. Les anciens alias des mêmes modèles (base vierge ou reprise
+    précédente) perdent d'abord leur nom (index unique sur le nom et le domaine), puis sont supprimés s'ils ne servent plus."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_dst.execute("select id,model from ir_model")
+    models_dst = {row['model']:row['id'] for row in cr_dst.fetchall()}
+    cr_dst.execute("select id,name from mail_alias_domain")
+    domaines = {row['id']:row['name'] for row in cr_dst.fetchall()}
+    cr_src.execute("""
+        select t.id as rec_id, a.*, m.model, pm.model as parent_model
+        from """+table+""" t join mail_alias a on a.id=t.alias_id
+        join ir_model m on m.id=a.alias_model_id left join ir_model pm on pm.id=a.alias_parent_model_id
+        order by t.id
+    """)
+    rows = cr_src.fetchall()
+    if not rows:
+        return
+    ids_models = tuple({models_dst[row['model']] for row in rows})
+    cr_dst.execute("select id from mail_alias where alias_model_id in %s",[ids_models])
+    anciens = tuple(row['id'] for row in cr_dst.fetchall())
+    if anciens:
+        cr_dst.execute("update mail_alias set alias_name=null, alias_full_name=null where id in %s",[anciens])
+    societe = 'company_id' in GetChamps(cr_dst,table)
+    for row in rows:
+        domaine_id = None
+        if societe:
+            cr_dst.execute("select c.alias_domain_id from "+table+" t join res_company c on c.id=t.company_id where t.id=%s",[row['rec_id']])
+            res = cr_dst.fetchone()
+            domaine_id = res and res['alias_domain_id']
+        nom_complet = row['alias_name']
+        if nom_complet and domaine_id:
+            nom_complet = "%s@%s"%(nom_complet,domaines[domaine_id])
+        bounced = row['alias_bounced_content']
+        if isinstance(bounced,(dict,list)):
+            bounced = json.dumps(bounced)
+        cr_dst.execute("""
+            insert into mail_alias (alias_domain_id,alias_model_id,alias_force_thread_id,alias_parent_model_id,alias_parent_thread_id,
+                alias_name,alias_full_name,alias_contact,alias_status,alias_bounced_content,alias_defaults,alias_incoming_local,
+                create_uid,write_uid,create_date,write_date)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,'not_tested',%s,%s,false,%s,%s,%s,%s) returning id
+        """,[domaine_id,models_dst[row['model']],row['alias_force_thread_id'],models_dst.get(row['parent_model']),row['alias_parent_thread_id'],
+             row['alias_name'],nom_complet,row['alias_contact'],bounced,row['alias_defaults'],
+             row['create_uid'],row['write_uid'],row['create_date'],row['write_date']])
+        cr_dst.execute("update "+table+" set alias_id=%s where id=%s",[cr_dst.fetchone()['id'],row['rec_id']])
+    if anciens:
+        cr_dst.execute("delete from mail_alias a where a.id in %s and not exists (select 1 from "+table+" t where t.alias_id=a.id)",[anciens])
+    cnx_dst.commit()
+    print("MigrationMailAlias : %s : %s alias"%(table,len(rows)))
+
+
+def ControleOrphelins(db_dst,tables=[]):
+    """Lecture seule : compte les valeurs des clés étrangères qui ne pointent sur rien. MigrationTable copie les tables
+    triggers désactivés, donc sans contrôle des clés : un lien vers une table pas encore reprise, ou vers des ids
+    différents en v20 (alias, langues, devises...), passe sans erreur et ne se voit qu'à l'usage.
+    tables : tables à contrôler (toutes si vide). A appeler en fin de reprise ; affiche une ligne par colonne en défaut.
+    Contrairement à controle-integrite-bdd.sql (revalidation des contraintes), ne modifie rien et liste tout."""
+    cnx_dst,cr_dst=GetCR(db_dst)
+    SQL="""
+        select t.relname as tab, a.attname as col, cf.relname as ftab, af.attname as fcol
+        from pg_constraint c join pg_class t on t.oid=c.conrelid join pg_class cf on cf.oid=c.confrelid
+        join pg_attribute a on a.attrelid=c.conrelid and a.attnum=c.conkey[1]
+        join pg_attribute af on af.attrelid=c.confrelid and af.attnum=c.confkey[1]
+        where c.contype='f' and array_length(c.conkey,1)=1
+        order by 1,2
+    """
+    cr_dst.execute(SQL)
+    total = 0
+    for row in cr_dst.fetchall():
+        if tables and row['tab'] not in tables:
+            continue
+        cr_dst.execute('select count(*) as nb from "%s" t where t."%s" is not null and not exists (select 1 from "%s" f where f."%s"=t."%s")'%(row['tab'],row['col'],row['ftab'],row['fcol'],row['col']))
+        nb = cr_dst.fetchone()['nb']
+        if nb:
+            total += nb
+            print("ControleOrphelins : %s.%s => %s : %s orphelins"%(row['tab'],row['col'],row['ftab'],nb))
+    cnx_dst.rollback()
+    print("ControleOrphelins : %s orphelins"%total)

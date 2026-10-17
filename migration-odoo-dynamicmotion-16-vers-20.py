@@ -65,6 +65,183 @@ def MiseEnPageDocuments():
     cnx_dst.commit()
 
 
+# ** Reprise 6 : CRM, projets, contenu des réparations ************************
+def Reprise6():
+
+    # ** CRM ******************************************************************
+    # Étapes : 9 en v16 (les 4 standard, mêmes ids et identifiants externes, et 5 ajoutées) à la place des 4 de la v20
+    # team_id (étape réservée à une équipe) => team_ids en v20 : aucune étape réservée en v16
+    MigrationTable(db_src,db_dst,'crm_stage')
+    # Motifs de perte : les 3 standard (mêmes ids) et « Pas d'intérêt » ; plans récurrents identiques
+    MigrationTable(db_src,db_dst,'crm_lost_reason')
+    MigrationTable(db_src,db_dst,'crm_recurring_plan')
+
+    # Pistes (128 opportunités dont 1 perdue) : date_action_last renommée en v20
+    # mobile (4 pistes, toutes avec un téléphone), email_cc et title (civilité) : supprimés en v20, non repris
+    # Sources, supports et campagnes UTM : aucun sur les pistes
+    MigrationTable(db_src,db_dst,'crm_lead',rename={'date_action_last':'date_automation_last'})
+    MigrationTable(db_src,db_dst,'crm_tag_rel')
+
+    # Langue : ids différents en v20 (fr_FR : 28 en v16, 30 en v20) => par le code
+    cr_src.execute("select c.id,l.code from crm_lead c join res_lang l on l.id=c.lang_id")
+    for row in cr_src.fetchall():
+        cr_dst.execute("update crm_lead set lang_id=(select id from res_lang where code=%s) where id=%s",[row['code'],row['id']])
+    cnx_dst.commit()
+
+    # Colonnes calculées et stockées, nouvelles en v20 : même calcul que crm_lead.py
+    # - won_status : gagnée (probabilité 100 et étape gagnée), perdue (archivée à probabilité 0) ou en cours
+    # - recurring_revenue_prorated : revenu récurrent × probabilité
+    # - email_domain_criterion (recherche des doublons) : « @domaine » de l'e-mail, e-mail complet pour les messageries
+    #   grand public (_MAIL_PROVIDERS d'iap_tools : aucune dans les pistes, les plus courantes reprises ici par sécurité)
+    SQL="""
+        update crm_lead l set won_status=case
+            when l.probability=100 and (select s.is_won from crm_stage s where s.id=l.stage_id) then 'won'
+            when not l.active and l.probability=0 then 'lost'
+            else 'pending' end;
+        update crm_lead set recurring_revenue_prorated=coalesce(recurring_revenue,0)*coalesce(probability,0)/100;
+        update crm_lead set email_domain_criterion=case
+            when split_part(email_normalized,'@',2) in ('gmail.com','hotmail.com','hotmail.fr','outlook.com','outlook.fr',
+                'yahoo.com','yahoo.fr','icloud.com','live.com','live.fr','bluewin.ch','gmx.ch','gmx.de','gmx.net','orange.fr',
+                'free.fr','wanadoo.fr','sfr.fr','laposte.net','protonmail.com','protonmail.ch','proton.me') then email_normalized
+            else '@'||split_part(email_normalized,'@',2) end
+        where email_normalized like '%@%';
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    #**************************************************************************
+
+
+    # ** Projets **************************************************************
+    # Comptes analytiques (39, un par projet, créés en v16 pour les feuilles de temps, non reprises) :
+    # plan « Default » de la v16 => plan de projet de la v20 (même id 1)
+    MigrationTable(db_src,db_dst,'account_analytic_account')
+
+    # Étapes des projets (identiques), étiquettes (14)
+    MigrationTable(db_src,db_dst,'project_project_stage')
+    MigrationTable(db_src,db_dst,'project_tags')
+
+    # Projets (46 dont 7 archivés) : analytic_account_id => account_id
+    # allocated_hours, allow_timesheets, timesheet_product_id (feuilles de temps), allow_subtasks (toujours actif en v20),
+    # partner_email / partner_phone (liés au client) et rating_* (évaluations, désactivées) : supprimés en v20
+    MigrationTable(db_src,db_dst,'project_project',rename={'analytic_account_id':'account_id'},default={'is_template':False})
+    # Alias e-mail des projets (obligatoire) : ids de la v16 absents en v20 => recréés
+    MigrationMailAlias(db_src,db_dst,'project_project')
+    MigrationTable(db_src,db_dst,'project_project_project_tags_rel')
+    MigrationTable(db_src,db_dst,'project_favorite_user_rel')
+    MigrationTable(db_src,db_dst,'project_milestone',default={'sequence':10})
+    MigrationTable(db_src,db_dst,'project_update')
+
+    # Étapes des tâches : 55 étapes de projet et 35 étapes personnelles (« Mes tâches » de 5 utilisateurs), à la place des
+    # 7 étapes personnelles de l'administrateur créées par la v20 (recréées par Odoo à l'ouverture de « Mes tâches »)
+    # auto_validation_kanban_state renommé ; légendes (legend_*) et description supprimées en v20 ; évaluations désactivées
+    MigrationTable(db_src,db_dst,'project_task_type',rename={'auto_validation_kanban_state':'auto_validation_state'},default={
+        'rating_active'       : False,
+        'rating_status'       : 'stage',
+        'rating_status_period': 'monthly',
+    })
+    MigrationTable(db_src,db_dst,'project_task_type_rel')
+
+    # Tâches (27, dont 3 archivées), à la place de la tâche « Bienvenue Administrator ! » créée par la v20
+    # planned_hours => allocated_hours ; date_deadline : date => date-heure
+    # Aucune sous-tâche, tâche récurrente, dépendance ni tâche liée à un jalon ou à une ligne de commande
+    # effective_hours, remaining_hours, progress, overtime... (feuilles de temps) : non repris
+    MigrationTable(db_src,db_dst,'project_task',rename={'planned_hours':'allocated_hours'},default={
+        'state'                : '01_in_progress',
+        'display_in_project'   : True,
+        'is_template'          : False,
+        'has_template_ancestor': False,
+    })
+    # État (obligatoire en v20) : kanban_state et is_closed de la v16 (même correspondance que la migration d'Odoo 17)
+    # normal => en cours, blocked => changements demandés, done => approuvé, étape fermée => fait (aucune en v16)
+    cr_src.execute("select id,kanban_state,is_closed from project_task")
+    for row in cr_src.fetchall():
+        state = '1_done' if row['is_closed'] else {'blocked':'02_changes_requested','done':'03_approved'}.get(row['kanban_state'],'01_in_progress')
+        cr_dst.execute("update project_task set state=%s where id=%s",[state,row['id']])
+    cnx_dst.commit()
+    # Personnes assignées, avec leur étape personnelle (stage_id), étiquettes
+    MigrationTable(db_src,db_dst,'project_task_user_rel')
+    MigrationTable(db_src,db_dst,'project_tags_project_task_rel')
+
+    # Jalons, tâches récurrentes et dépendances : activés sur les 46 projets en v16 ; en v20, groupes donnés à tous les
+    # utilisateurs internes à l'enregistrement d'un projet (_check_project_group_with_field), pas par une copie en SQL
+    # => groupes impliqués par Utilisateur interne et donnés à ses membres, comme pour les entrepôts multiples
+    SQL="""
+        insert into res_groups_implied_rel (gid,hid)
+        select u.res_id, p.res_id from ir_model_data u, ir_model_data p
+        where u.module='base' and u.name='group_user'
+        and p.module='project' and p.name in ('group_project_milestone','group_project_recurring_tasks','group_project_task_dependencies')
+        on conflict do nothing;
+        insert into res_groups_users_rel (gid,uid)
+        select p.res_id, r.uid from ir_model_data p, ir_model_data u join res_groups_users_rel r on r.gid=u.res_id
+        where u.module='base' and u.name='group_user'
+        and p.module='project' and p.name in ('group_project_milestone','group_project_recurring_tasks','group_project_task_dependencies')
+        on conflict do nothing;
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    #**************************************************************************
+
+
+    # ** Contenu des réparations **********************************************
+    # Pièces : repair_line supprimé en v20, les pièces sont des mouvements de stock de la réparation (repair_line_type)
+    # - 23 pièces faites : mouvement déjà repris avec les transferts (move_id de la ligne) => type « add »
+    # - 1 pièce en brouillon (RO/00024, confirmée) : pas encore de mouvement => créé en brouillon, emplacements de la
+    #   réparation (MAP_REPAIR_LINE_TYPE_TO_MOVE_LOCATIONS_FROM_REPAIR : « add » = location_id => location_dest_id)
+    # Prix et taxes des pièces : plus sur la réparation en v20 (facturation par une commande de vente), non repris
+    cr_src.execute("select move_id from repair_line where move_id is not null and type='add'")
+    ids = [row['move_id'] for row in cr_src.fetchall()]
+    if ids:
+        cr_dst.execute("update stock_move set repair_line_type='add' where id in %s",[tuple(ids)])
+    cr_dst.execute("delete from stock_move where repair_id is not null and repair_line_type='add' and state='draft'")
+    cr_src.execute("select * from repair_line where move_id is null and type='add' and state='draft'")
+    for row in cr_src.fetchall():
+        SQL="""
+            insert into stock_move (company_id,date,location_id,location_dest_id,procure_method,product_id,product_uom_qty,product_qty,
+                uom_id,quantity,picked,state,sequence,repair_id,repair_line_type,picking_type_id,reference,
+                create_uid,write_uid,create_date,write_date)
+            select r.company_id,%s,r.location_id,r.location_dest_id,'make_to_stock',%s,%s,%s,%s,0,false,'draft',10,r.id,'add',
+                r.picking_type_id,r.name,%s,%s,%s,%s
+            from repair_order r where r.id=%s
+        """
+        cr_dst.execute(SQL,[row['create_date'],row['product_id'],row['product_uom_qty'],row['product_uom_qty'],row['product_uom'],
+                            row['create_uid'],row['write_uid'],row['create_date'],row['write_date'],row['repair_id']])
+    cnx_dst.commit()
+
+    # Description (23), notes du devis (18), forfaits (repair_fee, 23 lignes) et facture (15) : supprimés en v20
+    # (facturation par une commande de vente) => ajoutés en tête des notes internes, imprimées sur le rapport de réparation
+    # Calculé à partir des notes internes de la v16 : relançable sans doublon
+    cr_src.execute("""
+        select r.id, r.description, r.quotation_notes, r.internal_notes, m.name as facture
+        from repair_order r left join account_move m on m.id=r.invoice_id order by r.id
+    """)
+    for row in cr_src.fetchall():
+        cr_src.execute("select name,product_uom_qty,price_unit,price_subtotal from repair_fee where repair_id=%s order by id",[row['id']])
+        forfaits = cr_src.fetchall()
+        notes = ""
+        if row['description']:
+            notes += "<p><strong>Description :</strong> %s</p>"%html.escape(row['description'])
+        if row['quotation_notes'] and re.sub(r'<[^>]*>|&nbsp;|\s','',row['quotation_notes']):
+            notes += "<p><strong>Notes du devis :</strong></p>%s"%row['quotation_notes']
+        if forfaits:
+            notes += "<p><strong>Forfaits :</strong></p><ul>"
+            for f in forfaits:
+                notes += "<li>%s : %g × %.2f = %.2f</li>"%(html.escape(f['name'] or ''),f['product_uom_qty'],f['price_unit'],f['price_subtotal'] or 0)
+            notes += "</ul>"
+        if row['facture']:
+            notes += "<p><strong>Facture :</strong> %s</p>"%html.escape(row['facture'])
+        if notes:
+            cr_dst.execute("update repair_order set internal_notes=%s where id=%s",[notes+(row['internal_notes'] or ''),row['id']])
+    cnx_dst.commit()
+
+    # Garantie : date de fin de garantie (guarantee_limit, 5 réparations) => case « Sous garantie » si elle n'était pas
+    # dépassée à la date de la réparation
+    cr_src.execute("select id,guarantee_limit,coalesce(schedule_date,create_date::date) as date from repair_order where guarantee_limit is not null")
+    for row in cr_src.fetchall():
+        cr_dst.execute("update repair_order set under_warranty=%s where id=%s",[row['guarantee_limit']>=row['date'],row['id']])
+    cnx_dst.commit()
+    #**************************************************************************
+
+
 # ** res_partner et res_users *************************************************
 # Copiés avec les ids de la source (749 partenaires, 16 utilisateurs dans dynamicmotion16)
 # mobile (44 partenaires, dont 20 sans téléphone) et title (civilité, 163 partenaires) : supprimés d'Odoo en v20, non repris
@@ -446,6 +623,8 @@ cnx_dst.commit()
 # 6 équipes (Ventes, R&D, Prod, et 3 archivées) : ids identiques pour les 3 standard ; eBay, R&D, Prod en plus en v16
 # Étiquettes CRM (58) : reprises ici, utilisées aussi par les devis ; pistes CRM avec la reprise 6
 MigrationTable(db_src,db_dst,'crm_team')
+# Alias e-mail des équipes (obligatoire) : ids de la v16 absents en v20 => recréés
+MigrationMailAlias(db_src,db_dst,'crm_team')
 MigrationTable(db_src,db_dst,'crm_team_member')
 MigrationTable(db_src,db_dst,'crm_tag')
 MigrationIrModelData(db_src,db_dst,['crm.team'])
@@ -1032,3 +1211,12 @@ MigrationTable(db_src,db_dst,'account_move_purchase_order_rel')
 # Devises (ids différents entre v16 et v20)
 MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','account_payment','account_partial_reconcile','account_full_reconcile'])
 #******************************************************************************
+
+
+# ** Reprise 6 : CRM, projets, contenu des réparations (voir Reprise6) *********
+Reprise6()
+#******************************************************************************
+
+
+# Contrôle final (lecture seule) : clés étrangères qui ne pointent sur rien
+ControleOrphelins(db_dst)
