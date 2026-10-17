@@ -5,6 +5,7 @@
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
+import re
 
 
 #** Paramètres ****************************************************************
@@ -23,6 +24,45 @@ def AfficherDuree():
     fin = datetime.now()
     print("Fin   : %s"%fin.strftime('%d/%m/%Y %H:%M:%S'))
     print("Durée : %s"%str(fin-debut).split('.')[0])
+
+
+# ** Mise en page des documents de la société 1 *******************************
+# v16 : agencement « Striped », format A4 ; v20 : séparé en agencement (Light) et style des tableaux (Rayé)
+# Sur une base suisse neuve, l10n_din5008 impose l'agencement DIN 5008 et son format de papier (marges 20 / 10 mm, 70 dpi)
+# Pied de page v16 en citations (<blockquote>) avec texte forcé à 10 px : en v20, les citations ont une barre grise,
+# de l'italique et des marges => pied de page trop haut, réduit et coupé par wkhtmltopdf => un paragraphe avec sauts de ligne, en 11 px
+# (sans taille forcée, la ligne BANK passe sur 2 lignes et le n° de page est coupé)
+# Taille sur le paragraphe et non sur les <span> : sinon la hauteur de ligne reste celle du texte normal (lignes espacées)
+# Adresse de la société en titres <h6> (une ligne par titre) : grande marge sous chaque titre en v20 => un paragraphe
+def MiseEnPageDocuments():
+    cr_dst.execute("select res_id from ir_model_data where module='web' and name='external_layout_standard'")
+    layout_id = cr_dst.fetchone()['res_id']
+    cr_dst.execute("select res_id from ir_model_data where module='base' and name='paperformat_euro'")
+    paperformat_id = cr_dst.fetchone()['res_id']
+    cr_dst.execute("update res_company set external_report_layout_id=%s, report_tables_id='striped', paperformat_id=%s where id=1",[layout_id,paperformat_id])
+    # Format A4 : marge haute et espace de l'en-tête de la v16 (40 / 35 mm au lieu de 52 / 52 => grand blanc sous l'en-tête)
+    # Enregistrement en noupdate : non écrasé par un -u base
+    cr_dst.execute("update report_paperformat set margin_top=40, header_spacing=35 where id=%s",[paperformat_id])
+    cr_src.execute("select report_footer from res_company where id=1")
+    footer = cr_src.fetchone()['report_footer']
+    if footer:
+        for lang in footer:
+            texte = footer[lang]
+            texte = re.sub(r'</blockquote>\s*<blockquote[^>]*>\s*', '<br>', texte)
+            texte = re.sub(r'<blockquote[^>]*>\s*', '<p style="font-size: 11px;">', texte)
+            texte = texte.replace('</blockquote>', '</p>')
+            texte = re.sub(r'font-size:\s*10px;\s*', '', texte)
+            texte = re.sub(r'\s*style=""', '', texte)
+            footer[lang] = texte
+        cr_dst.execute("update res_company set report_footer=%s where id=1",[json.dumps(footer)])
+    cr_src.execute("select company_details from res_company where id=1")
+    details = cr_src.fetchone()['company_details']
+    if details:
+        details = re.sub(r'</h6>\s*<h6>', '<br>', details)
+        details = details.replace('<h6>', '<p style="font-size: 11px;">').replace('</h6>', '</p>')
+        details = re.sub(r'<span style="font-size:\s*11px;">(.*?)</span>', r'\1', details)
+        cr_dst.execute("update res_company set company_details=jsonb_build_object('en_US',%s::text,'fr_FR',%s::text) where id=1",[details,details])
+    cnx_dst.commit()
 
 
 # ** res_partner et res_users *************************************************
@@ -116,6 +156,7 @@ for row in cr_src.fetchall():
     if row['report_footer']:
         cr_dst.execute("update res_company set report_footer=%s where id=%s",[json.dumps(row['report_footer']),row['id']])
 cnx_dst.commit()
+MiseEnPageDocuments()
 
 # URL utilisée par wkhtmltopdf pour charger les CSS et images des rapports : web.base.url n'est pas joignable depuis
 # le serveur => PDF sans mise en page ; non écrasée si déjà présente (port ou hébergement différent)
