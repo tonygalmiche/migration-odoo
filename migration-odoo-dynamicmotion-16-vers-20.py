@@ -6,6 +6,7 @@ from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
 import re
+import hashlib
 
 
 #** Paramètres ****************************************************************
@@ -305,6 +306,125 @@ def Reprise6():
     for row in cr_src.fetchall():
         cr_dst.execute("update repair_order set under_warranty=%s where id=%s",[row['guarantee_limit']>=row['date'],row['id']])
     cnx_dst.commit()
+    #**************************************************************************
+
+
+# ** Reprise 7 : pièces jointes, chatter, activités, filtres favoris ***********
+def Reprise7():
+
+    # ** Pièces jointes *******************************************************
+    # Filestore de production copié tel quel dans le filestore de dynamicmotion20 => données seulement, store_fname
+    # conservé (copier_fichiers=False) ; ids de la v16 conservés (garder_ids), sauf collision avec les pièces jointes
+    # techniques de la v20 (ids 1 à 101)
+    # Repris : factures (406), commandes de vente (109) et d'achat (42), réparations (11), transferts (7), OF (2), projets
+    # et tâches (5), articles et variantes (21), partenaires (5), images des articles (439), des partenaires (223, dont le
+    # logo de la société sur le partenaire 1) et de l'employé (1)
+    # Non repris : pièces jointes techniques (vues, menus, icônes de paiement, tableaux de bord, langues, favicon), types
+    # de congés, invitations des rendez-vous (333 .ics des messages de l'agenda) et 8 pièces jointes sans enregistrement
+    modeles = ('account.move','sale.order','purchase.order','repair.order','stock.picking','mrp.production',
+               'project.project','project.task','product.template','product.product','res.partner','hr.employee')
+    cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles]) # pièces jointes de la v20 (images par défaut, essais)
+    cnx_dst.commit()
+    where = """
+        res_model in %s and coalesce(res_id,0)<>0
+        and coalesce(res_field,'') in ('','image_1920','image_1024','image_512','image_256','image_128')
+    """%str(modeles)
+    ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False,garder_ids=True)
+
+    # Pièce jointe principale des factures (359) ; supprimée en v20 sur les commandes, les articles et les partenaires
+    cr_src.execute("select id, message_main_attachment_id from account_move where message_main_attachment_id is not null")
+    execute_values(cr_dst,"update account_move m set message_main_attachment_id=s.attachment_id from (values %s) as s(id, attachment_id) where s.id=m.id",
+        [(row['id'],ids_pj[row['message_main_attachment_id']]) for row in cr_src.fetchall() if row['message_main_attachment_id'] in ids_pj])
+    cnx_dst.commit()
+
+    # Ids qui auraient changé (collision avec les pièces jointes techniques de la v20) : remplacés partout
+    RemplacerIdsPiecesJointes(db_dst,ids_pj)
+
+    # PDF des factures et avoirs clients validés (389 sur 413) : en v16, gardés par le rapport (F9059.pdf, FAC_2023_00002.pdf)
+    # En v20, PDF officiel = pièce jointe du champ invoice_pdf_report_file (envoi, portail, téléchargement : pas régénéré)
+    SQL="""
+        update ir_attachment a set res_field='invoice_pdf_report_file'
+        from account_move m
+        where a.res_model='account.move' and a.res_id=m.id and a.res_field is null
+        and m.move_type in ('out_invoice','out_refund') and m.state='posted' and a.name=replace(m.name,'/','_')||'.pdf'
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+
+    # Logo de l'application (logo_web : barre de navigation, page de connexion), calculé à partir du logo de la société à
+    # l'enregistrement de la société (_compute_logo_web) : colonne en base64 en v16, pièce jointe en v20 => logo de la v16
+    # dans la pièce jointe de la v20 (contenu en base, db_datas : rien à écrire dans le filestore)
+    cr_src.execute("select logo_web from res_company where id=1")
+    logo = cr_src.fetchone()['logo_web']
+    if logo:
+        contenu = base64.b64decode(bytes(logo))
+        SQL="""
+            update ir_attachment set store_fname=null, db_datas=%s, file_size=%s, checksum=%s, mimetype='image/png'
+            where res_model='res.company' and res_field='logo_web' and res_id=1
+        """
+        cr_dst.execute(SQL,[psycopg2.Binary(contenu),len(contenu),hashlib.sha1(contenu).hexdigest()])
+        cnx_dst.commit()
+    #**************************************************************************
+
+
+    # ** Filtres favoris ******************************************************
+    # 18 filtres, actions retrouvées par identifiant externe (toutes présentes en v20) ; is_dynamicmotion => is_dynamicmotion20
+    MigrationIrFilters(db_src,db_dst,modules={'is_dynamicmotion':'is_dynamicmotion20'})
+    #**************************************************************************
+
+
+    # ** Chatter **************************************************************
+    # Abonnés, messages et activités des enregistrements créés pendant les essais dans dynamicmotion20, supprimés par la
+    # relance (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet »)
+    SupprimerChatterOrphelin(db_dst)
+
+    # Messages et abonnés des modèles repris avec les ids de la v16 ; nouveaux ids de messages ; suivi des modifications
+    # ajouté au corps (format v20) ; messages des rendez-vous des congés (non repris) ignorés comme orphelins
+    # Non repris : account.account.template (919, supprimé en v20), congés (hr.leave), rebuts (stock.scrap, supprimé en v20),
+    # recherche par IA (is.search.general, module non repris), modèles de rapprochement, discussions (mail.channel),
+    # mails sans modèle, notifications
+    ids_messages = MigrationChatter(db_src,db_dst,[
+        'calendar.event',
+        'stock.picking',
+        'account.move',
+        'sale.order',
+        'mrp.production',
+        'purchase.order',
+        'product.template',
+        'product.product',
+        'res.partner',
+        'account.payment',
+        'crm.lead',
+        'account.account',
+        'project.project',
+        'project.update',
+        'repair.order',
+        'mrp.bom',
+        'account.analytic.account',
+        'project.task',
+        'hr.employee',
+        'hr.department',
+        'hr.job',
+        'crm.team',
+        'crm.team.member',
+        'mrp.unbuild',
+        'res.company',
+        'res.partner.bank',
+        'project.milestone',
+        'account.journal',
+    ],types={'sale.mail_act_sale_upsell':'mail.mail_activity_data_todo'})
+
+    # Pièces jointes des messages (7 sur des commandes et une facture ; invitations des rendez-vous non reprises)
+    cr_src.execute("select message_id,attachment_id from message_attachment_rel")
+    lignes = [(ids_messages[row['message_id']],ids_pj[row['attachment_id']]) for row in cr_src.fetchall()
+              if row['message_id'] in ids_messages and row['attachment_id'] in ids_pj]
+    if lignes:
+        execute_values(cr_dst,"insert into message_attachment_rel (message_id,attachment_id) values %s on conflict do nothing",lignes)
+    cnx_dst.commit()
+
+    # Activités (10 ; 1 de congé non reprise) : pistes CRM (6), articles (6), transferts (2), vente incitative (1,
+    # sale.mail_act_sale_upsell, supprimé en v20 : Odoo 20 crée une activité « À faire » => mail.mail_activity_data_todo)
+    MigrationActivites(db_src,db_dst,['crm.lead','product.template','sale.order','stock.picking'],types={'sale.mail_act_sale_upsell':'mail.mail_activity_data_todo'})
     #**************************************************************************
 
 
@@ -1297,6 +1417,11 @@ MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','accou
 
 # ** Reprise 6 : CRM, projets, contenu des réparations (voir Reprise6) *********
 Reprise6()
+#******************************************************************************
+
+
+# ** Reprise 7 : pièces jointes, chatter, activités, filtres favoris (voir Reprise7)
+Reprise7()
 #******************************************************************************
 
 

@@ -731,11 +731,13 @@ def TrackingValues2Html(valeurs):
     return '<div>'+'<br>'.join(lignes)+'</div>'
 
 
-def MigrationChatter(db_src,db_dst,models):
+def MigrationChatter(db_src,db_dst,models,types={}):
     """Migration du chatter (messages et abonnés) des modèles donnés, d'une v14, v15 ou v16 vers une v19 ou v20 :
     - les messages et abonnés existants de ces modèles dans la destination sont supprimés, puis ceux de la source
       sont insérés avec de nouveaux ids (parent_id recalculé)
     - sous-types (subtype_id) : correspondance par identifiant externe
+    - type d'activité des messages d'activités terminées (mail_activity_type_id) : correspondance par identifiant
+      externe ; types permet de remplacer un type supprimé (comme MigrationActivites) ; type sans équivalent => vide
     - suivi des modifications (mail_tracking_value) : ajouté au corps du message, comme le fait la v20
     - messages et abonnés d'enregistrements absents de la destination (supprimés dans la source) : non repris
     Les notifications ne sont pas reprises. Pièces jointes des messages (message_attachment_rel) : non reprises ici ;
@@ -743,6 +745,11 @@ def MigrationChatter(db_src,db_dst,models):
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     subtypes = SubtypeId2SubtypeId(cr_src,cr_dst)
+    SQL="select d.module||'.'||d.name as xmlid, d.res_id from ir_model_data d where d.model='mail.activity.type'"
+    cr_dst.execute(SQL)
+    types_dst = {row['xmlid']:row['res_id'] for row in cr_dst.fetchall()}
+    cr_src.execute(SQL)
+    types_activites = {row['res_id']:types_dst.get(types.get(row['xmlid'],row['xmlid'])) for row in cr_src.fetchall()}
     champs = [c for c in GetChampsCommuns(cr_src,cr_dst,'mail_message') if c not in ('id','parent_id','subtype_id','mail_server_id')]
     tracking = bool(GetTypesChamps(cr_src,'mail_tracking_value'))
 
@@ -777,6 +784,8 @@ def MigrationChatter(db_src,db_dst,models):
         body = row['body']
         if row['id'] in suivis:
             body = (body or '')+TrackingValues2Html(suivis[row['id']])
+        if row.get('mail_activity_type_id'):
+            row['mail_activity_type_id'] = types_activites.get(row['mail_activity_type_id'])
         lignes.append([ids[row['id']],ids.get(row['parent_id']),subtypes.get(row['subtype_id']),body]+[row[c] for c in champs if c!='body'])
     colonnes = ['id','parent_id','subtype_id','body']+[c for c in champs if c!='body']
     psycopg2.extras.execute_values(cr_dst,"insert into mail_message ("+','.join(colonnes)+") values %s",lignes,page_size=1000)
