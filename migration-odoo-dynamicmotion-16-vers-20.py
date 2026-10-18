@@ -66,6 +66,14 @@ def MiseEnPageDocuments():
     cnx_dst.commit()
 
 
+# ** Thème de l'entreprise (is_theme_entreprise) ******************************
+# Pas de thème en v16 : bleu du logo Dynamic Motion (#2C6BB3, relevé sur le logo le 18/10/2026)
+def ThemeEntreprise():
+    cr_dst.execute("update res_company set is_theme_couleur='#2C6BB3', is_theme_eclaircissement=80")
+    cnx_dst.commit()
+    print("Thème de l'entreprise : #2C6BB3")
+
+
 # ** Reprise 6 : CRM, projets, contenu des réparations ************************
 def Reprise6():
 
@@ -520,6 +528,9 @@ for row in cr_src.fetchall():
         cr_dst.execute("update res_company set report_footer=%s where id=%s",[json.dumps(row['report_footer']),row['id']])
 cnx_dst.commit()
 MiseEnPageDocuments()
+
+# Couleur de l'entreprise (barre de menus, boutons, onglets)
+ThemeEntreprise()
 
 # URL utilisée par wkhtmltopdf pour charger les CSS et images des rapports : web.base.url n'est pas joignable depuis
 # le serveur => PDF sans mise en page ; non écrasée si déjà présente (port ou hébergement différent)
