@@ -53,10 +53,22 @@ def RetablirControleCles():
         print("Contrôles des clés étrangères réactivés : %s"%sorted(sans_controle))
 
 
+# ** Thème de l'entreprise (is_theme_entreprise) ******************************
+# Pas de thème en v14 : rouge adouci du logo ACPL (#D9534F ; rouge du logo, #EC0C04, jugé trop agressif par Tony le 18/10/2026)
+def ThemeEntreprise():
+    cr_dst.execute("update res_company set is_theme_couleur='#D9534F', is_theme_eclaircissement=80")
+    cnx_dst.commit()
+    print("Thème de l'entreprise : #D9534F")
+
+# Lancement du thème seul sur la base déjà reprise (18/10/2026) : à retirer pour une reprise complète
+ThemeEntreprise()
+sys.exit()
+#******************************************************************************
+
+
 # ** res_partner et res_users *************************************************
 # Copiés avec les ids de la source (486 partenaires, 7 utilisateurs dont 2 actifs dans acpl14)
-# mobile (12 partenaires, dont 6 sans téléphone) et title (civilité, 3 partenaires) : supprimés d'Odoo en v20, non
-# repris (question 2 de la doc)
+# title (civilité, 3 partenaires) : supprimé d'Odoo en v20, non repris ; mobile : voir plus bas
 # credit_limit : nombre en v14, jsonb (par société) en v20, toujours à 0 => non repris
 # autopost_bills : nouvelle colonne obligatoire en v20 (valeur par défaut d'Odoo)
 # Propriétés comptables (comptes, conditions de paiement, positions fiscales) : reprises avec la comptabilité
@@ -84,6 +96,13 @@ SQL="""
     end;
 """
 cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Mobile : supprimé d'Odoo en v20 => dans le téléphone quand celui-ci est vide (6 partenaires sur 12 ; question 2 de
+# la doc, accord de Tony)
+cr_src.execute("select id,mobile from res_partner where coalesce(mobile,'')<>'' and coalesce(phone,'')=''")
+for row in cr_src.fetchall():
+    cr_dst.execute("update res_partner set phone=%s where id=%s",[row['mobile'],row['id']])
 cnx_dst.commit()
 
 # SIRET : colonne siret en v14 => identifiant FR_SIRET de additional_identifiers en v20 (15 partenaires, dont la société)
@@ -143,6 +162,17 @@ cnx_dst.commit()
 
 # Digest périodique (mail récapitulatif d'Odoo, hebdomadaire par défaut en v20) : désactivé
 cr_dst.execute("update digest_digest set state='deactivated'")
+cnx_dst.commit()
+
+# Couleur de l'entreprise (barre de menus, boutons, onglets)
+ThemeEntreprise()
+
+# Inscription libre au portail (b2c en v14) fermée : sur invitation seulement (question 4 de la doc, accord de Tony)
+SQL="""
+    insert into ir_config_parameter (key,value) values ('auth_signup.invitation_scope','b2b')
+    on conflict (key) do update set value='b2b'
+"""
+cr_dst.execute(SQL)
 cnx_dst.commit()
 
 # Comptes bancaires : aucun dans la source (IBAN écrit en dur sur la facture)
@@ -237,7 +267,7 @@ MigrationIrModelData(db_src,db_dst,['product.category','product.pricelist'],corr
 # - day_following_month    : le jour N du mois suivant => days_end_of_month_on_the, 0, N (même calcul en v20 : jour N
 #   du mois suivant, ramené au dernier jour du mois ; « End of Following Month » : N = 31 => fin du mois suivant)
 #   N = 0 : la v14 donne le même jour du mois suivant (« 30 jours nets », 1 811 factures : 15/10 => 15/11), sans
-#   équivalent en v20 => 30 jours (question 3 de la doc)
+#   équivalent en v20 => 30 jours (question 3 de la doc, accord de Tony)
 # - value « balance » (solde) supprimé : pourcentage = 100 - les autres pourcentages de la condition
 MigrationTableJsonb(db_src,db_dst,'account_payment_term')
 cr_src.execute("select * from account_payment_term_line order by payment_id, sequence, id")
@@ -284,9 +314,29 @@ MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_supplier_payment_
 # Voir Documentation/migration-odoo/migration-vers-odoo20.md § 3.7 et § 5.4
 
 # Lignes v20 et correspondance par identifiant externe, avant la copie
+# Taxes TTC de la v14 (18, jamais utilisées), supprimées de l10n_fr_account : codes Factur-X de la taxe HT correspondante
 avant, corr = {}, {}
-for table in ['account_account','account_tax_group','account_tax','account_fiscal_position']:
-    avant[table], corr[table] = LireAvantCopie(db_src,db_dst,table)
+for table,suffixes in [('account_account',[]),('account_tax_group',[]),('account_tax',['_TTC','_ttc']),('account_fiscal_position',[])]:
+    avant[table], corr[table] = LireAvantCopie(db_src,db_dst,table,suffixes)
+# Taxes de vente utilisées sans identifiant de même nom en v20 : en v20, les taxes à 0 % sont séparées en biens et
+# services (codes Factur-X différents) => taxes « biens » (lignes de fournitures, livraisons) ; « 20% Prestations »,
+# créée à la main en v14 (3 977 factures) => taxe à 20 % de la v20. Sans cette correspondance, ces taxes n'ont pas de
+# catégorie de TVA Factur-X (ubl_cii_tax_category_code)
+taxes_renommees = {
+    '1_tva_0'        : '1_tva_sale_good_0',         # TVA 0% autres opérations non imposables (vente) => E, VATEX-EU-F
+    '1_tva_export_0' : '1_tva_sale_good_export_0',  # TVA 0% export (vente) => G, VATEX-EU-G
+    '1_tva_intra_0'  : '1_tva_sale_good_intra_0',   # TVA 0% livraisons intracommunautaires (vente) => K, VATEX-EU-IC
+    'account_tax_41' : '1_tva_normale',             # 20% Prestations => S
+}
+cr_src.execute("select name,res_id from ir_model_data where model='account.tax' and name = any(%s)",[list(taxes_renommees)])
+taxes_src = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+cr_dst.execute("select name,res_id from ir_model_data where model='account.tax' and name = any(%s)",[list(taxes_renommees.values())])
+taxes_dst = {row['name']:row['res_id'] for row in cr_dst.fetchall()}
+for nom_src,nom_dst in taxes_renommees.items():
+    if nom_src in taxes_src and nom_dst in taxes_dst:
+        corr['account_tax'][taxes_src[nom_src]] = taxes_dst[nom_dst]
+    else:
+        print("Taxe %s => %s : identifiant absent (base acpl20 pas vierge ?)"%(nom_src,nom_dst))
 avant['account_journal'], _ = LireAvantCopie(db_src,db_dst,'account_journal')
 # Journaux : pas d'identifiant externe en v14 => correspondance par code (FAC, OD, EXCH, CABA, BNK1, STJ), sinon par type
 # s'il n'y en a qu'un (achats : FACTU en v14, FACTURE en v20)
@@ -466,7 +516,10 @@ for table in ['product_taxes_rel','product_supplier_taxes_rel']:
     MigrationTable(db_src,db_dst,table)
 
 # Identifiants externes des modèles repris (journaux : par la correspondance par code, sans identifiant en v14)
-MigrationIrModelData(db_src,db_dst,['account.account','account.tax.group','account.tax','account.fiscal.position'])
+# Taxes à 0 % : identifiants « biens » de la v20 gardés sur les taxes v14 correspondantes (voir taxes_renommees)
+MigrationIrModelData(db_src,db_dst,['account.account','account.tax.group','account.tax','account.fiscal.position'],correspondances={
+    'account.tax': {nom_dst:taxes_src[nom_src] for nom_src,nom_dst in taxes_renommees.items() if nom_src in taxes_src and nom_dst!='1_tva_normale'},
+})
 cr_dst.execute("select id,res_id from ir_model_data where model='account.journal'")
 for row in cr_dst.fetchall():
     id14 = inverse['account_journal'].get(row['res_id'])
@@ -476,4 +529,66 @@ for row in cr_dst.fetchall():
         cr_dst.execute("delete from ir_model_data where id=%s",[row['id']])
 cr_dst.execute("delete from ir_model_data where model in ('account.reconcile.model','account.reconcile.model.line')")
 cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Reprise 2 : ventes ********************************************************
+# Commandes (664 : 74 devis, 589 commandes, 1 annulée ; aucune « done ») ; procurement_group_id => références de stock
+# (MigrationReferencesStock, plus bas) ; document_tax_mode : obligatoire en v20, réglage de la société (hors taxe)
+MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excluded','locked':False})
+# Lignes (3 726) : product_uom => product_uom_id ; customer_lead : décimal en v14, entier en v20, toujours à 0 => 0
+# Non repris (supprimés en v20) : price_reduce, product_packaging, qty_delivered_manual (vides), route_id (vide)
+MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'},exclure=['customer_lead'],default={'customer_lead':0})
+# Prix technique (nouveau, prix unitaire avant modification manuelle) et entrepôt de la ligne (stocké en v20)
+cr_dst.execute("update sale_order_line set technical_price_unit=price_unit where technical_price_unit is null")
+cr_dst.execute("update sale_order_line l set warehouse_id=o.warehouse_id from sale_order o where o.id=l.order_id")
+cnx_dst.commit()
+# Taxes des lignes (ids des taxes de la v14, reprises avec la comptabilité)
+MigrationTable(db_src,db_dst,'account_tax_sale_order_line_rel')
+MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
+# Lien entre les lignes de commande et les lignes de factures (sale_order_line_invoice_rel) : avec les factures
+#******************************************************************************
+
+
+# ** Reprise 2 : stock *********************************************************
+# Le stock n'est utilisé que pour un inventaire (juin-juillet 2025 : 616 lignes, 1 550 unités, 5 609,80 €) : les
+# 594 livraisons créées par les ventes depuis 2021 ne sont jamais validées (toutes « Prêt », 121,64 unités réservées).
+# Tout est repris à l'identique (décision de Tony du 18/10/2026)
+
+# Configuration : entrepôt WH, emplacements, types d'opérations, routes (stock_location_route en v14), règles, copiés
+# avec les ids de la v14 ; correspondance par rôle avec ceux créés par la v20 (voir MigrationConfigurationStock)
+MigrationConfigurationStock(db_src,db_dst)
+# Routes des entrepôts (2) et des articles (3 865)
+MigrationTable(db_src,db_dst,'stock_route_warehouse')
+MigrationTable(db_src,db_dst,'stock_route_product')
+
+# Quants (1 210 : 605 sur WH/Stock, les autres sur l'emplacement d'ajustement d'inventaire) ; pas de lots ni de colis
+MigrationTable(db_src,db_dst,'stock_quant')
+
+# Transferts (597), mouvements (4 011 : 620 faits par l'inventaire, 3 369 réservés ou en attente, 22 annulés) et lignes
+# (3 982) ; voir MigrationTransfertsStock
+MigrationTransfertsStock(db_src,db_dst)
+
+# Valorisation : stock_valuation_layer (626 couches, supprimé en v20) => valeur des mouvements (stock_move.value) ;
+# 6 couches sans mouvement (changements de coût) non reprises ; voir MigrationValorisationStock
+MigrationValorisationStock(db_src,db_dst)
+
+# Groupes d'approvisionnement (596, supprimés en v20) => références de stock, liens avec les mouvements et les commandes
+MigrationReferencesStock(db_src,db_dst)
+#******************************************************************************
+
+
+# ** Reprise 2 : séquences *****************************************************
+# Commandes de vente (les transferts ont la séquence de leur type d'opération, recalée par MigrationConfigurationStock)
+cr_src.execute("select id from ir_sequence where code='sale.order' order by id limit 1")
+seq_src = cr_src.fetchone()
+cr_dst.execute("select id from ir_sequence where code='sale.order' order by id limit 1")
+seq_dst = cr_dst.fetchone()
+MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
+#******************************************************************************
+
+
+# ** Contrôle (lecture seule) **************************************************
+# Clés étrangères qui ne pointent sur rien (tables copiées sans contrôle des clés)
+ControleOrphelins(db_dst)
 #******************************************************************************

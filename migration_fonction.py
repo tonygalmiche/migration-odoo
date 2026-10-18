@@ -2210,12 +2210,30 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes
     Relançable : les tables sont recopiées à chaque lancement (à lancer sur une base dont la configuration du stock
     est celle créée par la v20 : après un premier lancement, la correspondance par rôle retrouve les mêmes ids).
     societes : ids des sociétés reprises (ex : [1]) ; la configuration des autres sociétés de la source n'est pas copiée
-    (enregistrements sans société toujours copiés) ; par défaut, toutes les sociétés."""
+    (enregistrements sans société toujours copiés) ; par défaut, toutes les sociétés.
+    Source v14 / v15 (ACPL) : routes dans stock_location_route (stock_route depuis la v16), stock_rule.location_id =>
+    location_dest_id, noms texte => traduisibles (ir_translation), colonnes obligatoires des types d'opérations ajoutées
+    en v17 (create_backorder, reservation_method) : valeurs par défaut d'Odoo."""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     tables = ['stock_location','stock_picking_type','stock_route','stock_rule','stock_warehouse']
     where = "t.company_id is null or t.company_id in (%s)"%','.join(str(s) for s in societes) if societes else ""
     modeles = {t:t.replace('_','.') for t in tables}
+    # Tables, modèles et colonnes de la source (v14 / v15 : voir ci-dessus)
+    tables_src = {t:t for t in tables}
+    if not GetTypesChamps(cr_src,'stock_route') and GetTypesChamps(cr_src,'stock_location_route'):
+        tables_src['stock_route'] = 'stock_location_route'
+    modeles_src = {t:tables_src[t].replace('_','.') for t in tables}
+    renommees = {t:{} for t in tables}
+    regle_src = GetTypesChamps(cr_src,'stock_rule')
+    if 'location_id' in regle_src and 'location_dest_id' not in regle_src:
+        renommees['stock_rule']['location_id'] = 'location_dest_id'
+    def ColonnesSrc(t):
+        # Colonnes de la source sous leur nom de la destination (colonnes renommées comprises)
+        types = dict(GetTypesChamps(cr_src,tables_src[t]))
+        for ancien,nouveau in renommees[t].items():
+            types[nouveau] = types.get(ancien)
+        return types
 
     # Destination avant la copie
     dst = {}
@@ -2224,8 +2242,12 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes
         dst[t] = {row['id']:row for row in cr_dst.fetchall()}
     src = {}
     for t in tables:
-        cr_src.execute("select * from "+t+" t"+(" where "+where if where else ""))
-        src[t] = {row['id']:row for row in cr_src.fetchall()}
+        cr_src.execute("select * from "+tables_src[t]+" t"+(" where "+where if where else ""))
+        src[t] = {}
+        for row in cr_src.fetchall():
+            for ancien,nouveau in renommees[t].items():
+                row[nouveau] = row.get(ancien)
+            src[t][row['id']] = row
     fk = {t:GetClesEtrangeres(cr_dst,t) for t in tables}
     corr = {t:{} for t in tables} # id v20 => id source
 
@@ -2239,7 +2261,7 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes
             if ref in corr and col in w16 and w20[col] and w16[col]:
                 corr[ref].setdefault(w20[col],w16[col])
     for t in tables:
-        cr_src.execute("select name,res_id from ir_model_data where model=%s",[modeles[t]])
+        cr_src.execute("select name,res_id from ir_model_data where model=%s",[modeles_src[t]])
         xmlids_src = {row['name']:row['res_id'] for row in cr_src.fetchall()}
         cr_dst.execute("select name,res_id from ir_model_data where model=%s",[modeles[t]])
         for row in cr_dst.fetchall():
@@ -2266,9 +2288,11 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes
     # 2. Copie des tables de la source
     # Types d'opérations : emplacements par défaut obligatoires en v20 (vides possibles en v16, ex : type Retours)
     # => 0 pendant la copie, puis calculés comme Odoo 20 (_compute_default_location_src_id / _dest_id)
+    # Noms texte (v14 / v15) => traduisibles (text2jsonb, sans effet sur une colonne déjà en jsonb dans la source)
     for t in tables:
-        defaut = {'move_type':'direct','default_location_src_id':0,'default_location_dest_id':0} if t=='stock_picking_type' else {}
-        MigrationTable(db_src,db_dst,t,default=defaut,where=where)
+        defaut = {'move_type':'direct','default_location_src_id':0,'default_location_dest_id':0,
+                  'create_backorder':'ask','reservation_method':'at_confirm'} if t=='stock_picking_type' else {}
+        MigrationTable(db_src,db_dst,tables_src[t],t,rename=renommees[t],default=defaut,where=where,text2jsonb=True)
     cr_src.execute("select name,res_id from ir_model_data where module='stock' and name in ('stock_location_suppliers','stock_location_customers')")
     emplacements = {row['name']:row['res_id'] for row in cr_src.fetchall()}
     SQL="""
@@ -2286,7 +2310,7 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes
     # 3. Enregistrements v20 sans équivalent, utilisés par une colonne ajoutée en v20
     nouveaux = {t:{} for t in tables} # id v20 => nouvel id
     for t in tables:
-        types_src = GetTypesChamps(cr_src,t)
+        types_src = ColonnesSrc(t)
         for id20,ancien in corr[t].items():
             for col,ref in fk[t].items():
                 if col in types_src or ref not in corr:
@@ -2322,7 +2346,7 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes
     # Clés étrangères non vérifiées pendant la mise à jour : les types d'opérations ont encore les séquences de la source
     # (ids absents de la destination, ex : sequence_id 40 chez Dynamic Motion), recalées juste après
     for t in tables:
-        types_src = GetTypesChamps(cr_src,t)
+        types_src = ColonnesSrc(t)
         ajoutees = [c for c in GetTypesChamps(cr_dst,t) if c not in types_src]
         cr_dst.execute("alter table "+t+" disable trigger all")
         for id20,id in corr[t].items():
@@ -2592,6 +2616,110 @@ def MigrationEtiquettesTaxes(db_src,db_dst,relations):
     cnx_dst.commit()
     if sans:
         print("MigrationEtiquettesTaxes : étiquettes de la source sans équivalent (liens non repris) : %s"%sorted(sans))
+
+
+def MigrationTransfertsStock(db_src,db_dst):
+    """Transferts, mouvements et lignes de mouvement d'Odoo 14 à 16 vers Odoo 20, copiés avec les ids de la source
+    (configuration du stock, articles et unités repris avant avec les ids de la source : MigrationConfigurationStock,
+    MigrationUnites) :
+    - stock_picking : group_id, date, immediate_transfer supprimés (références de stock : MigrationReferencesStock) ;
+      return_id (nouveau) : transfert d'origine des mouvements retournés
+    - stock_move : product_uom => uom_id, scrapped => is_scrap, description_picking => description_picking_manual
+      (libellé saisi, ex : ligne de commande) ; name, group_id, package_level_id, product_packaging_id... supprimés
+    - stock_move_line : product_uom_id => uom_id ; quantité faite (qty_done) et réservée (product_uom_qty en v14 / v15,
+      reserved_uom_qty en v16) => quantity, picked si une quantité est faite (une seule quantité en v20 : réservée tant
+      que picked est faux)
+    - quantité du mouvement = somme de ses lignes (dans l'unité du mouvement), picked si une ligne l'est ;
+      quantity_product_uom (stockée en v20) dans l'unité de l'article
+    - stock_move_move_rel, stock_move_line_consume_rel
+    Relançable. Voir Documentation/migration-odoo/migration-vers-odoo20.md § 5.2."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    MigrationTable(db_src,db_dst,'stock_picking')
+    MigrationTable(db_src,db_dst,'stock_move',rename={'product_uom':'uom_id','scrapped':'is_scrap','description_picking':'description_picking_manual'})
+    MigrationTable(db_src,db_dst,'stock_move_line',rename={'product_uom_id':'uom_id'})
+    tables = ['stock_picking','stock_move','stock_move_line']
+    for table in tables:
+        cr_dst.execute("alter table "+table+" disable trigger all")
+    try:
+        # Retour de (return_id) : transfert d'origine des mouvements retournés
+        SQL="""
+            update stock_picking p set return_id=r.picking_id
+            from (
+                select m.picking_id as id, min(om.picking_id) as picking_id
+                from stock_move m join stock_move om on om.id=m.origin_returned_move_id
+                where m.picking_id is not null and om.picking_id is not null group by m.picking_id
+            ) r
+            where r.id=p.id
+        """
+        cr_dst.execute(SQL)
+        # Lignes : quantité faite, sinon réservée
+        reserve = 'reserved_uom_qty' if 'reserved_uom_qty' in GetTypesChamps(cr_src,'stock_move_line') else 'product_uom_qty'
+        cr_src.execute("select id, qty_done, "+reserve+" as reserve from stock_move_line")
+        psycopg2.extras.execute_values(cr_dst,"""
+            update stock_move_line l set
+                quantity = case when s.qty_done<>0 then s.qty_done else s.reserve end,
+                picked   = s.qty_done<>0
+            from (values %s) as s(id, qty_done, reserve)
+            where s.id=l.id
+        """,[(r['id'],r['qty_done'] or 0,r['reserve'] or 0) for r in cr_src.fetchall()],page_size=5000)
+        # Mouvements : somme des lignes dans l'unité du mouvement
+        SQL="""
+            update stock_move m set
+                quantity = coalesce((select sum(l.quantity * lu.factor / mu.factor)
+                                     from stock_move_line l join uom_uom lu on lu.id=l.uom_id where l.move_id=m.id),0),
+                picked   = exists (select 1 from stock_move_line l where l.move_id=m.id and l.picked)
+            from uom_uom mu
+            where mu.id=m.uom_id
+        """
+        cr_dst.execute(SQL)
+        # Quantités dans l'unité de l'article (stockées en v20)
+        precision = "(select digits from decimal_precision where name='Product Unit')"
+        for table in ['stock_move','stock_move_line']:
+            SQL="""
+                update """+table+""" x set quantity_product_uom = round((x.quantity * xu.factor / pu.factor)::numeric, """+precision+""")
+                from uom_uom xu, product_product p, product_template t, uom_uom pu
+                where xu.id=x.uom_id and p.id=x.product_id and t.id=p.product_tmpl_id and pu.id=t.uom_id
+            """
+            cr_dst.execute(SQL)
+        cnx_dst.commit()
+    finally:
+        for table in tables:
+            cr_dst.execute("alter table "+table+" enable trigger all")
+        cnx_dst.commit()
+    MigrationTable(db_src,db_dst,'stock_move_move_rel')
+    MigrationTable(db_src,db_dst,'stock_move_line_consume_rel')
+    cr_dst.execute("select count(*) as nb, count(*) filter (where picked) as faits from stock_move")
+    row = cr_dst.fetchone()
+    print("MigrationTransfertsStock : %s mouvements, dont %s avec une quantité faite"%(row['nb'],row['faits']))
+
+
+def MigrationReferencesStock(db_src,db_dst):
+    """Groupes d'approvisionnement (procurement_group, supprimé en v20) => références de stock (stock_reference, mêmes
+    ids) et leurs liens avec les mouvements, les commandes de vente et d'achat et les ordres de fabrication (tables de
+    liens présentes selon les modules installés dans la destination et la source). A appeler après la reprise des
+    mouvements et des commandes. Relançable."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    MigrationTable(db_src,db_dst,'procurement_group','stock_reference')
+    liens = [
+        ("stock_reference_move_rel",       "move_id",       "stock_move",     "select id, group_id from stock_move where group_id is not null"),
+        ("stock_reference_sale_rel",       "sale_id",       "sale_order",     "select id, procurement_group_id from sale_order where procurement_group_id is not null union select sale_id, id from procurement_group where sale_id is not null"),
+        ("stock_reference_purchase_rel",   "purchase_id",   "purchase_order", "select id, group_id from purchase_order where group_id is not null"),
+        ("stock_reference_production_rel", "production_id", "mrp_production", "select id, procurement_group_id from mrp_production where procurement_group_id is not null"),
+    ]
+    for table,colonne,table_src,SQL in liens:
+        if not GetTypesChamps(cr_dst,table):
+            continue
+        cr_dst.execute("delete from "+table)
+        lignes = []
+        if GetTypesChamps(cr_src,table_src):
+            cr_src.execute(SQL)
+            lignes = [tuple(row.values()) for row in cr_src.fetchall()]
+        if lignes:
+            psycopg2.extras.execute_values(cr_dst,"insert into "+table+" ("+colonne+",reference_id) values %s on conflict do nothing",lignes,page_size=5000)
+        print("MigrationReferencesStock : %s : %s liens"%(table,len(lignes)))
+    cnx_dst.commit()
 
 
 def MigrationValorisationStock(db_src,db_dst):
