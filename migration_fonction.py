@@ -2038,7 +2038,10 @@ def MigrationUnites(db_src,db_dst):
             relative_uom_id = reference
             relative_factor = round(1/float(u['factor']),10) # 1/0.000625 => 1600 et non 1600.0000000000002
             parent_path = '%s/%s/'%(reference,u['id'])
-        name = dict(u['name'])
+        if isinstance(u['name'],dict):
+            name = dict(u['name'])
+        else: # v14, v15 : nom en texte, traduction dans ir_translation
+            name = {'en_US': u['name'], 'fr_FR': GetTraduction(cr_src,'uom.uom','name',u['id']) or u['name']}
         for lang in name:
             name[lang] = name[lang] or name.get('en_US') # ex : « m » sans traduction française en v16
         ligne = {'id':u['id'], 'name':json.dumps(name), 'relative_uom_id':relative_uom_id, 'relative_factor':relative_factor,
