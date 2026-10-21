@@ -1281,6 +1281,20 @@ def AddUserInGroup(db_dst, gid, uid):
     cnx_dst.commit()
 
 
+def InscriptionSurInvitation(db_dst):
+    """Inscription libre au portail fermée : sur invitation seulement (auth_signup.invitation_scope = b2b), quelle que
+    soit la valeur de la source. b2c par défaut en v20 : tout le monde peut se créer un compte portail depuis la page
+    de connexion. A appeler dans chaque script de reprise."""
+    cnx_dst,cr_dst=GetCR(db_dst)
+    SQL="""
+        insert into ir_config_parameter (key,value) values ('auth_signup.invitation_scope','b2b')
+        on conflict (key) do update set value='b2b'
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    print("InscriptionSurInvitation : auth_signup.invitation_scope = b2b")
+
+
 def GetFielsdId(cr,model,field):
     SQL="""
         select  id,name,model

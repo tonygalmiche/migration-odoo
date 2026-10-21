@@ -541,6 +541,9 @@ cnx_dst.commit()
 cr_dst.execute("update digest_digest set state='deactivated'")
 cnx_dst.commit()
 
+# Inscription libre au portail (b2c en v16) fermée : sur invitation seulement
+InscriptionSurInvitation(db_dst)
+
 # Comptes bancaires de la société (2 comptes, Banque Cantonale Neuchâteloise) : res.bank supprimé en v20
 # => nom et BIC de la banque sur le compte
 # clearing_label_id : nouvelle colonne obligatoire en v20 => libellé par défaut (base.clearing_label_all)
