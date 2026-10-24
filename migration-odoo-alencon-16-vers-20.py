@@ -90,12 +90,6 @@ MigrationIrFilters(db_src,db_dst,modules={'is_plastigray16': 'is_alencon20', 'is
 #******************************************************************************
 
 
-# ** Chatter ******************************************************************
-# ~290 messages (surtout des créations) et leurs abonnés ; suivi des modifications ajouté au corps (format v20)
-MigrationChatter(db_src,db_dst,['res.partner','res.company','hr.employee','hr.department','is.releve.qt.produite'])
-#******************************************************************************
-
-
 # ** Pièces jointes ***********************************************************
 # Le filestore de production (odoo16) est copié par rsync directement dans le filestore d'alencon20
 # (migration-odoo-alencon-16-vers-20.sh) => données seulement, store_fname conservé (copier_fichiers=False)
@@ -169,6 +163,13 @@ for table in tables:
 # Vidées ensemble (TRUNCATE) puis rechargées par COPY FREEZE : voir MigrationTablesTruncate
 # is_presse_cycle_of_rel référence is_of : is_of doit donc être reprise avant (liste ci-dessus)
 MigrationTablesTruncate(db_src,db_dst,["is_presse_cycle","is_presse_cycle_of_rel"])
+#******************************************************************************
+
+
+# ** Chatter ******************************************************************
+# ~290 messages (surtout des créations) et leurs abonnés ; suivi des modifications ajouté au corps (format v20)
+# Après la reprise des tables : les messages des relevés absents de la destination sont écartés comme orphelins
+MigrationChatter(db_src,db_dst,['res.partner','res.company','hr.employee','hr.department','is.releve.qt.produite'])
 #******************************************************************************
 
 
