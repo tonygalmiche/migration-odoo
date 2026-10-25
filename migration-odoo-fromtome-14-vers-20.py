@@ -270,12 +270,16 @@ cnx_dst.commit()
 
 # Prix fournisseurs (14 448) : name => partner_id ; unité d'achat de l'article (uom_po_id, supprimé en v20) => unité
 # du prix fournisseur (obligatoire) ; remises fournisseurs par période (14 191) : mêmes colonnes
-MigrationTable(db_src,db_dst,'product_supplierinfo',rename={'name':'partner_id'},default={'uom_id':1,'discount':0})
+# 69 prix sans article (ni modèle ni variante) en v14 : article obligatoire en v20 => non repris
+MigrationTable(db_src,db_dst,'product_supplierinfo',rename={'name':'partner_id'},default={'uom_id':1,'discount':0},
+    where="product_tmpl_id is not null")
 cr_src.execute("select s.id,t.uom_po_id from product_supplierinfo s join product_template t on t.id=s.product_tmpl_id")
 execute_values(cr_dst,"update product_supplierinfo s set uom_id=v.uom_id from (values %s) as v(id,uom_id) where v.id=s.id",
     [(row['id'],row['uom_po_id']) for row in cr_src.fetchall()])
 cnx_dst.commit()
-MigrationTable(db_src,db_dst,'product_supplierdiscount')
+# Remises des 69 prix sans article (80) : non reprises ; remises sans prix fournisseur (2 165, promos) : reprises
+MigrationTable(db_src,db_dst,'product_supplierdiscount',
+    where="t.supplier_info_id is null or t.supplier_info_id in (select id from product_supplierinfo where product_tmpl_id is not null)")
 
 # Ids des devises : ids de la v14 (EUR = 1) => ids de la v20
 MigrationDevisesParCode(db_src,db_dst,['product_template','product_pricelist','product_pricelist_item','product_supplierinfo'])
