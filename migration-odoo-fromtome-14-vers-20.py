@@ -170,3 +170,31 @@ for row in cr_src.fetchall():
 cr_dst.execute("update res_partner_bank b set country_id=p.country_id from res_partner p where p.id=b.partner_id and b.country_id is null")
 cnx_dst.commit()
 #******************************************************************************
+
+
+# ** Tables de paramétrage is_* (étape 2) *************************************
+# Mêmes colonnes en v14 et en v20 : copiées avec les ids de la source
+# Liens vers les partenaires (enseigne, transporteur) : repris ci-dessus ; entrepôt de l'enseigne : configuration du
+# stock reprise avec les ids de la source (étape 5) ; modèles de commande de l'enseigne : pièces jointes reprises avec
+# leurs ids (étape 11)
+# Tables liées aux articles (remises particulières, contrats date client) : reprises avec les articles (étape 3)
+tables = [
+    'is_enseigne_commerciale',                     # 3 enseignes (liées aux partenaires : res_partner.is_enseigne_id)
+    'is_enseigne_commerciale_modele_commande_rel', # Modèles de commande client des enseignes (pièces jointes)
+    'is_transporteur',                             # 74 tournées transporteur
+    'is_heure_maxi',                               # 16 jours / heures limites d'envoi des commandes fournisseur
+    'is_motif_absence',                            # 5 motifs d'absence (suivi du temps)
+    'is_motif_avoir',                              # 33 motifs d'avoir
+    'is_imprimante_etiquette',                     # 3 imprimantes d'étiquettes
+    'is_bio',                                      # Fiche article : 7 labels bio
+    'is_famille_fromage',                          # 28 familles de fromage
+    'is_rayon_magasin',                            # 2 rayons magasin
+    'is_region_origine',                           # 98 régions d'origine
+    'is_germe',                                    # 34 germes
+    'is_ingredient',                               # 204 ingrédients
+    'is_valeur_nutritionnelle',                    # 45 valeurs nutritionnelles
+    'milk_type',                                   # 15 types de lait
+]
+for table in tables:
+    MigrationTable(db_src,db_dst,table)
+#******************************************************************************
