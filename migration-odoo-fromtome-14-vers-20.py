@@ -36,8 +36,8 @@ def AfficherDuree():
 
 
 # ** Thème de l'entreprise (is_theme_entreprise) ******************************
-# Pas de thème en v14 : couleur à choisir avec Tony
-couleur_theme = False
+# Pas de thème en v14 : rouge du logo Fromtome (#D91943, choix de Tony le 25/10/2026)
+couleur_theme = '#D91943'
 def ThemeEntreprise():
     if not couleur_theme:
         print("Thème de l'entreprise : couleur non choisie, non réglé")
