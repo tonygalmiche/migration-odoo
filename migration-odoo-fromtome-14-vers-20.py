@@ -177,10 +177,14 @@ cnx_dst.commit()
 # Liens vers les partenaires (enseigne, transporteur) : repris ci-dessus ; entrepôt de l'enseigne : configuration du
 # stock reprise avec les ids de la source (étape 5) ; modèles de commande de l'enseigne : pièces jointes reprises avec
 # leurs ids (étape 11)
-# Tables liées aux articles (remises particulières, contrats date client) : reprises avec les articles (étape 3)
+# Tables liées aux articles (lignes des modèles de commande, remises particulières, contrats date client) : reprises
+# avec les articles (étape 3)
+# is_modele_commande.enseigne_id : colonne restée d'une version antérieure (related non stocké en v14) => non reprise
 tables = [
     'is_enseigne_commerciale',                     # 3 enseignes (liées aux partenaires : res_partner.is_enseigne_id)
     'is_enseigne_commerciale_modele_commande_rel', # Modèles de commande client des enseignes (pièces jointes)
+    'is_modele_commande',                          # 238 modèles de commande (liés aux partenaires : res_partner.is_modele_commande_id)
+    'is_modele_commande_modele_commande_rel',      # Modèles de commande client (pièces jointes) ; lignes : étape 3
     'is_transporteur',                             # 74 tournées transporteur
     'is_heure_maxi',                               # 16 jours / heures limites d'envoi des commandes fournisseur
     'is_motif_absence',                            # 5 motifs d'absence (suivi du temps)
