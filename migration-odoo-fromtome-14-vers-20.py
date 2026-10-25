@@ -5,6 +5,7 @@
 # Première partie (étape 1 de la reprise) : contacts, comptes bancaires, utilisateurs, groupes, société, mise en page, thème
 # A faire ensuite : tables de paramétrage is_*, unités, articles, stock, ventes, achats, comptabilité, chatter, pièces jointes
 from migration_fonction import *
+from psycopg2.extras import execute_values
 import atexit
 
 
@@ -201,4 +202,95 @@ tables = [
 ]
 for table in tables:
     MigrationTable(db_src,db_dst,table)
+#******************************************************************************
+
+
+# ** Unités de mesure (étape 3) ***********************************************
+# Copiées avec les ids de la v14 (23 unités) ; noms traduits par ir_translation ; voir MigrationUnites
+MigrationUnites(db_src,db_dst)
+#******************************************************************************
+
+
+# ** Articles (étape 3) *******************************************************
+# Catégories (23) : nom texte en v14, traduisible en v20 ; comptes des catégories : repris avec la comptabilité
+MigrationTableJsonb(db_src,db_dst,'product_category')
+parent_store_compute(cr_dst,cnx_dst,'product_category','parent_id')
+
+# Modèles d'articles (6 264 : 6 223 stockables, 18 consommables, 23 services) ; pas d'attributs ni de variantes
+# Noms et descriptions : texte en v14, traduisibles en v20 (traductions de ir_translation)
+# expense_policy => reinvoice_policy ; sale_delay : toujours à 0 en v14, entier jsonb par société en v20 => vidé
+# Nouvelles colonnes obligatoires en v20 : service_tracking, base_unit_count (valeurs par défaut d'Odoo)
+MigrationTableJsonb(db_src,db_dst,'product_template',rename={'expense_policy':'reinvoice_policy'},
+    default={'service_tracking':'no','base_unit_count':0})
+cr_dst.execute("update product_template set sale_delay=null")
+# Type « Article stockable » (product) supprimé en v18 => consommable (consu) avec « Suivre l'inventaire » (is_storable)
+cr_dst.execute("update product_template set is_storable=(type='product'), type=case when type='product' then 'consu' else type end")
+# Suivi « none » supprimé en v20 (seulement lot et serial) => vide ; sinon « Wrong value for product.template.store_by: 'none' »
+cr_dst.execute("update product_template set tracking=null where tracking='none'")
+cnx_dst.commit()
+
+# Variantes (6 264, une par modèle) ; prix de vente des variantes (lst_price) : calculé et stocké en v20 (sans
+# attributs : prix du modèle)
+MigrationTable(db_src,db_dst,'product_product',default={'base_unit_count':0})
+cr_dst.execute("update product_product p set lst_price=t.list_price from product_template t where t.id=p.product_tmpl_id")
+cnx_dst.commit()
+
+# Coût des variantes et responsable des articles : propriétés en v14, champs jsonb par société en v20
+MigrationIrPropertyJsonb(db_src,db_dst,'product.product','standard_price')
+MigrationIrPropertyJsonb(db_src,db_dst,'product.template','responsible_id')
+
+# Fiche technique et classement des articles : mêmes colonnes en v14 et en v20
+for table in [
+    'product_milk_type_rel',          # Types de lait des articles (5 966)
+    'product_is_fiche_technique_rel', # Fiches techniques (pièces jointes, reprises avec leurs ids à l'étape 11)
+    'is_ingredient_line',             # Ingrédients des articles (2 056)
+    'is_germe_line',                  # Germes (990)
+    'is_valeur_nutritionnelle_line',  # Valeurs nutritionnelles (2 962)
+    'contrat_date_client',            # Contrats date client (13)
+    'is_remise_particuliere',         # Remises particulières des clients (71)
+    'is_modele_commande_ligne',       # Lignes des modèles de commande (14 504)
+]:
+    MigrationTable(db_src,db_dst,table)
+
+# Listes de prix (154, dont 62 archivées) : nom texte en v14, traduisible en v20 ; discount_policy supprimé en v20
+# Liste de prix des clients : propriété en v14, champ jsonb par société en v20
+MigrationTableJsonb(db_src,db_dst,'product_pricelist')
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_product_pricelist','specific_property_product_pricelist')
+
+# Règles de prix (106 557) : active supprimé en v20 (en v14, copie de celui de la liste de prix ; les règles des
+# listes archivées restent masquées par le domaine de is_pricelist_item_ids, voir étape 7 du module)
+# compute_price : « formula » (13 règles, remise de -8 % à +5 %) et « percentage » (1 règle, 37,619 %) supprimés en
+# v20 => « discount » avec la même remise (price_discount ; pour percentage : percent_price)
+MigrationTable(db_src,db_dst,'product_pricelist_item')
+cr_dst.execute("update product_pricelist_item set compute_price='discount' where compute_price='formula'")
+cr_src.execute("select id,percent_price from product_pricelist_item where compute_price='percentage'")
+for row in cr_src.fetchall():
+    cr_dst.execute("update product_pricelist_item set compute_price='discount', price_discount=%s where id=%s",[row['percent_price'],row['id']])
+cnx_dst.commit()
+
+# Prix fournisseurs (14 448) : name => partner_id ; unité d'achat de l'article (uom_po_id, supprimé en v20) => unité
+# du prix fournisseur (obligatoire) ; remises fournisseurs par période (14 191) : mêmes colonnes
+MigrationTable(db_src,db_dst,'product_supplierinfo',rename={'name':'partner_id'},default={'uom_id':1,'discount':0})
+cr_src.execute("select s.id,t.uom_po_id from product_supplierinfo s join product_template t on t.id=s.product_tmpl_id")
+execute_values(cr_dst,"update product_supplierinfo s set uom_id=v.uom_id from (values %s) as v(id,uom_id) where v.id=s.id",
+    [(row['id'],row['uom_po_id']) for row in cr_src.fetchall()])
+cnx_dst.commit()
+MigrationTable(db_src,db_dst,'product_supplierdiscount')
+
+# Ids des devises : ids de la v14 (EUR = 1) => ids de la v20
+MigrationDevisesParCode(db_src,db_dst,['product_template','product_pricelist','product_pricelist_item','product_supplierinfo'])
+
+# Identifiants externes : catégories renommées en v20 (product_category_all => product_category_goods...)
+cr_src.execute("select name,res_id from ir_model_data where model='product.category'")
+categories = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+MigrationIrModelData(db_src,db_dst,['product.category','product.pricelist'],correspondances={
+    'product.category': {
+        'product_category_goods'   : categories.get('product_category_all'),
+        'product_category_expenses': categories.get('cat_expense'),
+        'product_category_services': categories.get('product_category_1'),
+    },
+})
+
+# A reprendre avec la comptabilité : taxes des articles (product_taxes_rel, product_supplier_taxes_rel)
+# A reprendre avec les pièces jointes : images des articles
 #******************************************************************************
