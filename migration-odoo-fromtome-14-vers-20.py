@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 # Reprise des données de Fromtome : Odoo 14 (is_fromtome14) => Odoo 20 (is_fromtome20)
 # Documentation : Documentation/migration-odoo/migration-is_fromtome14-vers-is_fromtome20.md (§ 6 et § 7)
-# Fait (étapes 1 à 8 de la reprise) : contacts, utilisateurs, société, paramétrage is_*, unités, articles, stock, ventes,
-# achats, comptabilité (paramètres, pièces, lettrages, paiements, exports compta), tables du module
-# A faire ensuite : serveurs de mail, IA, pièces jointes, chatter
+# Fait (étapes 1 à 9 de la reprise) : contacts, utilisateurs, société, paramétrage is_*, unités, articles, stock, ventes,
+# achats, comptabilité (paramètres, pièces, lettrages, paiements, exports compta), tables du module, serveurs de mail
+# A faire ensuite : IA, pièces jointes, chatter
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
@@ -13,7 +13,8 @@ import atexit
 #** Paramètres ****************************************************************
 db_src = "fromtome14"
 db_dst = "fromtome20"
-# Reprise relancée à partir de l'étape N après un arrêt : option --depart N (7 : comptabilité, 8 : tables du module)
+# Reprise relancée à partir de l'étape N après un arrêt : option --depart N (7 : comptabilité, 8 : tables du module,
+# 9 : serveurs de mail)
 # => fromtome20 gardée telle quelle (pas recréée), étapes précédentes sautées ; chaque étape vide et recopie ses tables,
 # elle peut être relancée si les étapes précédentes sont allées au bout. Si la base est abîmée : sans l'option, reprise
 # complète à partir de fromtome20-vierge
@@ -989,4 +990,21 @@ if depart<=8:
         'is_purchase_order_livraison_client_rel',
     ]:
         MigrationTable(db_src,db_dst,table)
+    #******************************************************************************
+
+
+# ** Serveurs de mail (étape 9) ***********************************************
+if depart<=9:
+    Etape("Étape 9 : serveurs de mail")
+    # smtp_by_user (v14) => standard v20 : utilisateur du serveur (user_id) => owner_user_id (unique, un serveur par
+    # utilisateur en v14 aussi), adresse d'envoi (smtp_user) => from_filter ; 16 serveurs, mots de passe compris
+    # Archivés sur la base de test (aucun mail réel envoyé) : le nettoyage quotidien d'Odoo (autovacuum) supprime les
+    # serveurs personnels archivés, recréés à chaque reprise. À la bascule : option --serveurs-actifs (actifs comme en v14)
+    actif = "t.active" if '--serveurs-actifs' in sys.argv else "false"
+    MigrationTable(db_src,db_dst,'ir_mail_server',expressions={
+        'owner_user_id'      : "t.user_id",
+        'from_filter'        : "lower(t.smtp_user)",
+        'smtp_authentication': "'login'",
+        'active'             : actif,
+    })
     #******************************************************************************
