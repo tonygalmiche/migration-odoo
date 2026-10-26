@@ -2266,8 +2266,14 @@ def MigrationConfigurationStock(db_src,db_dst,correspondances_xmlids={},societes
     corr = {t:{} for t in tables} # id v20 => id source
 
     # 1. Correspondance par rôle
+    # Entrepôt : même code, sinon même identifiant externe (Fromtome : WH en v20, FT en v14 pour stock.warehouse0)
+    cr_src.execute("select name,res_id from ir_model_data where model='stock.warehouse'")
+    entrepots_src = {row['name']:row['res_id'] for row in cr_src.fetchall()}
+    cr_dst.execute("select name,res_id from ir_model_data where model='stock.warehouse'")
+    entrepots_xmlid = {row['res_id']:entrepots_src.get(row['name']) for row in cr_dst.fetchall()}
     for w20 in dst['stock_warehouse'].values():
-        w16 = next((w for w in src['stock_warehouse'].values() if w['code']==w20['code']), None)
+        w16 = next((w for w in src['stock_warehouse'].values() if w['code']==w20['code']), None) \
+            or src['stock_warehouse'].get(entrepots_xmlid.get(w20['id']))
         if not w16:
             continue
         corr['stock_warehouse'][w20['id']] = w16['id']
