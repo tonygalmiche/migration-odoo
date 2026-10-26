@@ -16,11 +16,13 @@ db_dst = "fromtome20"
 
 
 # ** Repartir d'une base vierge à chaque lancement ****************************
-# fromtome20-vierge : base v20 avec is_fromtome20 installé, sans données (étape 14 de la reprise, à créer par Tony)
-# db_vierge = db_dst+'-vierge'
-# SQL='DROP DATABASE "'+db_dst+'";CREATE DATABASE "'+db_dst+'" WITH TEMPLATE "'+db_vierge+'"'
-# cde="""echo '"""+SQL+"""' | psql postgres"""
-# lines=os.popen(cde).readlines()
+# fromtome20-vierge : base v20 avec is_fromtome20 installé, sans données (étape 14 de la reprise, créée par Tony)
+# Ni fromtome20 ni fromtome20-vierge ne doivent être ouvertes (Odoo arrêté ou sur une autre base) : sinon DROP / CREATE
+# refusés (« is being accessed by other users »)
+db_vierge = db_dst+'-vierge'
+SQL='DROP DATABASE "'+db_dst+'";CREATE DATABASE "'+db_dst+'" WITH TEMPLATE "'+db_vierge+'"'
+cde="""echo '"""+SQL+"""' | psql postgres"""
+lines=os.popen(cde).readlines()
 #******************************************************************************
 
 cnx_src,cr_src=GetCR(db_src)
