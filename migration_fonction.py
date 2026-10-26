@@ -245,12 +245,26 @@ def SQL2CSV(db_src, table, SQL):
     f.close()
 
 
-def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False, db_src=False):
-    # Colonnes renommées seulement (sans valeurs par défaut ni traductions) : renommées dans la requête du COPY, sans
-    # charger les lignes en Python (grosses tables : stock_move_line de Fromtome, 819 591 lignes)
-    if rename and not default and not text2jsonb and champs!='*':
-        champs = ','.join('%s as "%s"'%(c,rename[c]) if c in rename else c for c in champs.split(','))
+def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False, db_src=False, expressions={}):
+    # Colonnes renommées ou calculées seulement (sans valeurs par défaut ni traductions) : renommées et calculées dans la
+    # requête du COPY, sans charger les lignes en Python (grosses tables : stock_move_line de Fromtome, 819 591 lignes)
+    # expressions : {colonne destination: expression SQL sur la table source (alias t)}
+    if (rename or expressions) and not default and not text2jsonb and champs!='*':
+        rename = rename or {}
+        colonnes = []
+        for c in champs.split(','):
+            nom = rename.get(c,c)
+            if nom in expressions:
+                colonnes.append('(%s) as "%s"'%(expressions[nom],nom))
+            elif nom!=c:
+                colonnes.append('"%s" as "%s"'%(c,nom))
+            else:
+                colonnes.append('"%s"'%c)
+        champs = ','.join(colonnes)
         rename = False
+    elif champs!='*':
+        # Noms de colonnes entre guillemets : mots réservés de PostgreSQL (order, default, analyse...)
+        champs = ','.join('"%s"'%c for c in champs.split(','))
     SQL="SELECT "+champs+" FROM "+table+" t"
     if where!="":
         SQL=SQL+" WHERE "+where
@@ -320,16 +334,10 @@ def CSV2Table(cnx_dst,cr_dst,table_src,table_dst=False, db_src=False):
         table_dst=table_src
     path = "/tmp/%s-%s.csv"%(db_src or 'x',table_src)
     f = open(path, "r")
-    champs = f.readline()
-    # order est un nom de champ réservé dans une table postgresql
-    champs=champs.replace(',order,','",order",') 
-    if champs[0:6]=="order,":
-        champs='"order",'+champs[6:]
-    if champs[0:11]=="references,":
-        champs='"references",'+champs[11:]
-    if champs[0:8]=="default,":
-        champs='"default",'+champs[8:]
+    champs = f.readline().strip()
+    # Noms de colonnes entre guillemets : mots réservés de PostgreSQL (order, references, default, analyse...)
     if len(champs)>0:
+        champs = ','.join('"%s"'%c.strip('"') for c in champs.split(','))
         SQL="""
             ALTER TABLE """+table_dst+""" DISABLE TRIGGER ALL;
             DELETE FROM """+table_dst+""";
@@ -363,8 +371,10 @@ def DumpRestoreTable(db_src,db_dst,table):
     os.popen(cde).readlines()
 
 
-def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where="",text2jsonb=False,exclure=[]):
-    """exclure : colonnes communes à ne pas reprendre (ex : type changé entre les versions)"""
+def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},where="",text2jsonb=False,exclure=[],expressions={}):
+    """exclure : colonnes communes à ne pas reprendre (ex : type changé entre les versions)
+    expressions : {colonne destination: expression SQL sur la table source (alias t)}, calculée dans la requête du COPY
+    (ex : colonne obligatoire en v20, vide dans la source, sur une grosse table) ; la colonne peut être absente de la source"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
 
@@ -387,8 +397,11 @@ def MigrationTable(db_src,db_dst,table_src,table_dst=False,rename={},default={},
         for champ in champs:
             if champ in champs_src and champ in champs_dst and champ not in exclure:
                 communs.append(champ)
+        for champ in expressions:
+            if champ in champs_dst and champ not in communs:
+                communs.append(champ)
         champs=','.join(communs)
-        Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst,db_src=db_src)
+        Table2CSV(cr_src,table_src,champs,rename=rename,default=default,where=where,text2jsonb=text2jsonb, cr_dst=cr_dst,table_dst=table_dst,db_src=db_src,expressions=expressions)
         CSV2Table(cnx_dst,cr_dst,table_src,table_dst,db_src=db_src)
         SetSequence(cr_dst,cnx_dst,table_dst)
 
@@ -438,12 +451,14 @@ def GetTypesChamps(cr,table):
     return {row['column_name']: row['data_type'] for row in cr.fetchall()}
 
 
-def MigrationTableJsonb(db_src,db_dst,table,rename={},default={}):
+def MigrationTableJsonb(db_src,db_dst,table,rename={},default={},remplacer={}):
     """Copie ligne à ligne d'une petite table dont des champs texte sont devenus traduisibles (jsonb) :
     valeur => {"en_US": valeur, "fr_FR": traduction ou valeur}. La traduction est lue dans ir_translation
     si elle existe dans la source (v14, v15). Remplace MigrationTable(text2jsonb=True) quand la source est
     en v16 ou plus (ir_translation supprimée). rename : {colonne source: colonne destination}
-    default : {colonne destination: valeur} pour les colonnes absentes de la source ou vides (ex : obligatoires en v20)"""
+    default : {colonne destination: valeur} pour les colonnes absentes de la source ou vides (ex : obligatoires en v20)
+    remplacer : {id: {colonne destination: valeur}} pour des lignes précises, posé avant l'insertion (ex : code de
+    journal en double dans la source, refusé par un index unique de la v20 même sans les déclencheurs)"""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     types_src = GetTypesChamps(cr_src,table)
@@ -472,6 +487,12 @@ def MigrationTableJsonb(db_src,db_dst,table,rename={},default={}):
             if c in colonnes:
                 i = colonnes.index(c)
                 valeurs[i] = valeurs[i] if valeurs[i] not in (None,'') else v
+            else:
+                colonnes.append(c)
+                valeurs.append(v)
+        for c,v in remplacer.get(row.get('id'),{}).items():
+            if c in colonnes:
+                valeurs[colonnes.index(c)] = v
             else:
                 colonnes.append(c)
                 valeurs.append(v)

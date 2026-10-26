@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 # Reprise des données de France Filets : Odoo 15 (is_france_filets15) => Odoo 20 (is_france_filets20)
 # Documentation : Documentation/migration-odoo/migration-is_france_filets15-vers-is_france_filets20.md (étape 9)
+# ⚠️ MIGRATION À REFAIRE : simple essai, devis non signé ; méthodes plus anciennes que les autres migrations v20 (plan
+# comptable sans CompleterColonnesV20 ni codes Factur-X des taxes) => ne pas s'en servir comme modèle
 from migration_fonction import *
 import os
 
