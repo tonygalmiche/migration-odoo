@@ -154,6 +154,14 @@ if depart<=6:
     cr_dst.execute("update res_company set vat_check_vies=false")
     cnx_dst.commit()
 
+    # Pied de page des documents : texte traduit en v14 (ir_translation, avec retours à la ligne ; la valeur de base est
+    # une ancienne version) => html par langue en v20 (sinon pied de page calculé : téléphone, e-mail, TVA, SIRET)
+    cr_src.execute("select lang, value from ir_translation where name='res.company,report_footer' and res_id=1 and value<>''")
+    pied = {row['lang']: '<p>%s</p>'%'<br>'.join(html.escape(ligne) for ligne in row['value'].splitlines()) for row in cr_src.fetchall()}
+    if pied:
+        cr_dst.execute("update res_company set report_footer=%s where id=1",[json.dumps(pied)])
+        cnx_dst.commit()
+
     # Mise en page des documents : agencement « Boxed » en v14 (web.external_layout_boxed), supprimé en v20 => « Light »
     # (web.external_layout_standard, en-tête et pied de page Fromtome : report/external_layout_boxed.xml du module) avec
     # les tableaux « Encadré » (report_tables_id boxed : classes o_report_layout_boxed de l'ancien Boxed) ;
