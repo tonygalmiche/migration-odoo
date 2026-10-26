@@ -154,6 +154,15 @@ if depart<=6:
     cr_dst.execute("update res_company set vat_check_vies=false")
     cnx_dst.commit()
 
+    # Précisions décimales de la v14 (4 décimales : quantités, poids, prix, volume ; 2 par défaut en v20 : prix et
+    # quantités arrondis à la saisie, 11,32 kg au lieu de 11,3180 sur les BL) ; « Product Unit of Measure » renommé
+    # « Product Unit » en v20
+    cr_src.execute("select name, digits from decimal_precision")
+    for row in cr_src.fetchall():
+        nom = {'Product Unit of Measure': 'Product Unit'}.get(row['name'],row['name'])
+        cr_dst.execute("update decimal_precision set digits=%s where name=%s",[row['digits'],nom])
+    cnx_dst.commit()
+
     # Pied de page des documents : texte traduit en v14 (ir_translation, avec retours à la ligne ; la valeur de base est
     # une ancienne version) => html par langue en v20 (sinon pied de page calculé : téléphone, e-mail, TVA, SIRET)
     cr_src.execute("select lang, value from ir_translation where name='res.company,report_footer' and res_id=1 and value<>''")
@@ -952,6 +961,20 @@ if depart<=8:
     # 76 employés (16 actifs) : suivi du temps (is_suivi_temps.employe_id, 69 employés) et transferts
     # (stock_picking.is_employe_id, 1 817) ; départements, postes, catégories et une hr_version par employé
     MigrationHrEmployee(db_src,db_dst)
+
+    Etape("Étape 8 : traductions allemandes")
+    # Les reprises de tables traduisibles ne prennent que le français : noms d'articles (2 308, listings en allemand),
+    # listes de prix, unités (Pc), conditions de paiement, routes, types d'opérations. Données standard d'Odoo
+    # (groupes, sous-types, incoterms...) : traduites par la v20
+    MigrationTraductions(db_src,db_dst,[
+        ('product.template'    ,'name','product_template'),
+        ('product.pricelist'   ,'name','product_pricelist'),
+        ('uom.uom'             ,'name','uom_uom'),
+        ('account.payment.term','name','account_payment_term'),
+        ('account.payment.term','note','account_payment_term'),
+        ('stock.location.route','name','stock_route'),
+        ('stock.picking.type'  ,'name','stock_picking_type'),
+    ],['de_DE'])
 
     Etape("Étape 8 : étiquettes des partenaires")
     # 42 étiquettes, 1 338 partenaires étiquetés ; catégories de l'analyse de la facturation (568 143 liens)

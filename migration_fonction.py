@@ -451,6 +451,30 @@ def GetTypesChamps(cr,table):
     return {row['column_name']: row['data_type'] for row in cr.fetchall()}
 
 
+def MigrationTraductions(db_src,db_dst,champs,langues):
+    """Traductions d'autres langues que le français (ir_translation v14 / v15) ajoutées aux colonnes jsonb de la v20,
+    après la copie des tables (MigrationTableJsonb et les reprises de tables traduisibles ne prennent que fr_FR).
+    champs : liste de (modèle source, champ, table destination), ex : [('product.template','name','product_template')]
+    langues : ex : ['de_DE'] (langue installée dans la destination, sinon « Invalid language code » à l'affichage)"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    for modele,champ,table in champs:
+        cr_src.execute("""
+            select res_id, lang, value from ir_translation
+            where type='model' and name=%s and lang in %s and coalesce(value,'')<>''
+        """,[modele+','+champ,tuple(langues)])
+        valeurs = [(row['res_id'],row['lang'],row['value']) for row in cr_src.fetchall()]
+        if valeurs:
+            cr_dst.execute("alter table "+table+" disable trigger all")
+            psycopg2.extras.execute_values(cr_dst,"""
+                update """+table+""" t set """+champ+"""=coalesce(t."""+champ+""",'{}'::jsonb)||jsonb_build_object(s.lang,s.value)
+                from (values %s) as s(id,lang,value) where t.id=s.id
+            """,valeurs)
+            cr_dst.execute("alter table "+table+" enable trigger all")
+            cnx_dst.commit()
+        print("MigrationTraductions : %s.%s : %s traductions"%(modele,champ,len(valeurs)))
+
+
 def MigrationTableJsonb(db_src,db_dst,table,rename={},default={},remplacer={}):
     """Copie ligne à ligne d'une petite table dont des champs texte sont devenus traduisibles (jsonb) :
     valeur => {"en_US": valeur, "fr_FR": traduction ou valeur}. La traduction est lue dans ir_translation
