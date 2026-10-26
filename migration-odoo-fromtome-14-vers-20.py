@@ -361,3 +361,64 @@ MigrationIrModelData(db_src,db_dst,['account.payment.term'])
 MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_payment_term_id')
 MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_supplier_payment_term_id')
 #******************************************************************************
+
+
+# ** Configuration du stock (étape 5) *****************************************
+# Entrepôts FT (1) et LC (2), emplacements, types d'opérations, routes, règles : copiés avec les ids de la v14 ;
+# correspondance par rôle avec ceux créés par la v20 (voir MigrationConfigurationStock)
+MigrationConfigurationStock(db_src,db_dst)
+# Routes des entrepôts (6) et des articles (6 262)
+MigrationTable(db_src,db_dst,'stock_route_warehouse')
+MigrationTable(db_src,db_dst,'stock_route_product')
+
+# Entrepôts multiples : option automatique en v20 à la création d'un 2e entrepôt (stock_warehouse.py), non déclenchée
+# par une copie en SQL => groupe impliqué par Utilisateur interne et donné à ses membres, comme le fait Odoo (_apply_group)
+SQL="""
+    insert into res_groups_implied_rel (gid,hid)
+    select u.res_id, w.res_id from ir_model_data u, ir_model_data w
+    where u.module='base' and u.name='group_user' and w.module='stock' and w.name='group_stock_multi_warehouses'
+    on conflict do nothing;
+    insert into res_groups_users_rel (gid,uid)
+    select w.res_id, r.uid from ir_model_data w, ir_model_data u join res_groups_users_rel r on r.gid=u.res_id
+    where u.module='base' and u.name='group_user' and w.module='stock' and w.name='group_stock_multi_warehouses'
+    on conflict do nothing;
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+
+# Règles de réapprovisionnement (29) : qty_to_order => qty_to_order_manual ; nouvelles colonnes obligatoires en v20 :
+# valeurs par défaut d'Odoo ; qty_multiple (0 ou 1 partout), group_id, bom_id, product_category_id supprimés
+MigrationTable(db_src,db_dst,'stock_warehouse_orderpoint',rename={'qty_to_order':'qty_to_order_manual'},default={
+    'min_max_based_on'       : 'one_month',
+    'min_max_based_on_factor': 100,
+    'daily_demand'           : 0,
+})
+#******************************************************************************
+
+
+# ** Lots, colis et quants (étape 5) ******************************************
+# Lots (88 806, tous avec DLC/DDM) : stock_production_lot => stock_lot ; product_uom_id supprimé en v20
+MigrationTable(db_src,db_dst,'stock_production_lot','stock_lot')
+
+# Colis (13) : stock_quant_package => stock_package ; packaging_id supprimé (conditionnements supprimés en v20)
+# complete_name et parent_path (nouveaux, hiérarchie des colis) : colis sans parent => son nom et son id
+MigrationTable(db_src,db_dst,'stock_quant_package','stock_package')
+cr_dst.execute("update stock_package set complete_name=name, parent_path=id||'/'")
+cnx_dst.commit()
+
+# Quants (175 294 : 328 internes, 23 en transit, les autres sur les emplacements virtuels clients, fournisseurs et
+# ajustement d'inventaire ; 61 avec une quantité réservée : à vérifier avec la reprise des mouvements)
+MigrationTable(db_src,db_dst,'stock_quant')
+
+# Emplacement du lot (nouveau en v20, stocké) : l'emplacement de ses quantités positives s'il n'y en a qu'un (calcul d'Odoo)
+SQL="""
+    update stock_lot l set location_id=q.location_id
+    from (
+        select lot_id, min(location_id) as location_id from stock_quant
+        where quantity>0 and lot_id is not null group by lot_id having count(distinct location_id)=1
+    ) q
+    where q.lot_id=l.id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+#******************************************************************************
