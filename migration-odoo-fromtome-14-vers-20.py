@@ -28,6 +28,16 @@ lines=os.popen(cde).readlines()
 cnx_src,cr_src=GetCR(db_src)
 cnx_dst,cr_dst=GetCR(db_dst)
 
+# Mise à jour d'une table copiée sans contrôle des clés étrangères (comme la copie) : un update revérifie toutes les
+# clés de la ligne, dont celles vers des tables reprises plus loin (ex : sale_order_line.is_purchase_line_id)
+def UpdateSansControle(table,SQL,params=None):
+    cr_dst.execute("alter table "+table+" disable trigger all")
+    try:
+        cr_dst.execute(SQL,params)
+    finally:
+        cr_dst.execute("alter table "+table+" enable trigger all")
+    cnx_dst.commit()
+
 # Heures de début et de fin, durée : affichées aussi en cas d'arrêt (sys.exit, erreur)
 debut = datetime.now()
 print("Début : %s"%debut.strftime('%d/%m/%Y %H:%M:%S'))
@@ -435,9 +445,10 @@ MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excl
 # Non repris (supprimés en v20) : price_reduce, product_packaging, qty_delivered_manual, route_id (vides)
 MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'})
 # Prix technique (nouveau, prix unitaire avant modification manuelle) et entrepôt de la ligne (stocké en v20)
-cr_dst.execute("update sale_order_line set technical_price_unit=price_unit where technical_price_unit is null")
-cr_dst.execute("update sale_order_line l set warehouse_id=o.warehouse_id from sale_order o where o.id=l.order_id")
-cnx_dst.commit()
+UpdateSansControle('sale_order_line',"""
+    update sale_order_line l set technical_price_unit=coalesce(l.technical_price_unit,l.price_unit), warehouse_id=o.warehouse_id
+    from sale_order o where o.id=l.order_id
+""")
 # Taxes des lignes (ids des taxes de la v14, reprises avec la comptabilité) ; fichiers Excel importés des commandes
 # (pièces jointes reprises avec leurs ids)
 MigrationTable(db_src,db_dst,'account_tax_sale_order_line_rel')
@@ -452,21 +463,18 @@ MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
 # document_tax_mode obligatoire en v20 (hors taxe) ; état « done » supprimé en v20 => « purchase » verrouillée
 # group_id => références de stock ; payment_mode_id, supplier_partner_bank_id (OCA) non repris au 1er temps
 MigrationTable(db_src,db_dst,'purchase_order',rename={'notes':'note'},default={'document_tax_mode':'tax_excluded','locked':False})
-cr_dst.execute("update purchase_order set state='purchase', locked=true where state='done'")
-cnx_dst.commit()
+UpdateSansControle('purchase_order',"update purchase_order set state='purchase', locked=true where state='done'")
 # Lignes (297 927) : product_uom => uom_id ; state, currency_id (calculés), sale_order_id, account_analytic_id (vides)
 # non repris
 MigrationTable(db_src,db_dst,'purchase_order_line',rename={'product_uom':'uom_id'})
 # Prix technique et prix dans l'unité de l'article (nouveaux, stockés en v20 : même calcul qu'Odoo, _compute_price)
-SQL="""
+UpdateSansControle('purchase_order_line',"""
     update purchase_order_line l set
         technical_price_unit = l.price_unit,
         price_unit_product_uom = case when l.display_type is null then l.price_unit * pu.factor / lu.factor else 0 end
     from uom_uom lu, product_product p, product_template t, uom_uom pu
     where lu.id=l.uom_id and p.id=l.product_id and t.id=p.product_tmpl_id and pu.id=t.uom_id
-"""
-cr_dst.execute(SQL)
-cnx_dst.commit()
+""")
 # Taxes des lignes (ids des taxes de la v14, reprises avec la comptabilité) ; transferts liés aux commandes (module)
 MigrationTable(db_src,db_dst,'account_tax_purchase_order_line_rel')
 MigrationTable(db_src,db_dst,'purchase_order_stock_picking_rel')
