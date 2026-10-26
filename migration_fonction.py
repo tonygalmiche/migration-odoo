@@ -246,6 +246,11 @@ def SQL2CSV(db_src, table, SQL):
 
 
 def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text2jsonb=False, cr_dst=False, table_dst=False, db_src=False):
+    # Colonnes renommées seulement (sans valeurs par défaut ni traductions) : renommées dans la requête du COPY, sans
+    # charger les lignes en Python (grosses tables : stock_move_line de Fromtome, 819 591 lignes)
+    if rename and not default and not text2jsonb and champs!='*':
+        champs = ','.join('%s as "%s"'%(c,rename[c]) if c in rename else c for c in champs.split(','))
+        rename = False
     SQL="SELECT "+champs+" FROM "+table+" t"
     if where!="":
         SQL=SQL+" WHERE "+where

@@ -424,3 +424,79 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
+# ** Ventes (étape 6) *********************************************************
+# Commandes (20 004 : 17 807 confirmées, 2 185 annulées, 12 devis ; aucune « done ») ; procurement_group_id =>
+# références de stock (MigrationReferencesStock, plus bas) ; document_tax_mode : obligatoire en v20, réglage de la
+# société (hors taxe) ; payment_mode_id (OCA) non repris au 1er temps
+MigrationTable(db_src,db_dst,'sale_order',default={'document_tax_mode':'tax_excluded','locked':False})
+# Lignes (395 751) : product_uom => product_uom_id ; customer_lead : décimal en v14, entier en v20 (toujours 0)
+# Non repris (supprimés en v20) : price_reduce, product_packaging, qty_delivered_manual, route_id (vides)
+MigrationTable(db_src,db_dst,'sale_order_line',rename={'product_uom':'product_uom_id'})
+# Prix technique (nouveau, prix unitaire avant modification manuelle) et entrepôt de la ligne (stocké en v20)
+cr_dst.execute("update sale_order_line set technical_price_unit=price_unit where technical_price_unit is null")
+cr_dst.execute("update sale_order_line l set warehouse_id=o.warehouse_id from sale_order o where o.id=l.order_id")
+cnx_dst.commit()
+# Taxes des lignes (ids des taxes de la v14, reprises avec la comptabilité) ; fichiers Excel importés des commandes
+# (pièces jointes reprises avec leurs ids)
+MigrationTable(db_src,db_dst,'account_tax_sale_order_line_rel')
+MigrationTable(db_src,db_dst,'sale_order_is_import_excel_ids_rel')
+MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
+# Lien entre les lignes de commande et les lignes de factures (sale_order_line_invoice_rel) : avec les factures
+#******************************************************************************
+
+
+# ** Achats (étape 6) *********************************************************
+# Commandes (22 092 : 13 551 confirmées, 8 530 annulées, 9 terminées, 2 brouillons) : notes => note ;
+# document_tax_mode obligatoire en v20 (hors taxe) ; état « done » supprimé en v20 => « purchase » verrouillée
+# group_id => références de stock ; payment_mode_id, supplier_partner_bank_id (OCA) non repris au 1er temps
+MigrationTable(db_src,db_dst,'purchase_order',rename={'notes':'note'},default={'document_tax_mode':'tax_excluded','locked':False})
+cr_dst.execute("update purchase_order set state='purchase', locked=true where state='done'")
+cnx_dst.commit()
+# Lignes (297 927) : product_uom => uom_id ; state, currency_id (calculés), sale_order_id, account_analytic_id (vides)
+# non repris
+MigrationTable(db_src,db_dst,'purchase_order_line',rename={'product_uom':'uom_id'})
+# Prix technique et prix dans l'unité de l'article (nouveaux, stockés en v20 : même calcul qu'Odoo, _compute_price)
+SQL="""
+    update purchase_order_line l set
+        technical_price_unit = l.price_unit,
+        price_unit_product_uom = case when l.display_type is null then l.price_unit * pu.factor / lu.factor else 0 end
+    from uom_uom lu, product_product p, product_template t, uom_uom pu
+    where lu.id=l.uom_id and p.id=l.product_id and t.id=p.product_tmpl_id and pu.id=t.uom_id
+"""
+cr_dst.execute(SQL)
+cnx_dst.commit()
+# Taxes des lignes (ids des taxes de la v14, reprises avec la comptabilité) ; transferts liés aux commandes (module)
+MigrationTable(db_src,db_dst,'account_tax_purchase_order_line_rel')
+MigrationTable(db_src,db_dst,'purchase_order_stock_picking_rel')
+MigrationDevisesParCode(db_src,db_dst,['purchase_order','purchase_order_line'])
+# Lien entre les commandes et les factures (account_move_purchase_order_rel) : avec les factures
+#******************************************************************************
+
+
+# ** Transferts, mouvements et rebuts (étape 6) *******************************
+# Transferts (41 612), mouvements (415 161) et lignes (819 591) ; rebuts : scrapped => is_scrap (666 rebuts,
+# stock.scrap supprimé en v20) ; description_picking => description_picking_manual ; voir MigrationTransfertsStock
+# Inventaires (31, stock.inventory supprimé depuis la v15) : en-têtes et lignes non repris (décision du 25/10/2026),
+# leurs mouvements sont repris
+MigrationTransfertsStock(db_src,db_dst)
+
+# Valorisation : stock_valuation_layer (313 092 couches) non reprise, valorisation manuelle (§ 6 de la doc)
+
+# Groupes d'approvisionnement (43 864, supprimés en v20) => références de stock, liens avec les mouvements et les
+# commandes de vente et d'achat
+MigrationReferencesStock(db_src,db_dst)
+#******************************************************************************
+
+
+# ** Séquences (étape 6) ******************************************************
+# Commandes de vente (CC) et d'achat (CF) ; les transferts ont la séquence de leur type d'opération, recalée par
+# MigrationConfigurationStock
+for code in ['sale.order','purchase.order']:
+    cr_src.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
+    seq_src = cr_src.fetchone()
+    cr_dst.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
+    seq_dst = cr_dst.fetchone()
+    MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
+#******************************************************************************
