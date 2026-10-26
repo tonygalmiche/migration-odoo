@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 # Reprise des données de Fromtome : Odoo 14 (is_fromtome14) => Odoo 20 (is_fromtome20)
 # Documentation : Documentation/migration-odoo/migration-is_fromtome14-vers-is_fromtome20.md (§ 6 et § 7)
-# Fait (étapes 1 à 9 de la reprise) : contacts, utilisateurs, société, paramétrage is_*, unités, articles, stock, ventes,
-# achats, comptabilité (paramètres, pièces, lettrages, paiements, exports compta), tables du module, serveurs de mail
-# A faire ensuite : IA, pièces jointes, chatter
+# Fait (étapes 1 à 10 de la reprise) : contacts, utilisateurs, société, paramétrage is_*, unités, articles, stock, ventes,
+# achats, comptabilité (paramètres, pièces, lettrages, paiements, exports compta), tables du module, serveurs de mail,
+# prompts IA
+# A faire ensuite : pièces jointes, chatter
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
@@ -14,7 +15,7 @@ import atexit
 db_src = "fromtome14"
 db_dst = "fromtome20"
 # Reprise relancée à partir de l'étape N après un arrêt : option --depart N (7 : comptabilité, 8 : tables du module,
-# 9 : serveurs de mail)
+# 9 : serveurs de mail, 10 : prompts IA)
 # => fromtome20 gardée telle quelle (pas recréée), étapes précédentes sautées ; chaque étape vide et recopie ses tables,
 # elle peut être relancée si les étapes précédentes sont allées au bout. Si la base est abîmée : sans l'option, reprise
 # complète à partir de fromtome20-vierge
@@ -1007,4 +1008,26 @@ if depart<=9:
         'smtp_authentication': "'login'",
         'active'             : actif,
     })
+    #******************************************************************************
+
+
+# ** Prompts IA (étape 10) ****************************************************
+if depart<=10:
+    Etape("Étape 10 : prompts IA")
+    # Configuration IA de la société (is_vllm_*) : reprise à l'étape 1 ; is_llm2odoo installé dans fromtome20-vierge
+    # 23 prompts des fiches articles : modèle (ir_model) et champ (ir_model_fields) aux ids différents en v20 =>
+    # retrouvés par leur nom après la copie
+    MigrationTable(db_src,db_dst,'is_prompt_ia')
+    cr_src.execute("""
+        select p.id, m.model, f.model champ_modele, f.name champ
+        from is_prompt_ia p left join ir_model m on m.id=p.modele_id left join ir_model_fields f on f.id=p.field_id
+    """)
+    for row in cr_src.fetchall():
+        cr_dst.execute("""
+            update is_prompt_ia set
+                modele_id=(select id from ir_model where model=%s),
+                field_id=(select id from ir_model_fields where model=%s and name=%s)
+            where id=%s
+        """,[row['model'],row['champ_modele'],row['champ'],row['id']])
+    cnx_dst.commit()
     #******************************************************************************
