@@ -939,6 +939,11 @@ if depart<=7:
 
 # ** Tables du module (étape 8) ***********************************************
 if depart<=8:
+    Etape("Étape 8 : employés")
+    # 76 employés (16 actifs) : suivi du temps (is_suivi_temps.employe_id, 69 employés) et transferts
+    # (stock_picking.is_employe_id, 1 817) ; départements, postes, catégories et une hr_version par employé
+    MigrationHrEmployee(db_src,db_dst)
+
     Etape("Étape 8 : tables du module (promos, calcul des besoins, FNC, analyses, scans, étiquettes, relances...)")
     # Mêmes colonnes en v14 et en v20, copiées avec les ids de la source (liens vers les articles, commandes, transferts,
     # factures déjà repris avec leurs ids), sauf colonnes supprimées en v20 : message_main_attachment_id (analyses de marge
