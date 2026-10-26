@@ -255,16 +255,17 @@ def Table2CSV(cr_src,table,champs='*',rename=False, default=False,where="", text
         for c in champs.split(','):
             nom = rename.get(c,c)
             if nom in expressions:
-                colonnes.append('(%s) as "%s"'%(expressions[nom],nom))
+                colonnes.append('(%s) as "%s"'%(expressions[nom],nom.strip('"')))
             elif nom!=c:
-                colonnes.append('"%s" as "%s"'%(c,nom))
+                colonnes.append('"%s" as "%s"'%(c.strip('"'),nom.strip('"')))
             else:
-                colonnes.append('"%s"'%c)
+                colonnes.append('"%s"'%c.strip('"'))
         champs = ','.join(colonnes)
         rename = False
     elif champs!='*':
-        # Noms de colonnes entre guillemets : mots réservés de PostgreSQL (order, default, analyse...)
-        champs = ','.join('"%s"'%c for c in champs.split(','))
+        # Noms de colonnes entre guillemets : mots réservés de PostgreSQL (order, default, analyse...) ; GetChamps les
+        # renvoie déjà entre guillemets pour certains (« "default" ») : retirés avant
+        champs = ','.join('"%s"'%c.strip('"') for c in champs.split(','))
     SQL="SELECT "+champs+" FROM "+table+" t"
     if where!="":
         SQL=SQL+" WHERE "+where
