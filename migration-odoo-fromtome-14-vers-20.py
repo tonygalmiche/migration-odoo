@@ -155,14 +155,15 @@ if depart<=6:
     cnx_dst.commit()
 
     # Mise en page des documents : agencement « Boxed » en v14 (web.external_layout_boxed), supprimé en v20 => « Light »
-    # (web.external_layout_standard) en attendant la reprise des rapports du module (report/external_layout_boxed.xml) ;
+    # (web.external_layout_standard, en-tête et pied de page Fromtome : report/external_layout_boxed.xml du module) avec
+    # les tableaux « Encadré » (report_tables_id boxed : classes o_report_layout_boxed de l'ancien Boxed) ;
     # format A4 avec les marges de la v14 (haut 40, bas 32, gauche et droite 7, en-tête 35 mm). Format en noupdate :
     # non écrasé par un -u base
     cr_dst.execute("select res_id from ir_model_data where module='web' and name='external_layout_standard'")
     layout_id = cr_dst.fetchone()['res_id']
     cr_dst.execute("select res_id from ir_model_data where module='base' and name='paperformat_euro'")
     paperformat_id = cr_dst.fetchone()['res_id']
-    cr_dst.execute("update res_company set external_report_layout_id=%s, paperformat_id=%s where id=1",[layout_id,paperformat_id])
+    cr_dst.execute("update res_company set external_report_layout_id=%s, report_tables_id='boxed', paperformat_id=%s where id=1",[layout_id,paperformat_id])
     cr_src.execute("""
         select p.margin_top,p.margin_bottom,p.margin_left,p.margin_right,p.header_spacing
         from res_company c join report_paperformat p on p.id=c.paperformat_id where c.id=1
