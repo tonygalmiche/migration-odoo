@@ -298,3 +298,66 @@ MigrationIrModelData(db_src,db_dst,['product.category','product.pricelist'],corr
 # A reprendre avec la comptabilité : taxes des articles (product_taxes_rel, product_supplier_taxes_rel)
 # A reprendre avec les pièces jointes : images des articles
 #******************************************************************************
+
+
+# ** Équipes commerciales (étape 4) *******************************************
+# 4 équipes (Sales, et Website, Point of Sale, eBay archivées) : nom texte en v14, traduisible en v20
+# Membres : sale_team_id de l'utilisateur en v14 (1 utilisateur) => crm_team_member en v20
+MigrationTableJsonb(db_src,db_dst,'crm_team')
+cr_dst.execute("delete from crm_team_member")
+cr_src.execute("select id,sale_team_id from res_users where sale_team_id is not null")
+for row in cr_src.fetchall():
+    cr_dst.execute("insert into crm_team_member (crm_team_id,user_id,active,create_uid,create_date,write_uid,write_date) values (%s,%s,true,1,now(),1,now())",[row['sale_team_id'],row['id']])
+cnx_dst.commit()
+MigrationIrModelData(db_src,db_dst,['crm.team'])
+#******************************************************************************
+
+
+# ** Conditions de paiement (étape 4) *****************************************
+# 14 conditions copiées avec les ids de la v14 ; nom et note : texte en v14, traduisibles en v20
+# Échéances (format v14 : days + option) => delay_type et nb_days de la v20 :
+# - day_after_invoice_date : N jours après la date de facture => days_after, N
+# - after_invoice_month    : N jours après la fin du mois de la facture => days_after_end_of_month, N (non utilisé)
+# - day_following_month    : le jour N du mois suivant => days_end_of_month_on_the, 0, N (« End of Following Month » :
+#   N = 31 => fin du mois suivant, 4 partenaires)
+# - fin_de_decade (option ajoutée par is_fromtome14, « 30 jours fin de décade », 41 clients, 810 factures) : delay_type
+#   fin_de_decade ajouté par is_fromtome20 (étape 11 du module), même calcul : N jours puis fin de la décade
+#   (le 10, le 20 ou la fin du mois)
+# - value « balance » (solde) supprimé : pourcentage = 100 - les autres pourcentages de la condition
+MigrationTableJsonb(db_src,db_dst,'account_payment_term')
+cr_src.execute("select * from account_payment_term_line order by payment_id, sequence, id")
+lignes = cr_src.fetchall()
+pourcentages = {}
+for l in lignes:
+    if l['value']=='percent':
+        pourcentages[l['payment_id']] = pourcentages.get(l['payment_id'],0) + float(l['value_amount'] or 0)
+cr_dst.execute("alter table account_payment_term_line disable trigger all; delete from account_payment_term_line;")
+for l in lignes:
+    jours = l['days'] or 0
+    if l['option']=='after_invoice_month':
+        delay_type, nb_days, days_next_month = 'days_after_end_of_month', jours, '10'
+    elif l['option']=='day_following_month' and jours>0:
+        delay_type, nb_days, days_next_month = 'days_end_of_month_on_the', 0, str(jours)
+    elif l['option']=='day_following_month':
+        delay_type, nb_days, days_next_month = 'days_after', 30, '10'
+    elif l['option']=='fin_de_decade':
+        delay_type, nb_days, days_next_month = 'fin_de_decade', jours, '10'
+    else:
+        delay_type, nb_days, days_next_month = 'days_after', jours, '10'
+    value, montant = l['value'], l['value_amount']
+    if value=='balance':
+        value, montant = 'percent', 100 - pourcentages.get(l['payment_id'],0)
+    SQL="""
+        insert into account_payment_term_line (id,payment_id,value,value_amount,delay_type,nb_days,days_next_month,create_uid,create_date,write_uid,write_date)
+        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """
+    cr_dst.execute(SQL,[l['id'],l['payment_id'],value,montant,delay_type,nb_days,days_next_month,l['create_uid'],l['create_date'],l['write_uid'],l['write_date']])
+cr_dst.execute("alter table account_payment_term_line enable trigger all")
+cnx_dst.commit()
+SetSequence(cr_dst,cnx_dst,'account_payment_term_line')
+MigrationIrModelData(db_src,db_dst,['account.payment.term'])
+
+# Conditions des clients (1 147) et des fournisseurs (409) : propriétés en v14, champs jsonb par société en v20
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_payment_term_id')
+MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_supplier_payment_term_id')
+#******************************************************************************
