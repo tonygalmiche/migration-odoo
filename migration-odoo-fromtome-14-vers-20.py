@@ -944,6 +944,11 @@ if depart<=8:
     # (stock_picking.is_employe_id, 1 817) ; départements, postes, catégories et une hr_version par employé
     MigrationHrEmployee(db_src,db_dst)
 
+    Etape("Étape 8 : étiquettes des partenaires")
+    # 42 étiquettes, 1 338 partenaires étiquetés ; catégories de l'analyse de la facturation (568 143 liens)
+    MigrationTableJsonb(db_src,db_dst,'res_partner_category')
+    MigrationTable(db_src,db_dst,'res_partner_res_partner_category_rel')
+
     Etape("Étape 8 : tables du module (promos, calcul des besoins, FNC, analyses, scans, étiquettes, relances...)")
     # Mêmes colonnes en v14 et en v20, copiées avec les ids de la source (liens vers les articles, commandes, transferts,
     # factures déjà repris avec leurs ids), sauf colonnes supprimées en v20 : message_main_attachment_id (analyses de marge
@@ -995,7 +1000,12 @@ if depart<=8:
         'is_pricelist_product_tmpl_rel',
         'is_purchase_order_livraison_client_rel',
     ]:
-        MigrationTable(db_src,db_dst,table)
+        # Rebut des analyses (662 et 750 lignes) : stock_scrap en v14, stock_move en v20 (rebuts de l'étape 6) => mouvement
+        # du rebut (stock_scrap.move_id)
+        expressions = {}
+        if table in ('is_analyse_facturation','is_analyse_marge_lot_ligne'):
+            expressions = {'scrap_id': "(select s.move_id from stock_scrap s where s.id=t.scrap_id)"}
+        MigrationTable(db_src,db_dst,table,expressions=expressions)
     #******************************************************************************
 
 
