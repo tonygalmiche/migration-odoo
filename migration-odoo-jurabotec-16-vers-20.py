@@ -888,6 +888,16 @@ MigrationIrFilters(db_src,db_dst,modules={'is_jurabotec':'is_jurabotec20'},actio
 #******************************************************************************
 
 
+# ** Serveurs de mail *********************************************************
+# 7 serveurs OVH (ssl0.ovh.net, 465, ssl), un par boîte, choisis par from_filter (bd : domaine jurabotec.com,
+# lbouveret : sans filtre), mots de passe compris ; même structure en v20
+# Archivés pendant la recette (la v16 est toujours en production : aucun mail réel envoyé aux clients).
+# À la bascule : option --serveurs-actifs (actifs comme en v16)
+actif = "t.active" if '--serveurs-actifs' in sys.argv else "false"
+MigrationTable(db_src,db_dst,'ir_mail_server',expressions={'active': actif})
+#******************************************************************************
+
+
 # ** Recherche générale par IA (is_vllm2odoo => is_llm2odoo) ******************
 # is_llm2odoo doit être installé dans jurabotec20 avant le script (sinon étape ignorée)
 # Configuration du serveur VLLM de la société, recherches (18) et leur séquence ; model_id : ids de ir_model différents
