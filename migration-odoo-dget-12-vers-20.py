@@ -22,12 +22,14 @@ depart = int(sys.argv[sys.argv.index('--depart')+1]) if '--depart' in sys.argv e
 
 
 # ** Repartir d'une base vierge à chaque lancement ****************************
-# dget20-vierge : base v20 avec is_dget20 installé et le plan comptable « fr » chargé, sans données (à créer par Tony)
-# if depart==1:
-#     db_vierge = db_dst+'-vierge'
-#     SQL='DROP DATABASE "'+db_dst+'";CREATE DATABASE "'+db_dst+'" WITH TEMPLATE "'+db_vierge+'"'
-#     cde="""echo '"""+SQL+"""' | psql postgres"""
-#     lines=os.popen(cde).readlines()
+# dget20-vierge : base v20 avec is_dget20 installé et le plan comptable fr_comp chargé (677 comptes, 48 taxes,
+# 7 journaux), sans données (créée par Tony le 29/10/2026)
+# Ni dget20 ni dget20-vierge ne doivent être ouvertes (Odoo arrêté ou sur une autre base) : sinon DROP / CREATE refusés
+if depart==1:
+    db_vierge = db_dst+'-vierge'
+    SQL='DROP DATABASE "'+db_dst+'";CREATE DATABASE "'+db_dst+'" WITH TEMPLATE "'+db_vierge+'"'
+    cde="""echo '"""+SQL+"""' | psql postgres"""
+    lines=os.popen(cde).readlines()
 #******************************************************************************
 
 cnx_src,cr_src=GetCR(db_src)
@@ -271,14 +273,14 @@ if depart<=2:
 
     # ** Paramètres comptables ****************************************************
     # Plan comptable (716 comptes), groupes de taxes (12), taxes (45), positions fiscales (3) et journaux (7) de la v12
-    # copiés avec leurs ids à la place de ceux du plan « fr » de la v20 (chargé avant le script : même plan que la v12,
-    # l10n_fr_pcg_chart_template) ; colonnes ajoutées par la v20 (codes Factur-X des taxes...) reprises de
+    # copiés avec leurs ids à la place de ceux du plan fr_comp de la v20 (chargé dans dget20-vierge ; plan général
+    # l10n_fr_pcg_chart_template en v12) ; colonnes ajoutées par la v20 (codes Factur-X des taxes...) reprises de
     # l'enregistrement v20 équivalent (même identifiant externe) ; références de la v20 recalées. Les ids de la v12 sont
     # écrits en dur dans le module (compte 622 = 701100, position fiscale 1) et dans is_tva
     # Voir Documentation/migration-odoo/migration-vers-odoo20.md § 3.7 et § 5.4
     cr_dst.execute("select count(*) as nb from account_account")
     if not cr_dst.fetchone()['nb']:
-        print("Aucun compte dans %s : charger le plan comptable « fr » (Comptabilité / Configuration / Paramètres) avant l'étape 2"%db_dst)
+        print("Aucun compte dans %s : charger le plan comptable fr_comp (Comptabilité / Configuration / Paramètres) avant l'étape 2"%db_dst)
         sys.exit()
 
     # Lignes v20 et correspondance par identifiant externe, avant la copie
