@@ -663,7 +663,7 @@ if depart<=4:
         'id','name','ref','payment_reference','narration','date','invoice_date','invoice_date_due','invoice_origin','state',
         'posted_before','journal_id','partner_id','commercial_partner_id','partner_shipping_id','fiscal_position_id',
         'invoice_payment_term_id','invoice_user_id','team_id','invoice_partner_display_name','invoice_source_email',
-        'access_token','origin_payment_id','sequence_prefix','sequence_number',
+        'access_token','origin_payment_id','sequence_prefix','sequence_number','document_tax_mode',
         'amount_untaxed','amount_tax','amount_total','amount_residual','amount_untaxed_signed','amount_tax_signed',
         'amount_total_signed','amount_residual_signed','amount_untaxed_in_currency_signed','amount_total_in_currency_signed',
         'is_contrat_id','is_dossier_id','is_tva_id','is_date_update_facture','is_montant_revision',
@@ -675,6 +675,9 @@ if depart<=4:
     # Factures : open et paid => posted (payment_state not_paid ou paid, comme en v12 ; « Payée » du module reprise)
     # N° : number (move_name pour les annulées) ; ref : référence de la pièce v12 (37FC183/86), aussi référence de paiement
     # Montants signés : négatifs pour les avoirs
+    # document_tax_mode (HT / TTC, obligatoire sur les factures en v20) : réglage de la société, comme _compute_document_tax_mode
+    cr_dst.execute("select account_price_include from res_company where id=1")
+    mode_taxes = cr_dst.fetchone()['account_price_include']
     cr_src.execute("""
         select i.*, m.ref as move_ref, m.narration
         from account_invoice i left join account_move m on m.id=i.move_id
@@ -693,7 +696,7 @@ if depart<=4:
             id=f['id'], name=name, ref=f['move_ref'] or f['reference'], payment_reference=f['reference'],
             narration=f['narration'] or f['comment'], date=date, invoice_date=f['date_invoice'],
             invoice_date_due=f['date_due'], invoice_origin=f['origin'], state=state, posted_before=state=='posted',
-            move_type=f['type'], journal_id=f['journal_id'], partner_id=f['partner_id'],
+            move_type=f['type'], document_tax_mode=mode_taxes, journal_id=f['journal_id'], partner_id=f['partner_id'],
             commercial_partner_id=f['commercial_partner_id'], partner_shipping_id=f['partner_shipping_id'],
             fiscal_position_id=f['fiscal_position_id'], invoice_payment_term_id=f['payment_term_id'],
             invoice_user_id=f['user_id'], team_id=f['team_id'],
