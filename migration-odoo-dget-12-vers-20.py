@@ -425,6 +425,8 @@ if depart<=2:
     MigrationTableJsonb(db_src,db_dst,'account_fiscal_position')
     cr_dst.execute("update account_fiscal_position set zip_from=null where zip_from='0'")
     cr_dst.execute("update account_fiscal_position set zip_to=null where zip_to='0'")
+    # Validé avant CompleterColonnesV20 (autre connexion) : sinon elle attend la fin de cette transaction (blocage)
+    cnx_dst.commit()
     CompleterColonnesV20(db_src,db_dst,'account_fiscal_position',avant['account_fiscal_position'],corr['account_fiscal_position'],inverse)
     cr_src.execute("select position_id,tax_src_id,tax_dest_id from account_fiscal_position_tax where tax_dest_id is not null")
     for row in cr_src.fetchall():
