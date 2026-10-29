@@ -6,10 +6,12 @@
 # pas de la comptabilité
 # Étape 2 : comptabilité (plan comptable, taxes, positions fiscales, journaux, propriétés)
 # Étape 3 : tables du module liées à la comptabilité (TVA DGET, contrats, lignes de contrats, heures)
-# A faire ensuite : factures (account_invoice v12 => account_move), paiements, pièces jointes, chatter, filtres
+# Étape 4 : factures (account_invoice v12 => account_move), paiements, rapprochements
+# A faire ensuite : pièces jointes, chatter, filtres
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
+import re
 
 
 #** Paramètres ****************************************************************
@@ -542,6 +544,305 @@ if depart<=3:
         'is_salarie_heure',
     ]:
         MigrationTable(db_src,db_dst,table)
+    #******************************************************************************
+
+
+# ** Étape 4 : factures, paiements, rapprochements ****************************
+if depart<=4:
+    # Factures v12 (account_invoice : 5 921, dont 156 avoirs et 27 annulées sans pièce comptable) => account_move avec
+    # l'id de la facture (et non celui de sa pièce v12) : liens du module (is_invoice_id des lignes) et res_id des pièces
+    # jointes et messages gardés tels quels. Pièces des paiements (3, sans facture) : ids à la suite des factures
+    # Lignes : celles de la facture v12 (account_invoice_line : articles et notes, y compris les quantités 0, sans écriture
+    # en v12), id = id v12 + plus grand id des écritures v12 ; lignes de taxes, lignes clients et lignes des paiements :
+    # écritures v12 avec leurs ids (rapprochements). Montant des lignes des factures = écritures v12 (même total par
+    # facture, contrôlé sur la v12)
+    cr_dst.execute("select id from res_currency where name='EUR'")
+    eur = cr_dst.fetchone()['id']
+
+    # Tables vidées dans l'ordre des dépendances (relance avec --depart 4)
+    for table in [
+        'account_account_tag_account_move_line_rel',
+        'account_move_line_account_tax_rel',
+        'account_move__account_payment',
+        'account_partial_reconcile',
+        'account_move_line',
+    ]:
+        cr_dst.execute("delete from "+table)
+    cr_dst.execute("update account_payment set move_id=null")
+    cr_dst.execute("delete from account_move")
+    cr_dst.execute("delete from account_payment")
+    cr_dst.execute("delete from account_full_reconcile")
+    cnx_dst.commit()
+
+    # Insertion de lignes (dictionnaires avec les mêmes clés)
+    def Inserer(table,lignes):
+        if lignes:
+            colonnes = list(lignes[0])
+            execute_values(cr_dst,"insert into "+table+" ("+",".join(colonnes)+") values %s",
+                [[ligne[c] for c in colonnes] for ligne in lignes],page_size=5000)
+            cnx_dst.commit()
+            SetSequence(cr_dst,cnx_dst,table)
+
+    # N° de pièce => sequence_prefix et sequence_number (même découpage que _compute_split_sequence d'Odoo 20 :
+    # 37FC183 => 37FC, 183)
+    def DecouperNumero(name):
+        prefixe,numero = re.match(r'^(.*?)(\d{0,9})(\D*?)$',name or '').groups()[:2]
+        return prefixe,int(numero or 0)
+
+    # Pièces v12 => id v20
+    cr_src.execute("select max(id) as id from account_invoice")
+    max_facture = cr_src.fetchone()['id']
+    cr_src.execute("select max(id) as id from account_move_line")
+    decalage = cr_src.fetchone()['id']
+    cr_src.execute("select id,move_id from account_invoice where move_id is not null")
+    pieces = {row['move_id']:row['id'] for row in cr_src.fetchall()}
+    pieces_factures = set(pieces)
+    cr_src.execute("select id from account_move m where not exists (select 1 from account_invoice i where i.move_id=m.id) order by id")
+    for i,row in enumerate(cr_src.fetchall()):
+        pieces[row['id']] = max_facture+i+1
+    cr_dst.execute("select id,complete_name,commercial_partner_id from res_partner")
+    partenaires = {row['id']:row for row in cr_dst.fetchall()}
+
+    # Paiements (4, dont 1 brouillon) : insérés avant les pièces (origin_payment_id), pièce posée ensuite
+    # Comptes : ceux des écritures v12 du paiement (512001 et 411100) ; état posted => paid (compte de banque non
+    # rapproché avec un relevé)
+    cr_src.execute("""
+        select l.payment_id, l.move_id, l.account_id, a.internal_type, l.reconciled
+        from account_move_line l join account_account a on a.id=l.account_id where l.payment_id is not null
+    """)
+    lignes_paiements = cr_src.fetchall()
+    cr_dst.execute("""
+        select l.id, l.journal_id, m.id as payment_method_id, m.payment_type
+        from account_payment_method_line l join account_payment_method m on m.id=l.payment_method_id where m.code='manual'
+    """)
+    modes = {(row['journal_id'],row['payment_type']):row for row in cr_dst.fetchall()}
+    etats_paiements = {'draft':'draft','cancelled':'canceled'}
+    cr_src.execute("select * from account_payment order by id")
+    paiements = []
+    for p in cr_src.fetchall():
+        lignes_p = [l for l in lignes_paiements if l['payment_id']==p['id']]
+        mode = modes.get((p['journal_id'],p['payment_type']),{})
+        paiements.append({
+            'id'                            : p['id'],
+            'name'                          : p['name'],
+            'state'                         : etats_paiements.get(p['state'],'paid'),
+            'payment_type'                  : p['payment_type'],
+            'partner_type'                  : p['partner_type'],
+            'partner_id'                    : p['partner_id'],
+            'commercial_partner_id'         : partenaires[p['partner_id']]['commercial_partner_id'] if p['partner_id'] else None,
+            'amount'                        : p['amount'],
+            'amount_company_currency_signed': p['amount'] if p['payment_type']=='inbound' else -p['amount'],
+            'currency_id'                   : eur,
+            'date'                          : p['payment_date'],
+            'memo'                          : p['communication'],
+            'payment_reference'             : p['payment_reference'],
+            'journal_id'                    : p['journal_id'],
+            'company_id'                    : 1,
+            'payment_method_line_id'        : mode.get('id'),
+            'payment_method_id'             : mode.get('payment_method_id'),
+            'outstanding_account_id'        : next((l['account_id'] for l in lignes_p if l['internal_type']=='liquidity'),None),
+            'destination_account_id'        : next((l['account_id'] for l in lignes_p if l['internal_type'] in ('receivable','payable')),None),
+            'is_reconciled'                 : any(l['reconciled'] for l in lignes_p),
+            'is_matched'                    : False,
+            'is_sent'                       : False,
+            'create_uid'                    : p['create_uid'],
+            'create_date'                   : p['create_date'],
+            'write_uid'                     : p['write_uid'],
+            'write_date'                    : p['write_date'],
+        })
+    Inserer('account_payment',paiements)
+    paiement_piece = {pieces[l['move_id']]:l['payment_id'] for l in lignes_paiements}
+
+    # Valeurs communes des pièces
+    defaut_piece = {
+        'move_type':'entry', 'company_id':1, 'currency_id':eur, 'invoice_currency_rate':1, 'auto_post':'no',
+        'review_state':'no_review', 'always_tax_exigible':False, 'made_sequence_gap':False, 'is_manually_modified':False,
+        'quick_edit_total_amount':0, 'is_move_sent':False, 'is_facture_payee':'non', 'payment_state':'not_paid',
+    }
+    for colonne in [
+        'id','name','ref','payment_reference','narration','date','invoice_date','invoice_date_due','invoice_origin','state',
+        'posted_before','journal_id','partner_id','commercial_partner_id','partner_shipping_id','fiscal_position_id',
+        'invoice_payment_term_id','invoice_user_id','team_id','invoice_partner_display_name','invoice_source_email',
+        'access_token','origin_payment_id','sequence_prefix','sequence_number',
+        'amount_untaxed','amount_tax','amount_total','amount_residual','amount_untaxed_signed','amount_tax_signed',
+        'amount_total_signed','amount_residual_signed','amount_untaxed_in_currency_signed','amount_total_in_currency_signed',
+        'is_contrat_id','is_dossier_id','is_tva_id','is_date_update_facture','is_montant_revision',
+        'is_montant_hors_revision','is_montant_hors_revision_signe',
+        'create_uid','create_date','write_uid','write_date',
+    ]:
+        defaut_piece.setdefault(colonne,None)
+
+    # Factures : open et paid => posted (payment_state not_paid ou paid, comme en v12 ; « Payée » du module reprise)
+    # N° : number (move_name pour les annulées) ; ref : référence de la pièce v12 (37FC183/86), aussi référence de paiement
+    # Montants signés : négatifs pour les avoirs
+    cr_src.execute("""
+        select i.*, m.ref as move_ref, m.narration
+        from account_invoice i left join account_move m on m.id=i.move_id
+        order by i.id
+    """)
+    factures, pieces_v20 = {}, []
+    for f in cr_src.fetchall():
+        name = f['number'] or f['move_name'] or '/'
+        prefixe,numero = DecouperNumero(name)
+        state = {'draft':'draft','cancel':'cancel'}.get(f['state'],'posted')
+        signe = -1 if f['type'] in ('out_refund','in_invoice') else 1
+        date = f['date'] or f['date_invoice'] or f['create_date'].date()
+        factures[f['id']] = {'move_type':f['type'],'state':state,'date':date,'invoice_date':f['date_invoice'],
+            'journal_id':f['journal_id'],'partner_id':f['commercial_partner_id'],'signe':signe}
+        pieces_v20.append(dict(defaut_piece,
+            id=f['id'], name=name, ref=f['move_ref'] or f['reference'], payment_reference=f['reference'],
+            narration=f['narration'] or f['comment'], date=date, invoice_date=f['date_invoice'],
+            invoice_date_due=f['date_due'], invoice_origin=f['origin'], state=state, posted_before=state=='posted',
+            move_type=f['type'], journal_id=f['journal_id'], partner_id=f['partner_id'],
+            commercial_partner_id=f['commercial_partner_id'], partner_shipping_id=f['partner_shipping_id'],
+            fiscal_position_id=f['fiscal_position_id'], invoice_payment_term_id=f['payment_term_id'],
+            invoice_user_id=f['user_id'], team_id=f['team_id'],
+            invoice_partner_display_name=partenaires[f['partner_id']]['complete_name'] if f['partner_id'] else None,
+            invoice_source_email=f['source_email'], access_token=f['access_token'], is_move_sent=bool(f['sent']),
+            payment_state='paid' if f['state']=='paid' else 'not_paid', sequence_prefix=prefixe, sequence_number=numero,
+            amount_untaxed=f['amount_untaxed'], amount_tax=f['amount_tax'], amount_total=f['amount_total'],
+            amount_residual=f['residual'], amount_untaxed_signed=signe*f['amount_untaxed'],
+            amount_tax_signed=signe*f['amount_tax'], amount_total_signed=signe*f['amount_total'],
+            amount_residual_signed=signe*f['residual'], amount_untaxed_in_currency_signed=signe*f['amount_untaxed'],
+            amount_total_in_currency_signed=signe*f['amount_total'],
+            is_contrat_id=f['is_contrat_id'], is_dossier_id=f['is_dossier_id'], is_tva_id=f['is_tva_id'],
+            is_date_update_facture=f['is_date_update_facture'], is_facture_payee=f['is_facture_payee'] or 'non',
+            is_montant_revision=f['is_montant_revision'], is_montant_hors_revision=f['is_montant_hors_revision'],
+            is_montant_hors_revision_signe=f['is_montant_hors_revision_signe'],
+            create_uid=f['create_uid'], create_date=f['create_date'], write_uid=f['write_uid'], write_date=f['write_date'],
+        ))
+
+    # Pièces des paiements : écritures diverses (entry) liées à leur paiement
+    cr_src.execute("select * from account_move m where not exists (select 1 from account_invoice i where i.move_id=m.id) order by id")
+    for m in cr_src.fetchall():
+        prefixe,numero = DecouperNumero(m['name'])
+        pieces_v20.append(dict(defaut_piece,
+            id=pieces[m['id']], name=m['name'], ref=m['ref'], narration=m['narration'], date=m['date'],
+            state=m['state'], posted_before=m['state']=='posted', journal_id=m['journal_id'], partner_id=m['partner_id'],
+            commercial_partner_id=partenaires[m['partner_id']]['commercial_partner_id'] if m['partner_id'] else None,
+            origin_payment_id=paiement_piece.get(pieces[m['id']]), sequence_prefix=prefixe, sequence_number=numero,
+            amount_total=m['amount'], amount_total_signed=m['amount'], amount_total_in_currency_signed=m['amount'],
+            amount_residual=0, amount_residual_signed=0,
+            create_uid=m['create_uid'], create_date=m['create_date'], write_uid=m['write_uid'], write_date=m['write_date'],
+        ))
+    Inserer('account_move',pieces_v20)
+
+    # Lettrages complets (3) : avant les lignes (full_reconcile_id)
+    MigrationTable(db_src,db_dst,'account_full_reconcile')
+
+    # Valeurs communes des lignes
+    defaut_ligne = {'company_id':1, 'currency_id':eur, 'company_currency_id':eur, 'discount':0, 'reconciled':False,
+        'amount_residual':0, 'amount_residual_currency':0}
+    for colonne in [
+        'id','move_id','move_name','display_type','sequence','name','ref','product_id','product_uom_id','quantity',
+        'price_unit','price_subtotal','price_total','account_id','partner_id','journal_id','date','invoice_date',
+        'date_maturity','parent_state','debit','credit','balance','amount_currency','tax_line_id','tax_base_amount',
+        'full_reconcile_id','matching_number','payment_id','is_contrat_detail_id','is_invoice_id','is_deja_facture',
+        'is_reellement_facture','is_montant_reellement_facture','create_uid','create_date','write_uid','write_date',
+    ]:
+        defaut_ligne.setdefault(colonne,None)
+    noms_pieces = {p['id']:p['name'] for p in pieces_v20}
+
+    # Lignes des factures (articles et notes) : montant signé (crédit pour les factures, débit pour les avoirs)
+    cr_src.execute("select * from account_invoice_line order by id")
+    lignes = []
+    for l in cr_src.fetchall():
+        f = factures[l['invoice_id']]
+        note = l['display_type']=='line_note'
+        balance = 0 if note else -f['signe']*(l['price_subtotal'] or 0)
+        lignes.append(dict(defaut_ligne,
+            id=decalage+l['id'], move_id=l['invoice_id'], move_name=noms_pieces[l['invoice_id']],
+            display_type='line_note' if note else 'product', sequence=l['sequence'], name=l['name'],
+            product_id=l['product_id'], product_uom_id=l['uom_id'], quantity=l['quantity'], price_unit=l['price_unit'],
+            discount=l['discount'] or 0, price_subtotal=l['price_subtotal'], price_total=l['price_total'],
+            account_id=l['account_id'], partner_id=f['partner_id'], journal_id=f['journal_id'], date=f['date'],
+            invoice_date=f['invoice_date'], parent_state=f['state'], debit=max(balance,0), credit=max(-balance,0),
+            balance=balance, amount_currency=balance, is_contrat_detail_id=l['is_contrat_detail_id'],
+            is_invoice_id=l['is_invoice_id'], is_deja_facture=l['is_deja_facture'],
+            is_reellement_facture=l['is_reellement_facture'], is_montant_reellement_facture=l['is_montant_reellement_facture'],
+            create_uid=l['create_uid'], create_date=l['create_date'], write_uid=l['write_uid'], write_date=l['write_date'],
+        ))
+
+    # Écritures v12 gardées : taxes et lignes clients des factures, toutes les lignes des paiements
+    cr_src.execute("""
+        select l.*, a.internal_type
+        from account_move_line l join account_account a on a.id=l.account_id
+        where l.tax_line_id is not null or a.internal_type in ('receivable','payable')
+           or not exists (select 1 from account_invoice i where i.move_id=l.move_id)
+        order by l.id
+    """)
+    for l in cr_src.fetchall():
+        facture = l['move_id'] in pieces_factures
+        f = factures.get(pieces[l['move_id']],{})
+        balance = l['debit']-l['credit']
+        lignes.append(dict(defaut_ligne,
+            id=l['id'], move_id=pieces[l['move_id']], move_name=noms_pieces[pieces[l['move_id']]],
+            display_type=('tax' if l['tax_line_id'] else 'payment_term') if facture else 'product',
+            name=l['name'], ref=l['ref'], product_id=l['product_id'], product_uom_id=l['product_uom_id'],
+            quantity=l['quantity'], account_id=l['account_id'], partner_id=l['partner_id'], journal_id=l['journal_id'],
+            date=l['date'], invoice_date=f.get('invoice_date'), date_maturity=l['date_maturity'], parent_state='posted',
+            debit=l['debit'], credit=l['credit'], balance=balance, amount_currency=balance,
+            amount_residual=l['amount_residual'], amount_residual_currency=l['amount_residual'], reconciled=l['reconciled'],
+            tax_line_id=l['tax_line_id'], tax_base_amount=l['tax_base_amount'], full_reconcile_id=l['full_reconcile_id'],
+            matching_number=str(l['full_reconcile_id']) if l['full_reconcile_id'] else None, payment_id=l['payment_id'],
+            create_uid=l['create_uid'], create_date=l['create_date'], write_uid=l['write_uid'], write_date=l['write_date'],
+        ))
+    Inserer('account_move_line',lignes)
+
+    # Taxes des lignes des factures (account_invoice_line_tax)
+    cr_src.execute("select invoice_line_id,tax_id from account_invoice_line_tax")
+    execute_values(cr_dst,"insert into account_move_line_account_tax_rel (account_move_line_id,account_tax_id) values %s",
+        [(decalage+row['invoice_line_id'],row['tax_id']) for row in cr_src.fetchall()],page_size=5000)
+    cnx_dst.commit()
+
+    # Lignes de taxes : groupe et ligne de répartition (créées à l'étape 2, facture ou avoir) ; étiquettes (cases de la
+    # déclaration de TVA) des lignes d'articles (ligne de répartition « base » de leur taxe) et des lignes de taxes
+    SQL="""
+        update account_move_line l set tax_group_id=t.tax_group_id from account_tax t where t.id=l.tax_line_id;
+        update account_move_line l set tax_repartition_line_id=r.id
+        from account_move m, account_tax_repartition_line r
+        where m.id=l.move_id and r.tax_id=l.tax_line_id and r.repartition_type='tax'
+          and r.document_type=case when m.move_type in ('out_refund','in_refund') then 'refund' else 'invoice' end;
+        insert into account_account_tag_account_move_line_rel (account_move_line_id,account_account_tag_id)
+        select l.id, x.account_account_tag_id
+        from account_move_line l join account_move m on m.id=l.move_id
+        join account_move_line_account_tax_rel t on t.account_move_line_id=l.id
+        join account_tax_repartition_line r on r.tax_id=t.account_tax_id and r.repartition_type='base'
+            and r.document_type=case when m.move_type in ('out_refund','in_refund') then 'refund' else 'invoice' end
+        join account_account_tag_account_tax_repartition_line_rel x on x.account_tax_repartition_line_id=r.id
+        where l.display_type='product'
+        union
+        select l.id, x.account_account_tag_id
+        from account_move_line l join account_account_tag_account_tax_repartition_line_rel x on x.account_tax_repartition_line_id=l.tax_repartition_line_id;
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+
+    # Lettrages partiels (3) : montants en devise (EUR) ajoutés en v13
+    MigrationTable(db_src,db_dst,'account_partial_reconcile')
+    cr_dst.execute("""
+        update account_partial_reconcile set debit_currency_id=%s, credit_currency_id=%s,
+            debit_amount_currency=amount, credit_amount_currency=amount
+    """,[eur,eur])
+    cnx_dst.commit()
+
+    # Pièce des paiements ; factures liées aux paiements (account_invoice_payment_rel, 5)
+    for piece,paiement in paiement_piece.items():
+        cr_dst.execute("update account_payment set move_id=%s where id=%s",[piece,paiement])
+    cr_src.execute("select invoice_id,payment_id from account_invoice_payment_rel")
+    execute_values(cr_dst,"insert into account_move__account_payment (invoice_id,payment_id) values %s",
+        [(row['invoice_id'],row['payment_id']) for row in cr_src.fetchall()])
+    cnx_dst.commit()
+
+    # Contrôle : nombre de pièces et de lignes, total débit = total crédit par pièce
+    cr_dst.execute("select move_type, count(*) as nb from account_move group by 1 order by 1")
+    print("Pièces : %s"%{row['move_type']:row['nb'] for row in cr_dst.fetchall()})
+    cr_dst.execute("select display_type, count(*) as nb from account_move_line group by 1 order by 1")
+    print("Lignes : %s"%{row['display_type']:row['nb'] for row in cr_dst.fetchall()})
+    cr_dst.execute("select move_id from account_move_line group by move_id having sum(debit)<>sum(credit)")
+    desequilibres = [row['move_id'] for row in cr_dst.fetchall()]
+    if desequilibres:
+        print("Pièces déséquilibrées : %s"%desequilibres)
     #******************************************************************************
 
 
