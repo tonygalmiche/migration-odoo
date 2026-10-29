@@ -170,7 +170,10 @@ if depart<=1:
     # Inscription libre au portail fermée : sur invitation seulement
     InscriptionSurInvitation(db_dst)
 
-    # Couleur de l'entreprise (is_theme_entreprise) : aucune en v12, à choisir avec Tony
+    # Couleur de l'entreprise (is_theme_entreprise : barre de menus, boutons, onglets) : aucune en v12 => vert du logo
+    # DGET (#309275, choisi par Tony le 29/10/2026)
+    cr_dst.execute("update res_company set is_theme_couleur='#309275', is_theme_eclaircissement=80")
+    cnx_dst.commit()
 
     # Comptes bancaires : IBAN écrit en dur sur la facture v12
     #******************************************************************************
