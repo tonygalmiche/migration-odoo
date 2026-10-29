@@ -691,7 +691,9 @@ if depart<=4:
         signe = -1 if f['type'] in ('out_refund','in_invoice') else 1
         date = f['date'] or f['date_invoice'] or f['create_date'].date()
         factures[f['id']] = {'move_type':f['type'],'state':state,'date':date,'invoice_date':f['date_invoice'],
-            'journal_id':f['journal_id'],'partner_id':f['commercial_partner_id'],'signe':signe}
+            'journal_id':f['journal_id'],'partner_id':f['commercial_partner_id'],'signe':signe,'move_id':f['move_id'],
+            'account_id':f['account_id'],'amount_untaxed':f['amount_untaxed'],'amount_total':f['amount_total'],
+            'date_due':f['date_due'],'reference':f['reference'],'name':name}
         pieces_v20.append(dict(defaut_piece,
             id=f['id'], name=name, ref=f['move_ref'] or f['reference'], payment_reference=f['reference'],
             narration=f['narration'] or f['comment'], date=date, invoice_date=f['date_invoice'],
@@ -765,6 +767,34 @@ if depart<=4:
             is_reellement_facture=l['is_reellement_facture'], is_montant_reellement_facture=l['is_montant_reellement_facture'],
             create_uid=l['create_uid'], create_date=l['create_date'], write_uid=l['write_uid'], write_date=l['write_date'],
         ))
+    nouvel_id = max(ligne['id'] for ligne in lignes)
+
+    # Factures annulées sans pièce comptable en v12 (27, dont 12 avec un montant) : lignes de taxes (account_invoice_tax)
+    # et ligne client (compte et total de la facture) créées comme le ferait la v20, sinon pièces déséquilibrées
+    # (modification refusée par Odoo). Ids à la suite des lignes des factures
+    cr_src.execute("""
+        select t.* from account_invoice_tax t join account_invoice i on i.id=t.invoice_id
+        where i.move_id is null and i.amount_untaxed<>0 order by t.id
+    """)
+    taxes_annulees = cr_src.fetchall()
+    for id_facture,f in factures.items():
+        if f['move_id'] or not f['amount_untaxed']:
+            continue
+        communs = dict(defaut_ligne, move_id=id_facture, move_name=f['name'], partner_id=f['partner_id'],
+            journal_id=f['journal_id'], date=f['date'], invoice_date=f['invoice_date'], parent_state=f['state'])
+        for t in [t for t in taxes_annulees if t['invoice_id']==id_facture]:
+            balance = -f['signe']*round(t['amount']+(t['amount_rounding'] or 0),2)
+            nouvel_id+=1
+            lignes.append(dict(communs, id=nouvel_id, display_type='tax', name=t['name'], account_id=t['account_id'],
+                tax_line_id=t['tax_id'], tax_base_amount=t['base'], debit=max(balance,0), credit=max(-balance,0),
+                balance=balance, amount_currency=balance,
+                create_uid=t['create_uid'], create_date=t['create_date'], write_uid=t['write_uid'], write_date=t['write_date']))
+        balance = f['signe']*f['amount_total']
+        nouvel_id+=1
+        lignes.append(dict(communs, id=nouvel_id, display_type='payment_term', name=f['reference'] or '',
+            account_id=f['account_id'], date_maturity=f['date_due'] or f['date'], debit=max(balance,0),
+            credit=max(-balance,0), balance=balance, amount_currency=balance, amount_residual=balance,
+            amount_residual_currency=balance))
 
     # Écritures v12 gardées : taxes et lignes clients des factures, toutes les lignes des paiements
     cr_src.execute("""
@@ -800,7 +830,11 @@ if depart<=4:
 
     # Lignes de taxes : groupe et ligne de répartition (créées à l'étape 2, facture ou avoir) ; étiquettes (cases de la
     # déclaration de TVA) des lignes d'articles (ligne de répartition « base » de leur taxe) et des lignes de taxes
+    # Statistiques des tables qui viennent d'être remplies : sans elles, PostgreSQL choisit de mauvaises jointures (lent)
     SQL="""
+        analyze account_move;
+        analyze account_move_line;
+        analyze account_move_line_account_tax_rel;
         update account_move_line l set tax_group_id=t.tax_group_id from account_tax t where t.id=l.tax_line_id;
         update account_move_line l set tax_repartition_line_id=r.id
         from account_move m, account_tax_repartition_line r
