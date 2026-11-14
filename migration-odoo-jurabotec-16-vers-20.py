@@ -25,7 +25,7 @@ db_vierge = db_dst+'-vierge'
 for SQL in ['DROP DATABASE IF EXISTS "%s"'%db_dst, 'CREATE DATABASE "%s" WITH TEMPLATE "%s"'%(db_dst,db_vierge)]:
     if subprocess.run(['psql','-d','postgres','-c',SQL]).returncode:
         sys.exit("Arrêt : %s refusé (Odoo arrêté ?)"%SQL)
-if subprocess.run(['cp','-a','--update=none','%s/%s/.'%(filestore,db_vierge),'%s/%s/'%(filestore,db_dst)]).returncode:
+if subprocess.run(['cp','-r','--update=none','%s/%s/.'%(filestore,db_vierge),'%s/%s/'%(filestore,db_dst)]).returncode:
     sys.exit("Arrêt : copie du filestore de %s refusée"%db_vierge)
 #******************************************************************************
 
