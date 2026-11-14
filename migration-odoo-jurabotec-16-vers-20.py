@@ -1032,6 +1032,16 @@ MigrationTable(db_src,db_dst,'project_collaborator',default={'access_mode':'edit
 #******************************************************************************
 
 
+# ** Agenda *******************************************************************
+# 162 rendez-vous et leurs participants, ids de la v16 ; aucun lié à un enregistrement (res_model_id), aucune récurrence
+# Rappels (calendar_alarm) : mêmes ids et identifiants externes en v16 et en v20 => non repris
+# google_id, need_sync : synchronisation Google non reprise (aucun rendez-vous synchronisé en v16)
+MigrationTable(db_src,db_dst,'calendar_event')
+MigrationTable(db_src,db_dst,'calendar_attendee')
+MigrationTable(db_src,db_dst,'calendar_event_res_partner_rel')
+#******************************************************************************
+
+
 # ** Chatter des essais en v20 ************************************************
 # Abonnés, messages et activités des enregistrements créés pendant les essais dans jurabotec20, supprimés par la relance
 # (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet » sur le transfert qui reprend leur id)
@@ -1042,7 +1052,7 @@ SupprimerChatterOrphelin(db_dst)
 # ** Chatter ******************************************************************
 # 104 465 messages et 61 836 abonnés des modèles repris avec les ids de la v16 ; nouveaux ids de messages (la v20 a
 # déjà les siens) ; suivi des modifications (47 317 valeurs) ajouté au corps (format v20)
-# Projets, tâches et mises à jour de projet ajoutés le 14/11/2026 (140 messages)
+# Projets, tâches, mises à jour de projet et rendez-vous ajoutés le 14/11/2026 (140 + 262 messages)
 # Non repris : modèles absents ou non repris en v20 (account.account.template, hr.*,
 # stock.scrap, is.chat.vllm, account.reconcile.model : 1 seul modèle en v20), discussions (mail.channel), mails sans
 # modèle, notifications, chatter orphelin de la v16 (1 011 messages et 966 abonnés d'enregistrements supprimés, dont
@@ -1069,6 +1079,7 @@ ids_messages = MigrationChatter(db_src,db_dst,[
     'project.project',
     'project.task',
     'project.update',
+    'calendar.event',
 ])
 
 # Type « snailmail » (courrier, 1 message sur une facture) : module snailmail non installé en v20 => notification
