@@ -170,6 +170,14 @@ for table in tables:
 #******************************************************************************
 
 
+# ** Précisions décimales *****************************************************
+# 2 décimales par défaut en v20 au lieu de 4 (quantités, prix) et 6 (volume) en v16 : volume d'une pièce arrondi
+# (0,041769 => 0,04 m3), d'où prix contrat et volumes faux (P00872 : 4,00 € au lieu de 4,18 €, 20 m3 au lieu de 20,88)
+# Avant les calculs qui lisent la précision « Product Unit » (quantity_product_uom des mouvements)
+MigrationPrecisionsDecimales(db_src,db_dst)
+#******************************************************************************
+
+
 # ** Unités de mesure *********************************************************
 # Copiées avec les ids de la v16 (34 unités) : les tables qui les utilisent se copient ensuite sans conversion
 # Chaque unité est rattachée à la référence de son ancienne catégorie (mlinéaire => 1 m, Boite (1600) => 1600 Unités...)

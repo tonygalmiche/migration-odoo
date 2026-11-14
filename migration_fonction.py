@@ -1365,6 +1365,21 @@ def MigrationCreationArticles(db_src,db_dst):
     cnx_dst.commit()
 
 
+def MigrationPrecisionsDecimales(db_src,db_dst):
+    """Précisions décimales de la source (decimal_precision) : sinon 2 décimales par défaut en v20 => quantités, prix et
+    volumes arrondis à la saisie et dans les champs calculés. « Product Unit of Measure » renommé « Product Unit » en
+    v20. À appeler avant tout calcul qui lit une précision (quantity_product_uom...)"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_src.execute("select name, digits from decimal_precision")
+    for row in cr_src.fetchall():
+        name = {'Product Unit of Measure': 'Product Unit'}.get(row['name'],row['name'])
+        cr_dst.execute("update decimal_precision set digits=%s where name=%s",[row['digits'],name])
+        if cr_dst.rowcount:
+            print("MigrationPrecisionsDecimales : %s = %s"%(name,row['digits']))
+    cnx_dst.commit()
+
+
 def InscriptionSurInvitation(db_dst):
     """Inscription libre au portail fermée : sur invitation seulement (auth_signup.invitation_scope = b2b), quelle que
     soit la valeur de la source. b2c par défaut en v20 : tout le monde peut se créer un compte portail depuis la page
