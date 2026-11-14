@@ -994,6 +994,44 @@ cnx_dst.commit()
 #******************************************************************************
 
 
+# ** Projets ******************************************************************
+# 8 projets, 50 tâches, 46 étapes (4 de projets, 42 étapes personnelles des utilisateurs), copiés avec les ids de la v16
+# (la tâche « Bienvenue » et les étapes personnelles créées à l'installation de project sont remplacées)
+# Étapes des projets (project_project_stage) : mêmes ids et identifiants externes en v16 et en v20 => non reprises
+# Alias e-mail des projets (8, dont « task » de l'ICPE) : ids de la v16, modèles retrouvés par leur nom ; MigrationTable
+# vide mail_alias avant la copie (aucun autre alias en v20 à ce stade du script)
+MigrationTable(db_src,db_dst,'mail_alias',where="t.id in (select alias_id from project_project)")
+SQL="""
+    update mail_alias a set
+        alias_model_id        = (select id from ir_model where model='project.task'),
+        alias_parent_model_id = (select id from ir_model where model='project.project')
+    where a.id in (select alias_id from project_project)
+"""
+MigrationTable(db_src,db_dst,'project_project')
+cr_dst.execute(SQL)
+cnx_dst.commit()
+# rating_status et rating_status_period : nouvelles colonnes obligatoires (valeurs par défaut d'Odoo)
+MigrationTable(db_src,db_dst,'project_task_type',rename={'auto_validation_kanban_state':'auto_validation_state'},
+    default={'rating_status':'stage','rating_status_period':'monthly'})
+MigrationTable(db_src,db_dst,'project_task_type_rel')
+# planned_hours => allocated_hours ; state (obligatoire en v20) d'après kanban_state (supprimé) et l'étape repliée :
+# prêt => approuvé, bloqué => changements demandés, sinon en cours ; étape repliée => fait
+MigrationTable(db_src,db_dst,'project_task',rename={'planned_hours':'allocated_hours'},expressions={
+    'state': """case
+        when (select s.fold from project_task_type s where s.id=t.stage_id) then '1_done'
+        when t.kanban_state='done'    then '03_approved'
+        when t.kanban_state='blocked' then '02_changes_requested'
+        else '01_in_progress' end""",
+    'display_in_project': "true",
+})
+MigrationTable(db_src,db_dst,'project_task_user_rel')        # assignés et étape personnelle de chacun
+MigrationTable(db_src,db_dst,'project_favorite_user_rel')
+MigrationTable(db_src,db_dst,'project_update')
+# access_mode : nouvelle colonne obligatoire ; en v16, un collaborateur du portail pouvait modifier les tâches => edit
+MigrationTable(db_src,db_dst,'project_collaborator',default={'access_mode':'edit'})
+#******************************************************************************
+
+
 # ** Chatter des essais en v20 ************************************************
 # Abonnés, messages et activités des enregistrements créés pendant les essais dans jurabotec20, supprimés par la relance
 # (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet » sur le transfert qui reprend leur id)
@@ -1004,7 +1042,8 @@ SupprimerChatterOrphelin(db_dst)
 # ** Chatter ******************************************************************
 # 104 465 messages et 61 836 abonnés des modèles repris avec les ids de la v16 ; nouveaux ids de messages (la v20 a
 # déjà les siens) ; suivi des modifications (47 317 valeurs) ajouté au corps (format v20)
-# Non repris : modèles absents ou non repris en v20 (account.account.template, calendar.event, project.*, hr.*,
+# Projets, tâches et mises à jour de projet ajoutés le 14/11/2026 (140 messages)
+# Non repris : modèles absents ou non repris en v20 (account.account.template, hr.*,
 # stock.scrap, is.chat.vllm, account.reconcile.model : 1 seul modèle en v20), discussions (mail.channel), mails sans
 # modèle, notifications, chatter orphelin de la v16 (1 011 messages et 966 abonnés d'enregistrements supprimés, dont
 # 919 « Variante d'article créé »)
@@ -1027,6 +1066,9 @@ ids_messages = MigrationChatter(db_src,db_dst,[
     'res.partner.bank',
     'res.company',
     'account.journal',
+    'project.project',
+    'project.task',
+    'project.update',
 ])
 
 # Type « snailmail » (courrier, 1 message sur une facture) : module snailmail non installé en v20 => notification
@@ -1040,9 +1082,9 @@ execute_values(cr_dst,"insert into message_attachment_rel (message_id,attachment
      if row['message_id'] in ids_messages and row['attachment_id'] in ids_pj])
 cnx_dst.commit()
 
-# Activités des commandes et des transferts (90 ; 2 de projets non reprises) : exceptions (80) et ventes incitatives (10)
+# Activités des commandes, des transferts et des projets (92) : exceptions (80), ventes incitatives (10), projets (2)
 # (sale.mail_act_sale_upsell, supprimé en v20 : Odoo 20 crée une activité « À faire » => mail.mail_activity_data_todo)
-MigrationActivites(db_src,db_dst,['sale.order','stock.picking'],types={'sale.mail_act_sale_upsell':'mail.mail_activity_data_todo'})
+MigrationActivites(db_src,db_dst,['sale.order','stock.picking','project.project'],types={'sale.mail_act_sale_upsell':'mail.mail_activity_data_todo'})
 #******************************************************************************
 
 
