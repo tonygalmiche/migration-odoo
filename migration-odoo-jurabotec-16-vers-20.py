@@ -5,11 +5,28 @@
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
+import subprocess
 
 
 #** Paramètres ****************************************************************
 db_src = "jurabotec16"
 db_dst = "jurabotec20"
+filestore = "/media/sf_dev_odoo/home/odoo/filestore"   # filestore d'Odoo sur ubuntu2604
+#******************************************************************************
+
+
+# ** Repartir de la base vierge à chaque lancement ****************************
+# jurabotec20-vierge : base v20 avec is_jurabotec20 installé et les options des Paramètres de la v16, sans données
+# Ni jurabotec20 ni jurabotec20-vierge ne doivent être ouvertes (Odoo arrêté) : sinon DROP / CREATE refusés
+# Filestore : DROP DATABASE n'y touche pas => fichiers de la production copiés par rsync gardés ; fichiers de la base
+# vierge ajoutés (cp --update=none : seuls les fichiers absents sont copiés, rien n'est écrasé ni supprimé ; rsync
+# n'est pas installé sur ubuntu2604)
+db_vierge = db_dst+'-vierge'
+for SQL in ['DROP DATABASE IF EXISTS "%s"'%db_dst, 'CREATE DATABASE "%s" WITH TEMPLATE "%s"'%(db_dst,db_vierge)]:
+    if subprocess.run(['psql','-d','postgres','-c',SQL]).returncode:
+        sys.exit("Arrêt : %s refusé (Odoo arrêté ?)"%SQL)
+if subprocess.run(['cp','-a','--update=none','%s/%s/.'%(filestore,db_vierge),'%s/%s/'%(filestore,db_dst)]).returncode:
+    sys.exit("Arrêt : copie du filestore de %s refusée"%db_vierge)
 #******************************************************************************
 
 cnx_src,cr_src=GetCR(db_src)
