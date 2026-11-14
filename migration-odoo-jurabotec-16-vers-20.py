@@ -997,33 +997,33 @@ cnx_dst.commit()
 # ** Projets ******************************************************************
 # 8 projets, 50 tâches, 46 étapes (4 de projets, 42 étapes personnelles des utilisateurs), copiés avec les ids de la v16
 # (la tâche « Bienvenue » et les étapes personnelles créées à l'installation de project sont remplacées)
+# Même méthode que Dynamic Motion (migration-odoo-dynamicmotion-16-vers-20.py)
 # Étapes des projets (project_project_stage) : mêmes ids et identifiants externes en v16 et en v20 => non reprises
-# Alias e-mail des projets (8, dont « task » de l'ICPE) : ids de la v16, modèles retrouvés par leur nom ; MigrationTable
-# vide mail_alias avant la copie (aucun autre alias en v20 à ce stade du script)
-MigrationTable(db_src,db_dst,'mail_alias',where="t.id in (select alias_id from project_project)")
-SQL="""
-    update mail_alias a set
-        alias_model_id        = (select id from ir_model where model='project.task'),
-        alias_parent_model_id = (select id from ir_model where model='project.project')
-    where a.id in (select alias_id from project_project)
-"""
-MigrationTable(db_src,db_dst,'project_project')
-cr_dst.execute(SQL)
-cnx_dst.commit()
-# rating_status et rating_status_period : nouvelles colonnes obligatoires (valeurs par défaut d'Odoo)
-MigrationTable(db_src,db_dst,'project_task_type',rename={'auto_validation_kanban_state':'auto_validation_state'},
-    default={'rating_status':'stage','rating_status_period':'monthly'})
-MigrationTable(db_src,db_dst,'project_task_type_rel')
-# planned_hours => allocated_hours ; state (obligatoire en v20) d'après kanban_state (supprimé) et l'étape repliée :
-# prêt => approuvé, bloqué => changements demandés, sinon en cours ; étape repliée => fait
-MigrationTable(db_src,db_dst,'project_task',rename={'planned_hours':'allocated_hours'},expressions={
-    'state': """case
-        when (select s.fold from project_task_type s where s.id=t.stage_id) then '1_done'
-        when t.kanban_state='done'    then '03_approved'
-        when t.kanban_state='blocked' then '02_changes_requested'
-        else '01_in_progress' end""",
-    'display_in_project': "true",
+# Projets : analytic_account_id => account_id (vide) ; rating_*, partner_email / partner_phone, allow_subtasks : supprimés
+MigrationTable(db_src,db_dst,'project_project',rename={'analytic_account_id':'account_id'},default={'is_template':False})
+# Alias e-mail des projets (obligatoire ; 8, dont « task » de l'ICPE) : ids de la v16 absents en v20 => recréés
+MigrationMailAlias(db_src,db_dst,'project_project')
+# Étapes des tâches : auto_validation_kanban_state renommé ; légendes et description supprimées ; évaluations désactivées
+MigrationTable(db_src,db_dst,'project_task_type',rename={'auto_validation_kanban_state':'auto_validation_state'},default={
+    'rating_active'       : False,
+    'rating_status'       : 'stage',
+    'rating_status_period': 'monthly',
 })
+MigrationTable(db_src,db_dst,'project_task_type_rel')
+# Tâches : planned_hours => allocated_hours ; date_deadline : date => date-heure ; state (obligatoire en v20) d'après
+# kanban_state et is_closed de la v16 (même correspondance que la migration d'Odoo 17) : en cours, changements demandés
+# (bloqué), approuvé (prêt), fait (étape fermée)
+MigrationTable(db_src,db_dst,'project_task',rename={'planned_hours':'allocated_hours'},default={
+    'state'                : '01_in_progress',
+    'display_in_project'   : True,
+    'is_template'          : False,
+    'has_template_ancestor': False,
+})
+cr_src.execute("select id,kanban_state,is_closed from project_task")
+for row in cr_src.fetchall():
+    state = '1_done' if row['is_closed'] else {'blocked':'02_changes_requested','done':'03_approved'}.get(row['kanban_state'],'01_in_progress')
+    cr_dst.execute("update project_task set state=%s where id=%s",[state,row['id']])
+cnx_dst.commit()
 MigrationTable(db_src,db_dst,'project_task_user_rel')        # assignés et étape personnelle de chacun
 MigrationTable(db_src,db_dst,'project_favorite_user_rel')
 MigrationTable(db_src,db_dst,'project_update')
