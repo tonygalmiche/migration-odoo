@@ -1033,12 +1033,54 @@ MigrationTable(db_src,db_dst,'project_collaborator',default={'access_mode':'edit
 
 
 # ** Agenda *******************************************************************
-# 162 rendez-vous et leurs participants, ids de la v16 ; aucun lié à un enregistrement (res_model_id), aucune récurrence
-# Rappels (calendar_alarm) : mêmes ids et identifiants externes en v16 et en v20 => non repris
-# google_id, need_sync : synchronisation Google non reprise (aucun rendez-vous synchronisé en v16)
-MigrationTable(db_src,db_dst,'calendar_event')
+# Même méthode que Dynamic Motion (migration-odoo-dynamicmotion-16-vers-20.py)
+# Calendriers des utilisateurs (nouveaux en v20) : chaque utilisateur interne a son calendrier principal
+# (calendar_calendar et calendar_user propriétaire), créé avec l'utilisateur (_generate_primary_calendar) ; les
+# utilisateurs copiés en SQL n'en ont pas => créés comme le fait Odoo, puis primary_calendar_id recalculé
+cr_dst.execute("select value from ir_config_parameter where key='calendar.default_privacy'")
+res = cr_dst.fetchone()
+confidentialite = res['value'] if res else 'public'
+cr_dst.execute("""
+    select u.id, p.name from res_users u join res_partner p on p.id=u.partner_id
+    where not u.share and not exists (select 1 from calendar_user c where c.user_id=u.id and c.is_primary and c.access_role='owner')
+""")
+for row in cr_dst.fetchall():
+    cr_dst.execute("insert into calendar_calendar (name,calendar_default_privacy,create_uid,write_uid,create_date,write_date) values (%s,%s,1,1,now(),now()) returning id",[row['name'],confidentialite])
+    cr_dst.execute("""
+        insert into calendar_user (calendar_id,user_id,name,access_role,is_primary,is_filter_active,is_filter_checked,create_uid,write_uid,create_date,write_date)
+        values (%s,%s,%s,'owner',true,true,true,1,1,now(),now())
+    """,[cr_dst.fetchone()['id'],row['id'],row['name']])
+cr_dst.execute("update res_users u set primary_calendar_id=c.calendar_id from calendar_user c where c.user_id=u.id and c.is_primary and c.access_role='owner'")
+cnx_dst.commit()
+
+# 162 rendez-vous et leurs participants, ids de la v16 ; aucun lié à un enregistrement, aucune récurrence, aucun rappel
+# ni filtre (personnes suivies) ; rappels (calendar_alarm) : mêmes ids et identifiants externes en v16 et en v20
+# google_id, need_sync : synchronisation Google jamais utilisée
+MigrationTable(db_src,db_dst,'calendar_event',default={'is_draft':False})
 MigrationTable(db_src,db_dst,'calendar_attendee')
 MigrationTable(db_src,db_dst,'calendar_event_res_partner_rel')
+
+# Calendriers des collègues : en v16, chacun voyait les rendez-vous de tous ; en v20, seulement ses calendriers et ceux
+# partagés avec lui => calendrier de chaque utilisateur interne actif partagé avec ses collègues (rôle « writer » :
+# modification des rendez-vous non privés, comme en v16), décoché par défaut (aucune personne suivie en v16) ; OdooBot exclu
+cr_dst.execute("delete from calendar_user where access_role<>'owner'")
+cr_dst.execute("""
+    select u.id, u.primary_calendar_id, p.name from res_users u join res_partner p on p.id=u.partner_id
+    where u.active and not u.share and u.id<>1 and u.primary_calendar_id is not null order by u.id
+""")
+utilisateurs = cr_dst.fetchall()
+for u in utilisateurs:
+    for collegue in utilisateurs:
+        if collegue['id']==u['id']:
+            continue
+        cr_dst.execute("""
+            insert into calendar_user (calendar_id,user_id,name,access_role,is_primary,is_filter_active,is_filter_checked,
+                filter_color,create_uid,write_uid,create_date,write_date)
+            values (%s,%s,%s,'writer',false,true,false,%s,1,1,now(),now())
+        """,[collegue['primary_calendar_id'],u['id'],collegue['name'],collegue['id']%11+1])
+# Calendrier du rendez-vous : celui de l'organisateur (même calcul que _compute_calendar_id)
+cr_dst.execute("update calendar_event e set calendar_id=u.primary_calendar_id from res_users u where u.id=e.user_id")
+cnx_dst.commit()
 #******************************************************************************
 
 
