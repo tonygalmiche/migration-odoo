@@ -1352,9 +1352,11 @@ def MigrationCreationArticles(db_src,db_dst):
         )
     """
     cr_src.execute(SQL)
-    # Ancien utilisateur default (supprimé en v19, sans groupes après MigrationUtilisateursTechniques) exclu
+    uids = [row['uid'] for row in cr_src.fetchall()]
+    # Ancien utilisateur default (supprimé en v19, sans groupes après MigrationUtilisateursTechniques) exclu ; lu après le
+    # fetchall (même curseur : sinon la liste des utilisateurs est vide)
     default_user_id = ExternalId2Id(cr_src,'default_user',module='base',model='res.users')
-    uids = [row['uid'] for row in cr_src.fetchall() if row['uid']!=default_user_id]
+    uids = [uid for uid in uids if uid!=default_user_id]
     SQL="""
         insert into res_groups_users_rel (gid,uid)
         select %s,id from res_users where id = any(%s) and id<>1
