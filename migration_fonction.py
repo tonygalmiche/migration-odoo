@@ -1394,6 +1394,29 @@ def InscriptionSurInvitation(db_dst):
     print("InscriptionSurInvitation : auth_signup.invitation_scope = b2b")
 
 
+def MigrationPaiementEnLigne(db_src,db_dst):
+    """Paiement en ligne des factures (Facturation / Paramètres, account_payment.enable_portal_payment) : créé à True par
+    account_payment en v20. Valeur de la source si elle a ce paramètre (v17+), sinon décoché si la source n'avait aucun
+    moyen de paiement activé (payment_acquirer jusqu'en v15, payment_provider en v16). A appeler dans chaque script."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    cr_src.execute("select value from ir_config_parameter where key='account_payment.enable_portal_payment'")
+    row = cr_src.fetchone()
+    if row:
+        valeur = row['value']
+    else:
+        actifs = 0
+        for table in ['payment_provider','payment_acquirer']:
+            cr_src.execute("select to_regclass(%s) is not null existe",[table])
+            if cr_src.fetchone()['existe']:
+                cr_src.execute("select count(*) nb from "+table+" where state in ('enabled','test')")
+                actifs += cr_src.fetchone()['nb']
+        valeur = 'True' if actifs else 'False'
+    cr_dst.execute("update ir_config_parameter set value=%s where key='account_payment.enable_portal_payment'",[valeur])
+    cnx_dst.commit()
+    print("MigrationPaiementEnLigne : account_payment.enable_portal_payment = %s"%valeur)
+
+
 def GetFielsdId(cr,model,field):
     SQL="""
         select  id,name,model

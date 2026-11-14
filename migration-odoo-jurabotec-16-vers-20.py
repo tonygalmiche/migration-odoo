@@ -137,6 +137,9 @@ if row:
 cr_dst.execute("update digest_digest set state='deactivated'")
 cnx_dst.commit()
 
+# Paiement en ligne des factures : coché par défaut en v20 ; aucun moyen de paiement activé en v16 => décoché
+MigrationPaiementEnLigne(db_src,db_dst)
+
 # Compte bancaire de la société (IBAN de la facture) : res.bank supprimé en v20 => nom et BIC de la banque sur le compte
 # clearing_label_id : nouvelle colonne obligatoire en v20 => libellé par défaut (base.clearing_label_all, aucun libellé pour la France)
 # country_id : nouvelle colonne en v20 => pays du partenaire (même calcul qu'Odoo)
