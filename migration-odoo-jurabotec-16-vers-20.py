@@ -926,6 +926,18 @@ MigrationIrFilters(db_src,db_dst,modules={'is_jurabotec':'is_jurabotec20'},actio
 # Toujours archivés (la v16 reste en production jusqu'à la bascule : aucun mail réel envoyé aux clients) ;
 # désarchivés à la main par le client après la mise en production
 MigrationTable(db_src,db_dst,'ir_mail_server',expressions={'active': "false"})
+
+# Serveurs de réception (8 boîtes IMAP OVH, ssl0.ovh.net, 993 : Odoo Jurabotec, tache, be, info, compta, fb, jfblondeau,
+# Laetitia), mots de passe compris ; même structure en v20 (fetchmail fusionné dans mail)
+# Toujours archivés, comme les serveurs d'envoi : sinon la v20 relève les boîtes de la v16 encore en production (mails
+# rangés dans la v20 et absents de la v16) ; désarchivés à la bascule
+# object_id (modèle des enregistrements créés : project.task pour « tache ») : ids de ir_model différents en v20 =>
+# retrouvé par le nom du modèle
+MigrationTable(db_src,db_dst,'fetchmail_server',expressions={'active': "false"})
+cr_src.execute("select f.id, m.model from fetchmail_server f join ir_model m on m.id=f.object_id")
+for row in cr_src.fetchall():
+    cr_dst.execute("update fetchmail_server set object_id=(select id from ir_model where model=%s) where id=%s",[row['model'],row['id']])
+cnx_dst.commit()
 #******************************************************************************
 
 
