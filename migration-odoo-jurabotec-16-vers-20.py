@@ -92,6 +92,10 @@ MigrationResGroups(db_src,db_dst)
 # base.default_user supprimé en v19 : public et portaltemplate ont un id de moins en v20 (3 et 4 au lieu de 4 et 5)
 # => les identifiants externes base pointent sur les ids de la source et l'ancien default (id 3) perd ses groupes
 MigrationUtilisateursTechniques(db_src,db_dst)
+
+# Création des articles : en v16, droit des administrateurs Ventes, Stock, Achats, Fabrication et Comptabilité ;
+# en v20, seulement le nouveau groupe « Produits : Créer » => donné aux utilisateurs qui avaient ce droit en v16
+MigrationCreationArticles(db_src,db_dst)
 #******************************************************************************
 
 

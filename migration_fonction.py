@@ -1332,6 +1332,39 @@ def AddUserInGroup(db_dst, gid, uid):
     cnx_dst.commit()
 
 
+def MigrationCreationArticles(db_src,db_dst):
+    """Migration vers la v20 (source ≤ v18), après MigrationResGroups : en v20, seul le groupe « Produits : Créer »
+    (product.group_product_manager) peut créer et modifier les articles ; avant, c'étaient les administrateurs Ventes,
+    Stock, Achats, Fabrication, Comptabilité… => groupe donné aux utilisateurs internes qui avaient ce droit dans la
+    source (groupes lus dans ir_model_access de la source)"""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    gid = ExternalId2GroupId(cr_dst,'group_product_manager',module='product')
+    if not gid:
+        return
+    SQL="""
+        select distinct r.uid
+        from res_groups_users_rel r inner join res_users u on u.id=r.uid
+        where u.share is not true and r.gid in (
+            select a.group_id
+            from ir_model_access a inner join ir_model m on m.id=a.model_id
+            where m.model='product.template' and a.perm_create and a.active and a.group_id is not null
+        )
+    """
+    cr_src.execute(SQL)
+    # Ancien utilisateur default (supprimé en v19, sans groupes après MigrationUtilisateursTechniques) exclu
+    default_user_id = ExternalId2Id(cr_src,'default_user',module='base',model='res.users')
+    uids = [row['uid'] for row in cr_src.fetchall() if row['uid']!=default_user_id]
+    SQL="""
+        insert into res_groups_users_rel (gid,uid)
+        select %s,id from res_users where id = any(%s) and id<>1
+        on conflict do nothing
+    """
+    cr_dst.execute(SQL,[gid,uids])
+    print("MigrationCreationArticles : %s utilisateurs avec « Produits : Créer »"%cr_dst.rowcount)
+    cnx_dst.commit()
+
+
 def InscriptionSurInvitation(db_dst):
     """Inscription libre au portail fermée : sur invitation seulement (auth_signup.invitation_scope = b2b), quelle que
     soit la valeur de la source. b2c par défaut en v20 : tout le monde peut se créer un compte portail depuis la page
