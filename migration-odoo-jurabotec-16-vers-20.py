@@ -300,6 +300,16 @@ MigrationIrPropertyJsonb(db_src,db_dst,'product.template','responsible_id')
 # Lignes archivées (248) non reprises : plus d'archivage des lignes en v20, elles redeviendraient actives
 MigrationTable(db_src,db_dst,'product_pricelist')
 MigrationTable(db_src,db_dst,'product_pricelist_item',where="t.active")
+# Groupes de pays des listes (3 : HEKIPIA 2025, HEKIPIA1, HEKIPIA 2026-2027 => Europe, même id en v16 et en v20) : liste
+# par défaut des clients sans liste propre (182 partenaires français, dont HEKIPIA) ; non repris avant le 14/11/2026
+# => « particulier 2026 » en v20 (prix à 0 sur CDE05341, retour de Frédéric)
+MigrationTable(db_src,db_dst,'res_country_group_pricelist_rel')
+# Ordre des listes : « sequence, id desc » en v16, « sequence, id » en v20 => à séquence égale, la v20 choisirait la plus
+# ancienne (HEKIPIA 2025 au lieu de HEKIPIA 2026-2027) ; séquences renumérotées dans l'ordre de la v16
+cr_src.execute("select id from product_pricelist order by sequence, id desc")
+for sequence,row in enumerate(cr_src.fetchall(),start=1):
+    cr_dst.execute("update product_pricelist set sequence=%s where id=%s",[sequence,row['id']])
+cnx_dst.commit()
 # Liste de prix des clients (5 872 partenaires) : propriété en v16, champ jsonb par société en v20
 MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_product_pricelist','specific_property_product_pricelist')
 
