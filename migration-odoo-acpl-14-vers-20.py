@@ -2,11 +2,13 @@
 # -*- coding: utf-8 -*-
 # Reprise des données d'ACPL : Odoo 14 (is_acpl14) => Odoo 20 (is_acpl20)
 # Documentation : Documentation/migration-odoo/migration-is_acpl14-vers-is_acpl20.md
-# Première partie : contacts, utilisateurs, société, unités, articles, conditions de paiement, paramètres comptables
-# A faire ensuite : commandes, livraisons et stock, factures et paiements, séquences, chatter, pièces jointes
+# Reprise 1 : contacts, utilisateurs, société, unités, articles, conditions de paiement, paramètres comptables
+# Reprise 2 : ventes, stock, séquences ; reprise 3 : pièces comptables, lettrages, paiements ; reprise 4 : pièces
+# jointes, filtres favoris, chatter, activités
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
+import hashlib
 
 
 #** Paramètres ****************************************************************
@@ -762,6 +764,109 @@ seq_src = cr_src.fetchone()
 cr_dst.execute("select id from ir_sequence where code='sale.order' order by id limit 1")
 seq_dst = cr_dst.fetchone()
 MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
+#******************************************************************************
+
+
+# ** Reprise 4 : pièces jointes ************************************************
+# Même méthode que Dynamic Motion et Jurabotec
+# Filestore de la production copié tel quel dans le filestore d'acpl20 => données seulement, store_fname conservé
+# (copier_fichiers=False) ; ids de la v14 conservés (garder_ids), sauf collision avec les pièces jointes techniques de
+# la v20
+# Repris : factures (4 574 PDF, avec le XML Factur-X intégré) et partenaires (50), avec les images ; et les pièces
+# jointes éventuelles des commandes, transferts et articles
+# Non repris : pièces jointes techniques (vues, menus, icônes et moyens de paiement, langues, discussions), XML
+# Factur-X des documents EDI de la v14 (4 570, sans res_model, déjà intégrés aux PDF), export compta (supprimé)
+modeles = ('account.move','sale.order','stock.picking','product.template','product.product','res.partner')
+cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles]) # pièces jointes de la v20 (images par défaut, essais)
+cnx_dst.commit()
+where = """
+    res_model in %s and coalesce(res_id,0)<>0
+    and coalesce(res_field,'') in ('','image_1920','image_1024','image_512','image_256','image_128')
+"""%str(modeles)
+ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False,garder_ids=True)
+
+# Pièce jointe principale des factures (4 571 : leur PDF) ; supprimée en v20 sur les autres modèles
+cr_src.execute("select id, message_main_attachment_id from account_move where message_main_attachment_id is not null")
+execute_values(cr_dst,"update account_move m set message_main_attachment_id=s.attachment_id from (values %s) as s(id, attachment_id) where s.id=m.id",
+    [(row['id'],ids_pj[row['message_main_attachment_id']]) for row in cr_src.fetchall() if row['message_main_attachment_id'] in ids_pj])
+cnx_dst.commit()
+
+# Ids qui auraient changé (collision avec les pièces jointes techniques de la v20) : remplacés partout
+RemplacerIdsPiecesJointes(db_dst,ids_pj)
+
+# PDF Factur-X des factures et avoirs clients validés (4 570) : en v14, gardés par le rapport (FAC_2026_0680.pdf) et pièce
+# jointe principale de la facture ; en v20, PDF officiel = pièce jointe du champ invoice_pdf_report_file (envoi, portail,
+# téléchargement : pas régénéré). Retrouvés par la pièce jointe principale et non par le nom : les 8 avoirs suffixés -AV
+# ont le PDF de même nom que leur facture
+SQL="""
+    update ir_attachment a set res_field='invoice_pdf_report_file'
+    from account_move m
+    where a.id=m.message_main_attachment_id and a.res_model='account.move' and a.res_id=m.id and a.res_field is null
+    and a.mimetype='application/pdf' and m.move_type in ('out_invoice','out_refund') and m.state='posted'
+"""
+cr_dst.execute(SQL)
+print("PDF des factures (invoice_pdf_report_file) : %s"%cr_dst.rowcount)
+cnx_dst.commit()
+
+# Logo de l'application (logo_web : barre de navigation, page de connexion), calculé à partir du logo de la société à
+# l'enregistrement de la société : colonne en base64 en v14, pièce jointe en v20 => logo de la v14 dans la pièce jointe
+# de la v20 (contenu en base, db_datas : rien à écrire dans le filestore)
+cr_src.execute("select logo_web from res_company where id=1")
+logo = cr_src.fetchone()['logo_web']
+if logo:
+    contenu = base64.b64decode(bytes(logo))
+    SQL="""
+        update ir_attachment set store_fname=null, db_datas=%s, file_size=%s, checksum=%s, mimetype='image/png'
+        where res_model='res.company' and res_field='logo_web' and res_id=1
+    """
+    cr_dst.execute(SQL,[psycopg2.Binary(contenu),len(contenu),hashlib.sha1(contenu).hexdigest()])
+    cnx_dst.commit()
+#******************************************************************************
+
+
+# ** Reprise 4 : filtres favoris ***********************************************
+# Actions retrouvées par identifiant externe ; is_acpl14 => is_acpl20 ; filtre sans action retrouvée : pour tous les
+# menus du modèle, plus par défaut (voir MigrationIrFilters)
+MigrationIrFilters(db_src,db_dst,modules={'is_acpl14':'is_acpl20'})
+#******************************************************************************
+
+
+# ** Reprise 4 : chatter et activités ******************************************
+# Abonnés, messages et activités des enregistrements créés pendant les essais dans acpl20, supprimés par la relance
+# (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet »)
+SupprimerChatterOrphelin(db_dst)
+
+# Messages et abonnés des modèles repris avec les ids de la v14 ; nouveaux ids de messages ; suivi des modifications
+# ajouté au corps (format v20)
+# Non repris : modèles absents ou non repris en v20 (export compta, documents EDI...), discussions (mail.channel), mails
+# sans modèle, notifications
+ids_messages = MigrationChatter(db_src,db_dst,[
+    'account.move',
+    'account.payment',
+    'sale.order',
+    'stock.picking',
+    'product.template',
+    'product.product',
+    'res.partner',
+    'res.company',
+    'crm.team',
+    'account.journal',
+    'account.account',
+])
+
+# Type « snailmail » (courrier) : module snailmail non installé en v20 => notification
+cr_dst.execute("update mail_message set message_type='notification' where message_type='snailmail'")
+cnx_dst.commit()
+
+# Pièces jointes des messages (factures envoyées par mail...) : reprises plus haut avec leur enregistrement
+cr_src.execute("select message_id,attachment_id from message_attachment_rel")
+execute_values(cr_dst,"insert into message_attachment_rel (message_id,attachment_id) values %s on conflict do nothing",
+    [(ids_messages[row['message_id']],ids_pj[row['attachment_id']]) for row in cr_src.fetchall()
+     if row['message_id'] in ids_messages and row['attachment_id'] in ids_pj])
+cnx_dst.commit()
+
+# Activités (sale.mail_act_sale_upsell, supprimé en v20 => « À faire »)
+MigrationActivites(db_src,db_dst,['account.move','sale.order','stock.picking','res.partner','product.template'],types={'sale.mail_act_sale_upsell':'mail.mail_activity_data_todo'})
 #******************************************************************************
 
 
