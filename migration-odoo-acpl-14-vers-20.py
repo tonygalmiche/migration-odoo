@@ -159,6 +159,9 @@ cnx_dst.commit()
 # choisi, Odoo prend alors le standard), sur lequel s'applique l'en-tête ACPL du module ; format A4 avec les marges de
 # la v14 (haut 27, bas 23, gauche et droite 7, en-tête 22 mm ; 52 / 32 / 0 / 0 / 52 en v20). Format en noupdate :
 # non écrasé par un -u base
+# Marges CSS (css_margins, nouveau en v20, coché sur l'A4) désactivées : elles ajoutent 11 mm au-dessus de l'en-tête et à
+# gauche et à droite du corps, en plus des marges de la v14 => en-tête sur le texte des pages suivantes, texte plus
+# étroit et conditions générales sur 2 pages (une seule en v14)
 cr_dst.execute("select res_id from ir_model_data where module='web' and name='external_layout_standard'")
 layout_id = cr_dst.fetchone()['res_id']
 cr_dst.execute("select res_id from ir_model_data where module='base' and name='paperformat_euro'")
@@ -169,7 +172,7 @@ cr_src.execute("""
     from res_company c join report_paperformat p on p.id=c.paperformat_id where c.id=1
 """)
 format_src = cr_src.fetchone()
-cr_dst.execute("update report_paperformat set margin_top=%s, margin_bottom=%s, margin_left=%s, margin_right=%s, header_spacing=%s where id=%s",
+cr_dst.execute("update report_paperformat set margin_top=%s, margin_bottom=%s, margin_left=%s, margin_right=%s, header_spacing=%s, css_margins=false where id=%s",
     [format_src['margin_top'],format_src['margin_bottom'],format_src['margin_left'],format_src['margin_right'],format_src['header_spacing'],paperformat_id])
 cnx_dst.commit()
 
