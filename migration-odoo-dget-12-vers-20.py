@@ -476,6 +476,13 @@ if depart<=2:
     for row in cr_src.fetchall():
         cr_dst.execute("update account_journal set default_account_id=%s where id=%s",[row['default_debit_account_id'],row['id']])
     cnx_dst.commit()
+    # N° des factures posé par le module (38FC167 : année - 1988, puis FC) : la v20 lit « 38 » comme l'année 2038 et
+    # refuse de valider une facture datée de 2026 (« La Date ... n'est pas conforme au numéro de séquence existant »)
+    # => format du n° imposé au journal des ventes (réglage standard sequence_override_regex, mode développeur) : préfixe
+    # et numéro, sans année ni remise à zéro (même expression que _sequence_fixed_regex d'Odoo)
+    cr_dst.execute("update account_journal set sequence_override_regex=%s where code='FAC' and type='sale'",
+        [r'^(?P<prefix1>.*?)(?P<seq>\d{0,9})(?P<suffix>\D*?)$'])
+    cnx_dst.commit()
     # Modes de paiement des journaux : table account_payment_method_line créée en v15 => lignes créées par la v20 gardées,
     # journal recalé sur l'id v12 ; lignes d'un journal sans équivalent supprimées
     cr_dst.execute("select id,journal_id from account_payment_method_line")
