@@ -1031,16 +1031,70 @@ if depart<=5:
     #******************************************************************************
 
 
+    # ** Projets ******************************************************************
+    # Utilisés en v12 (Laurent THIELEMANS : suivi des affaires par phase) : 6 projets actifs (01 - Projet ... 06 - Concours),
+    # 55 étapes, 37 tâches (24 actives), 1 étiquette ; copiés avec les ids de la v12 (méthode Jurabotec, source v12)
+    # Les étapes personnelles et la tâche éventuelle créées à l'installation de project sont remplacées
+    # Étiquettes, étapes et projets : noms texte en v12, traduisibles en v20
+    MigrationTableJsonb(db_src,db_dst,'project_tags')
+    # Étapes des tâches : auto_validation_kanban_state renommé ; légendes et description supprimées ; active (nouveau,
+    # vide = archivée) et évaluations (désactivées) obligatoires en v20
+    MigrationTableJsonb(db_src,db_dst,'project_task_type',rename={'auto_validation_kanban_state':'auto_validation_state'},default={
+        'active'              : True,
+        'rating_active'       : False,
+        'rating_status'       : 'stage',
+        'rating_status_period': 'monthly',
+    })
+    # Projets : évaluations, calendrier et projet des sous-tâches supprimés ; last_update_status obligatoire en v20 ;
+    # étape de projet (stage_id) laissée vide (étapes des projets non utilisées en v12)
+    MigrationTableJsonb(db_src,db_dst,'project_project',default={
+        'last_update_status'     : 'to_define',
+        'is_template'            : False,
+        'allow_task_dependencies': False,
+        'allow_milestones'       : False,
+        'allow_recurring_tasks'  : False,
+        'allow_billable'         : False,
+    })
+    # Alias e-mail des projets (obligatoire) : ids de la v12 absents en v20 => recréés
+    MigrationMailAlias(db_src,db_dst,'project_project')
+    MigrationTable(db_src,db_dst,'project_task_type_rel')
+    MigrationTable(db_src,db_dst,'project_favorite_user_rel')
+    # Tâches : planned_hours => allocated_hours ; date_deadline : date => date-heure ; notes et email_cc supprimés
+    MigrationTable(db_src,db_dst,'project_task',rename={'planned_hours':'allocated_hours'},default={
+        'state'                : '01_in_progress',
+        'display_in_project'   : True,
+        'is_template'          : False,
+        'has_template_ancestor': False,
+        'recurring_task'       : False,
+    })
+    # État (obligatoire en v20) d'après kanban_state de la v12 et l'étape repliée (fermée), comme la migration d'Odoo 17 :
+    # fait (étape repliée), changements demandés (bloqué), approuvé (prêt), en cours
+    cr_src.execute("select t.id, t.kanban_state, coalesce(s.fold,false) as fold from project_task t left join project_task_type s on s.id=t.stage_id")
+    for row in cr_src.fetchall():
+        state = '1_done' if row['fold'] else {'blocked':'02_changes_requested','done':'03_approved'}.get(row['kanban_state'],'01_in_progress')
+        cr_dst.execute("update project_task set state=%s where id=%s",[state,row['id']])
+    # Assigné : user_id (un seul en v12) => project_task_user_rel (plusieurs en v20, étape personnelle vide)
+    cr_dst.execute("delete from project_task_user_rel")
+    cr_src.execute("select id, user_id from project_task where user_id is not null order by id")
+    execute_values(cr_dst,"insert into project_task_user_rel (task_id,user_id) values %s",
+        [(row['id'],row['user_id']) for row in cr_src.fetchall()])
+    cnx_dst.commit()
+    SetSequence(cr_dst,cnx_dst,'project_task_user_rel')
+    MigrationTable(db_src,db_dst,'project_tags_project_task_rel')
+    #******************************************************************************
+
+
     # ** Chatter *******************************************************************
     # Abonnés, messages et activités des enregistrements créés pendant les essais dans dget20, supprimés par la relance
     # (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet »)
     SupprimerChatterOrphelin(db_dst)
 
-    # Messages et abonnés des factures (account.invoice => account.move, mêmes ids), paiements et contacts ; nouveaux ids
-    # de messages ; suivi des modifications ajouté au corps (format v20)
-    # Non repris : tâches et projets (project non installé en v20), discussions (mail.channel), notifications
+    # Messages et abonnés des factures (account.invoice => account.move, mêmes ids), paiements, contacts, projets et tâches ;
+    # nouveaux ids de messages ; suivi des modifications ajouté au corps (format v20)
+    # Non repris : discussions (mail.channel), notifications
     # Aucune activité ni pièce jointe de message en v12
-    MigrationChatter(db_src,db_dst,['account.invoice','account.payment','res.partner'],renommer={'account.invoice':'account.move'})
+    MigrationChatter(db_src,db_dst,['account.invoice','account.payment','res.partner','project.project','project.task'],
+        renommer={'account.invoice':'account.move'})
     #******************************************************************************
 
 
