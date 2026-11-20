@@ -59,10 +59,6 @@ def ThemeEntreprise():
     cr_dst.execute("update res_company set is_theme_couleur='#D9534F', is_theme_eclaircissement=80")
     cnx_dst.commit()
     print("Thème de l'entreprise : #D9534F")
-
-# Lancement du thème seul sur la base déjà reprise (18/10/2026) : à retirer pour une reprise complète
-ThemeEntreprise()
-sys.exit()
 #******************************************************************************
 
 
