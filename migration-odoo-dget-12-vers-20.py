@@ -482,6 +482,14 @@ if depart<=2:
     # et numéro, sans année ni remise à zéro (même expression que _sequence_fixed_regex d'Odoo)
     cr_dst.execute("update account_journal set sequence_override_regex=%s where code='FAC' and type='sale'",
         [r'^(?P<prefix1>.*?)(?P<seq>\d{0,9})(?P<suffix>\D*?)$'])
+    # Modèle de facture du journal des ventes (« Imprimer », « Envoyer ») : facture DGET du module, même présentation qu'en
+    # v12 (au lieu de la facture standard de la v20)
+    cr_dst.execute("select res_id from ir_model_data where module='is_dget20' and name='is_report_invoice_action'")
+    rapport = cr_dst.fetchone()
+    if rapport:
+        cr_dst.execute("update account_journal set invoice_template_pdf_report_id=%s where code='FAC' and type='sale'",[rapport['res_id']])
+    else:
+        print("Facture DGET (is_dget20.is_report_invoice_action) absente de %s-vierge : -u is_dget20 à faire sur la base vierge"%db_dst)
     cnx_dst.commit()
     # Modes de paiement des journaux : table account_payment_method_line créée en v15 => lignes créées par la v20 gardées,
     # journal recalé sur l'id v12 ; lignes d'un journal sans équivalent supprimées
