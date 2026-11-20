@@ -176,6 +176,9 @@ cr_src.execute("""
 format_src = cr_src.fetchone()
 cr_dst.execute("update report_paperformat set margin_top=%s, margin_bottom=%s, margin_left=%s, margin_right=%s, header_spacing=%s, css_margins=false where id=%s",
     [format_src['margin_top'],format_src['margin_bottom'],format_src['margin_left'],format_src['margin_right'],format_src['header_spacing'],paperformat_id])
+# Marge du bas 23 => 12 mm (demande de Tony du 20/11/2026) : le pied de page (une ligne) se place en haut de cette marge,
+# 18 mm restaient vides en dessous (déjà en v14) ; 11 mm de texte en plus par page
+cr_dst.execute("update report_paperformat set margin_bottom=12 where id=%s",[paperformat_id])
 cnx_dst.commit()
 
 # URL utilisée par wkhtmltopdf pour charger les CSS et images des rapports : web.base.url n'est pas joignable depuis
