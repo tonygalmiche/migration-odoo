@@ -52,6 +52,14 @@ def RetablirControleCles():
         cnx.commit()
         print("Contrôles des clés étrangères réactivés : %s"%sorted(sans_controle))
 
+# Mise à jour d'une table sans contrôle des clés étrangères (tables copiées par MigrationTable, contrôlées à la fin par
+# ControleOrphelins)
+def UpdateSansControle(table,SQL,params=None):
+    ControleCles([table],False)
+    cr_dst.execute(SQL,params)
+    cnx_dst.commit()
+    ControleCles([table],True)
+
 
 # ** Thème de l'entreprise (is_theme_entreprise) ******************************
 # Pas de thème en v14 : rouge adouci du logo ACPL (#D9534F ; rouge du logo, #EC0C04, jugé trop agressif par Tony le 18/10/2026)
@@ -466,6 +474,16 @@ for row in cr_dst.fetchall():
         cr_dst.execute("update account_payment_method_line set journal_id=%s where id=%s",[id14,row['id']])
     else:
         cr_dst.execute("delete from account_payment_method_line where id=%s",[row['id']])
+# Compte d'attente de chaque mode : comptes des encaissements et des décaissements du journal v14 (payment_debit_account_id
+# 512003, payment_credit_account_id 512004, supprimés en v20), utilisés par les 253 paiements
+cr_src.execute("select id,payment_debit_account_id,payment_credit_account_id from account_journal where type in ('bank','cash')")
+for row in cr_src.fetchall():
+    cr_dst.execute("""
+        update account_payment_method_line l
+        set payment_account_id = case when m.payment_type='inbound' then %s else %s end
+        from account_payment_method m
+        where m.id=l.payment_method_id and l.journal_id=%s
+    """,[row['payment_debit_account_id'],row['payment_credit_account_id'],row['id']])
 cnx_dst.commit()
 
 # Étiquettes des comptes et des lignes de taxes (déclaration de TVA) : étiquettes de la v20, liens convertis par nom
@@ -585,6 +603,155 @@ MigrationValorisationStock(db_src,db_dst)
 
 # Groupes d'approvisionnement (596, supprimés en v20) => références de stock, liens avec les mouvements et les commandes
 MigrationReferencesStock(db_src,db_dst)
+#******************************************************************************
+
+
+# ** Reprise 3 : pièces comptables, lettrages, paiements ***********************
+# Même méthode que Fromtome (v14 aussi, migration-odoo-fromtome-14-vers-20.py, étape 7)
+# 4 824 pièces (4 553 factures, 18 avoirs dont 1 annulé, 253 pièces de paiements), 40 339 lignes ; journaux FAC et BNK1
+# v14 : aucune pièce « à vérifier » ni comptabilisation automatique, pas de TVA sur encaissements, de relevés bancaires
+# ni d'analytique
+# auto_post (booléen, toujours faux) => 'no' ; to_check => review_state ; payment_id => origin_payment_id (après la copie
+# des paiements) ; document_tax_mode : obligatoire pour les factures et avoirs, vide pour les autres pièces
+# message_main_attachment_id (PDF des factures) : avec les pièces jointes (reprise 4)
+# 8 avoirs (2024-2025) numérotés comme une facture du journal FAC (FAC/2024/0001 à 0007, FAC/2025/0001) : doublons
+# refusés par l'index unique (name, journal_id) de la v20 => suffixe -AV (FAC/2024/0001-AV...), comme Fromtome ; même
+# suffixe sur move_name des lignes
+avoir_en_double = """
+    t.move_type in ('out_refund','in_refund') and exists (
+        select 1 from account_move f
+        where f.journal_id=t.journal_id and f.name=t.name and f.id<>t.id and f.move_type not in ('out_refund','in_refund')
+    )
+"""
+MigrationTable(db_src,db_dst,'account_move',rename={'tax_cash_basis_move_id':'tax_cash_basis_origin_move_id'},exclure=['auto_post','message_main_attachment_id'],
+    expressions={
+        'name'             : "case when "+avoir_en_double+" then t.name||'-AV' else t.name end",
+        'auto_post'        : "'no'",
+        'review_state'     : "'no_review'",
+        # contrôlé dès le COPY (contrainte account_move_check_document_tax_mode_set) ; recalé juste après
+        'document_tax_mode': "case when t.move_type in ('out_invoice','out_refund','out_receipt','in_invoice','in_refund','in_receipt') then 'tax_excluded' end",
+    })
+UpdateSansControle('account_move',"""
+    update account_move set
+        amount_untaxed_in_currency_signed = amount_untaxed_signed,
+        amount_total_in_currency_signed   = amount_total_signed,
+        invoice_currency_rate = 1,
+        document_tax_mode = case when move_type in ('out_invoice','out_refund','out_receipt','in_invoice','in_refund','in_receipt')
+                                 then (select account_price_include from res_company c where c.id=account_move.company_id) end
+""")
+
+# Lignes : display_type obligatoire en v20 (v14 : vide, sauf sections et notes ; exclude_from_invoice_tab pour les lignes
+# de taxes et d'échéances des factures) et invoice_date stockée sur la ligne en v20 : calculés dans la requête du COPY
+MigrationTable(db_src,db_dst,'account_move_line',expressions={
+    'display_type': """
+        case
+            when t.display_type in ('line_section','line_note') then t.display_type
+            when t.tax_line_id is not null then 'tax'
+            when t.exclude_from_invoice_tab and (select m.move_type from account_move m where m.id=t.move_id)<>'entry' then 'payment_term'
+            else 'product'
+        end
+    """,
+    'invoice_date': "(select m.invoice_date from account_move m where m.id=t.move_id)",
+    'move_name'   : "(select case when "+avoir_en_double+" then t.name||'-AV' else t.name end from account_move t where t.id=move_id)",
+})
+MigrationTable(db_src,db_dst,'account_move_line_account_tax_rel')
+MigrationEtiquettesTaxes(db_src,db_dst,[('account_account_tag_account_move_line_rel','account_move_line_id')])
+
+# Pièces toujours exigibles (nouveau en v20, stocké, comme _compute_always_tax_exigible) : pas une facture et aucune
+# taxe sur encaissements
+UpdateSansControle('account_move',"""
+    update account_move m set always_tax_exigible = m.move_type='entry' and not exists (
+        select 1 from account_move_line l
+        left join account_move_line_account_tax_rel r on r.account_move_line_id=l.id
+        join account_tax t on t.id in (l.tax_line_id, r.account_tax_id)
+        where l.move_id=m.id and t.tax_exigibility='on_payment'
+    )
+""")
+
+# Lettrages (456 partiels, 259 complets)
+MigrationTable(db_src,db_dst,'account_full_reconcile')
+MigrationTable(db_src,db_dst,'account_partial_reconcile')
+
+# Paiements (253 : 247 encaissements, 6 remboursements, mode manuel, journal BNK1) : nom, date, journal, société et mémo
+# portés par la pièce en v14 ; mode de paiement du journal et son compte d'attente (512003 / 512004)
+MigrationTable(db_src,db_dst,'account_payment',exclure=['message_main_attachment_id'],default={'company_id':1,'date':'2000-01-01','journal_id':1,'state':'draft'})
+UpdateSansControle('account_payment',"""
+    update account_payment p set
+        name       = m.name,
+        date       = m.date,
+        journal_id = m.journal_id,
+        company_id = m.company_id,
+        memo       = m.ref,
+        currency_id = m.currency_id,
+        commercial_partner_id = (select commercial_partner_id from res_partner r where r.id=p.partner_id),
+        amount_company_currency_signed = case when p.payment_type='outbound' then -m.amount_total_signed else m.amount_total_signed end,
+        is_sent    = false
+    from account_move m
+    where m.id=p.move_id
+""")
+UpdateSansControle('account_payment',"""
+    update account_payment p set payment_method_line_id=l.id, outstanding_account_id=l.payment_account_id
+    from account_payment_method_line l
+    where l.journal_id=p.journal_id and l.payment_method_id=p.payment_method_id
+""")
+# État : draft / canceled selon la pièce, sinon comme Odoo 20 (_compute_state) : reconciled si les lignes de liquidité
+# sont soldées, sinon paid
+UpdateSansControle('account_payment',"""
+    update account_payment p set state = case
+        when m.state='draft'  then 'draft'
+        when m.state='cancel' then 'canceled'
+        when coalesce((
+            select sum(l.amount_residual) from account_move_line l join account_journal j on j.id=m.journal_id
+            where l.move_id=m.id and l.account_id=coalesce(p.outstanding_account_id,j.default_account_id)
+        ),0)=0 then 'reconciled'
+        else 'paid'
+    end
+    from account_move m
+    where m.id=p.move_id
+""")
+
+# Pièce de chaque paiement : payment_id de la pièce en v14 => origin_payment_id
+cr_src.execute("select id,payment_id from account_move where payment_id is not null")
+execute_values(cr_dst,"update account_move m set origin_payment_id=s.payment_id from (values %s) as s(id,payment_id) where s.id=m.id",
+    [(row['id'],row['payment_id']) for row in cr_src.fetchall()],page_size=5000)
+cnx_dst.commit()
+
+# Factures réglées par chaque paiement (invoice_ids du paiement) : d'après les lettrages de la v14
+cr_dst.execute("delete from account_move__account_payment")
+SQL="""
+    select distinct l_facture.move_id invoice_id, m.payment_id
+    from account_partial_reconcile r
+    join account_move_line ld on ld.id=r.debit_move_id
+    join account_move_line lc on lc.id=r.credit_move_id
+    join account_move m on m.id in (ld.move_id,lc.move_id) and m.payment_id is not null
+    join account_move_line l_facture on l_facture.id in (ld.id,lc.id) and l_facture.move_id<>m.id
+    join account_move f on f.id=l_facture.move_id and f.move_type<>'entry'
+"""
+cr_src.execute(SQL)
+execute_values(cr_dst,"insert into account_move__account_payment (invoice_id,payment_id) values %s on conflict do nothing",
+    [(row['invoice_id'],row['payment_id']) for row in cr_src.fetchall()],page_size=5000)
+cnx_dst.commit()
+
+# Paiements « paid » => « reconciled » comme Odoo 20 (_compute_state) quand le compte d'attente n'est pas un compte de
+# trésorerie et que toutes les factures réglées par le paiement sont payées
+UpdateSansControle('account_payment',"""
+    update account_payment p set state='reconciled'
+    from account_journal j
+    where j.id=p.journal_id and p.state='paid'
+    and (select account_type from account_account a where a.id=coalesce(p.outstanding_account_id,j.default_account_id))<>'asset_cash'
+    and exists (select 1 from account_move__account_payment r where r.payment_id=p.id)
+    and not exists (select 1 from account_move__account_payment r join account_move f on f.id=r.invoice_id
+                    where r.payment_id=p.id and f.payment_state<>'paid')
+""")
+
+# Liens entre les lignes de commande et les lignes de factures (3 358)
+MigrationTable(db_src,db_dst,'sale_order_line_invoice_rel')
+
+# Devises : EUR = 1 en v14
+MigrationDevisesParCode(db_src,db_dst,['account_move','account_move_line','account_payment','account_partial_reconcile','account_full_reconcile'])
+
+# Documents Factur-X de la v14 (account_edi_document, 4 571, XML en pièces jointes sans res_model) : supprimés en v20,
+# non repris ; PDF des factures (4 574, avec le XML Factur-X intégré) : avec les pièces jointes (reprise 4)
 #******************************************************************************
 
 
