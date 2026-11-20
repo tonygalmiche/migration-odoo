@@ -269,6 +269,12 @@ MigrationIrPropertyJsonb(db_src,db_dst,'product.template','responsible_id')
 # Liste de prix des clients (35 partenaires, toutes sur cette liste) : propriété en v14, champ jsonb par société en v20
 MigrationTableJsonb(db_src,db_dst,'product_pricelist')
 MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_product_pricelist','specific_property_product_pricelist')
+# Fonctionnalité « Listes de prix » désactivée en v14 (product.group_product_pricelist non impliqué) : la v20 avertit à
+# l'ouverture des Paramètres (« Vous êtes sur le point de désactiver la fonctionnalité liste de prix… ») et archive les
+# listes actives à l'enregistrement => archivée ici, comme le ferait Odoo (sans règle : prix inchangés ; commandes et
+# clients la gardent) ; fonctionnalité laissée désactivée comme en v14 (décision de Tony du 20/11/2026)
+cr_dst.execute("update product_pricelist set active=false")
+cnx_dst.commit()
 
 # Prix fournisseurs (607, un seul fournisseur) : name => partner_id ; unité d'achat de l'article (uom_po_id, supprimé
 # en v20) => unité du prix fournisseur (obligatoire)
