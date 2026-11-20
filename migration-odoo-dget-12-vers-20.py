@@ -187,6 +187,9 @@ if depart<=1:
     # Paiement en ligne des factures : coché par défaut en v20 => décoché si aucun moyen de paiement n'était publié en v12
     # (v12 : seul « Wire Transfer » publié, réglage par défaut d'Odoo => coché)
     MigrationPaiementEnLigne(db_src,db_dst)
+    # Serveur en local, pas de portail ni de paiement en ligne => décoché (décision de Tony du 20/11/2026, comme ACPL)
+    cr_dst.execute("update ir_config_parameter set value='False' where key='account_payment.enable_portal_payment'")
+    cnx_dst.commit()
 
     # Couleur de l'entreprise (is_theme_entreprise : barre de menus, boutons, onglets) : aucune en v12 => vert du logo
     # DGET (#309275, choisi par Tony le 29/10/2026)
