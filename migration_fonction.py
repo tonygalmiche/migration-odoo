@@ -3009,7 +3009,7 @@ def MigrationMailAlias(db_src,db_dst,table):
         nom_complet = row['alias_name']
         if nom_complet and domaine_id:
             nom_complet = "%s@%s"%(nom_complet,domaines[domaine_id])
-        bounced = row['alias_bounced_content']
+        bounced = row.get('alias_bounced_content') # absent en v12
         if isinstance(bounced,(dict,list)):
             bounced = json.dumps(bounced)
         cr_dst.execute("""
