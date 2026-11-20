@@ -1188,3 +1188,9 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 #******************************************************************************
+
+
+# ** Champs v20 à valeur par défaut *******************************************
+# Déductibilité des lignes de pièces (100 %, sinon duplication d'une facture refusée) et bouton « Retour » des transferts
+ValeursParDefautV20(db_dst)
+#******************************************************************************

@@ -1078,3 +1078,9 @@ if depart<=10:
         """,[row['model'],row['champ_modele'],row['champ'],row['id']])
     cnx_dst.commit()
     #******************************************************************************
+
+
+# ** Champs v20 à valeur par défaut (à chaque lancement, quelle que soit l'étape) **
+# Déductibilité des lignes de pièces (100 %, sinon duplication d'une facture refusée) et bouton « Retour » des transferts
+ValeursParDefautV20(db_dst)
+#******************************************************************************

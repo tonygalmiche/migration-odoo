@@ -1439,5 +1439,11 @@ Reprise7()
 #******************************************************************************
 
 
+# ** Champs v20 à valeur par défaut *******************************************
+# Déductibilité des lignes de pièces (100 %, sinon duplication d'une facture refusée) et bouton « Retour » des transferts
+ValeursParDefautV20(db_dst)
+#******************************************************************************
+
+
 # Contrôle final (lecture seule) : clés étrangères qui ne pointent sur rien
 ControleOrphelins(db_dst)
