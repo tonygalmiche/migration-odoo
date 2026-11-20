@@ -925,7 +925,7 @@ if depart<=5:
     # seulement, store_fname conservé (copier_fichiers=False) ; ids de la v12 conservés (garder_ids), sauf collision avec
     # les pièces jointes techniques de la v20
     # PDF des factures (1 113, INV38FC150.pdf) : gardés par le rapport de la v12 à l'impression d'une facture validée,
-    # réimprimés tels quels ensuite ; ceux des factures supprimées (355) non repris. account.invoice => account.move
+    # réimprimés tels quels ensuite en v12 ; ceux des factures supprimées (355) non repris. account.invoice => account.move
     # (facture v20 = id de la facture v12)
     # Non repris : pièces jointes techniques (vues, menus, pays, moyens de paiement, discussions), avatars des contacts
     # (ci-dessous)
@@ -937,8 +937,9 @@ if depart<=5:
     cr_dst.execute("update ir_attachment set res_model='account.move' where res_model='account.invoice'")
     cnx_dst.commit()
 
-    # PDF officiel des factures et avoirs validés (pièce jointe du champ invoice_pdf_report_file) : réimprimé tel quel par
-    # la v20, comme le faisait la v12 (même méthode qu'ACPL) ; le plus récent si une facture en a plusieurs
+    # PDF officiel des factures et avoirs validés (pièce jointe du champ invoice_pdf_report_file, même méthode qu'ACPL) :
+    # utilisé tel quel par « Envoyer », le portail et l'aperçu ; « Imprimer » régénère la facture avec le rapport de la v20.
+    # Le plus récent si une facture en a plusieurs
     SQL="""
         update ir_attachment a set res_field='invoice_pdf_report_file'
         from account_move m
