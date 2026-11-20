@@ -186,7 +186,9 @@ if depart<=6:
         from res_company c join report_paperformat p on p.id=c.paperformat_id where c.id=1
     """)
     format_src = cr_src.fetchone()
-    cr_dst.execute("update report_paperformat set margin_top=%s, margin_bottom=%s, margin_left=%s, margin_right=%s, header_spacing=%s where id=%s",
+    # Marges CSS (css_margins, nouveau en v20, coché sur l'A4) désactivées : elles ajoutent 11 mm au-dessus de l'en-tête
+    # et sur les côtés, en plus des marges de la v14 (en-tête sur le texte des pages suivantes ; trouvé chez ACPL)
+    cr_dst.execute("update report_paperformat set margin_top=%s, margin_bottom=%s, margin_left=%s, margin_right=%s, header_spacing=%s, css_margins=false where id=%s",
         [format_src['margin_top'],format_src['margin_bottom'],format_src['margin_left'],format_src['margin_right'],format_src['header_spacing'],paperformat_id])
     cnx_dst.commit()
 
