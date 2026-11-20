@@ -166,7 +166,9 @@ cr_dst.execute("select res_id from ir_model_data where module='web' and name='ex
 layout_id = cr_dst.fetchone()['res_id']
 cr_dst.execute("select res_id from ir_model_data where module='base' and name='paperformat_euro'")
 paperformat_id = cr_dst.fetchone()['res_id']
-cr_dst.execute("update res_company set external_report_layout_id=%s, paperformat_id=%s where id=1",[layout_id,paperformat_id])
+# Tableaux « Gras » (report_tables_id bold, nouveau en v20 ; « Clair » par défaut, sans bordure entre les lignes) : un
+# trait entre chaque ligne comme en v14 (choix de Tony du 20/11/2026)
+cr_dst.execute("update res_company set external_report_layout_id=%s, paperformat_id=%s, report_tables_id='bold' where id=1",[layout_id,paperformat_id])
 cr_src.execute("""
     select p.margin_top,p.margin_bottom,p.margin_left,p.margin_right,p.header_spacing
     from res_company c join report_paperformat p on p.id=c.paperformat_id where c.id=1
