@@ -9,20 +9,28 @@ from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
 import hashlib
+import subprocess
 
 
 #** Paramètres ****************************************************************
 db_src = "acpl14"
 db_dst = "acpl20"
+filestore = "/media/sf_dev_odoo/home/odoo/filestore"   # filestore d'Odoo sur ubuntu2604 (data_dir de acpl20.conf)
 #******************************************************************************
 
 
-# ** Repartir d'une base vierge à chaque lancement ****************************
-# acpl20-vierge : base v20 avec is_acpl20 installé, sans données (à créer par Tony)
-# db_vierge = db_dst+'-vierge'
-# SQL='DROP DATABASE "'+db_dst+'";CREATE DATABASE "'+db_dst+'" WITH TEMPLATE "'+db_vierge+'"'
-# cde="""echo '"""+SQL+"""' | psql postgres"""
-# lines=os.popen(cde).readlines()
+# ** Repartir de la base vierge à chaque lancement ****************************
+# acpl20-vierge : base v20 avec is_acpl20 installé (18/10/2026, mis à jour le 20/11/2026), sans données ; aucune option
+# des Paramètres à cocher (§ 3 de la doc)
+# Ni acpl20 ni acpl20-vierge ne doivent être ouvertes (Odoo arrêté) : sinon DROP / CREATE refusés
+# Filestore : DROP DATABASE n'y touche pas => fichiers de la production copiés gardés ; fichiers de la base vierge
+# ajoutés (cp --update=none : seuls les fichiers absents sont copiés, rien n'est écrasé ni supprimé)
+db_vierge = db_dst+'-vierge'
+for SQL in ['DROP DATABASE IF EXISTS "%s"'%db_dst, 'CREATE DATABASE "%s" WITH TEMPLATE "%s"'%(db_dst,db_vierge)]:
+    if subprocess.run(['psql','-d','postgres','-c',SQL]).returncode:
+        sys.exit("Arrêt : %s refusé (Odoo arrêté ?)"%SQL)
+if subprocess.run(['cp','-r','--update=none','%s/%s/.'%(filestore,db_vierge),'%s/%s/'%(filestore,db_dst)]).returncode:
+    sys.exit("Arrêt : copie du filestore de %s refusée"%db_vierge)
 #******************************************************************************
 
 cnx_src,cr_src=GetCR(db_src)
