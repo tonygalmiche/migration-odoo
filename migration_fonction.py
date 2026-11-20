@@ -1396,6 +1396,24 @@ def InscriptionSurInvitation(db_dst):
     print("InscriptionSurInvitation : auth_signup.invitation_scope = b2b")
 
 
+def ValeursParDefautV20(db_dst):
+    """Champs ajoutés en v20 avec une valeur par défaut non vide, restés vides sur les lignes copiées d'une source plus
+    ancienne (pas de valeur par défaut en base : Odoo la donne seulement à la création). A appeler en fin de reprise :
+    - account_move_line.deductible_percentage (1 = 100 %) : vide = 0 % ; une facture ou un avoir client dupliqué est
+      alors refusé (« Seules les factures fournisseur permettent la déductibilité des produits/services »)
+    - stock_picking.show_return (vrai) : vide = bouton « Retour » masqué sur les transferts faits"""
+    cnx_dst,cr_dst=GetCR(db_dst)
+    for table,colonne,valeur in [
+        ('account_move_line','deductible_percentage','1'),
+        ('stock_picking'    ,'show_return'          ,'true'),
+    ]:
+        cr_dst.execute("select 1 from information_schema.columns where table_name=%s and column_name=%s",[table,colonne])
+        if cr_dst.fetchone():
+            cr_dst.execute("update "+table+" set "+colonne+"="+valeur+" where "+colonne+" is null")
+            print("ValeursParDefautV20 : %s.%s = %s : %s lignes"%(table,colonne,valeur,cr_dst.rowcount))
+    cnx_dst.commit()
+
+
 def MigrationPaiementEnLigne(db_src,db_dst):
     """Paiement en ligne des factures (Facturation / Paramètres, account_payment.enable_portal_payment) : créé à True par
     account_payment en v20. Valeur de la source si elle a ce paramètre (v17+), sinon décoché si la source n'avait aucun

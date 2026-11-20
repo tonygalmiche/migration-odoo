@@ -878,6 +878,12 @@ MigrationActivites(db_src,db_dst,['account.move','sale.order','stock.picking','r
 #******************************************************************************
 
 
+# ** Champs v20 à valeur par défaut ********************************************
+# Déductibilité des lignes de pièces (100 %, sinon duplication d'une facture refusée) et bouton « Retour » des transferts
+ValeursParDefautV20(db_dst)
+#******************************************************************************
+
+
 # ** Contrôle (lecture seule) **************************************************
 # Clés étrangères qui ne pointent sur rien (tables copiées sans contrôle des clés)
 ControleOrphelins(db_dst)
