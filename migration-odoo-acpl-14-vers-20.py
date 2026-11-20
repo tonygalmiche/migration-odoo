@@ -195,6 +195,10 @@ cnx_dst.commit()
 
 # Paiement en ligne des factures : coché par défaut en v20 => décoché si aucun moyen de paiement n'était activé en v14
 MigrationPaiementEnLigne(db_src,db_dst)
+# En v14, seul « Virement bancaire » était activé (réglage par défaut d'Odoo 14), d'où True ci-dessus ; aucun moyen de
+# paiement en v20 => décoché (décision de Tony du 20/11/2026)
+cr_dst.execute("update ir_config_parameter set value='False' where key='account_payment.enable_portal_payment'")
+cnx_dst.commit()
 
 # Comptes bancaires : aucun dans la source (IBAN écrit en dur sur la facture)
 #******************************************************************************
