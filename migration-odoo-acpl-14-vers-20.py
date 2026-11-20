@@ -115,6 +115,10 @@ MigrationResGroups(db_src,db_dst)
 # => les identifiants externes base pointent sur les ids de la source et l'ancien default perd ses groupes
 MigrationUtilisateursTechniques(db_src,db_dst)
 
+# Création des articles : en v14, droit des administrateurs Ventes, Stock, Comptabilité... ; en v20, seulement le
+# nouveau groupe « Produits : Créer » => donné aux utilisateurs qui avaient ce droit en v14
+MigrationCreationArticles(db_src,db_dst)
+
 # Utilisateur système __system__ : inactif, comme dans une base Odoo standard
 cr_dst.execute("update res_users set active=false where id=1")
 cnx_dst.commit()
@@ -171,7 +175,17 @@ SQL="""
 cr_dst.execute(SQL)
 cnx_dst.commit()
 
+# Paiement en ligne des factures : coché par défaut en v20 => décoché si aucun moyen de paiement n'était activé en v14
+MigrationPaiementEnLigne(db_src,db_dst)
+
 # Comptes bancaires : aucun dans la source (IBAN écrit en dur sur la facture)
+#******************************************************************************
+
+
+# ** Précisions décimales *****************************************************
+# Précisions de la v14 (2 par défaut en v20) ; avant les calculs qui lisent la précision « Product Unit »
+# (quantités des mouvements de stock)
+MigrationPrecisionsDecimales(db_src,db_dst)
 #******************************************************************************
 
 
