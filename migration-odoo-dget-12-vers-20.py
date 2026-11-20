@@ -1053,7 +1053,6 @@ if depart<=5:
         'allow_task_dependencies': False,
         'allow_milestones'       : False,
         'allow_recurring_tasks'  : False,
-        'allow_billable'         : False,
     })
     # Alias e-mail des projets (obligatoire) : ids de la v12 absents en v20 => recréés
     MigrationMailAlias(db_src,db_dst,'project_project')
