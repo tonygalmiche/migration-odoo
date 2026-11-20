@@ -7,18 +7,22 @@
 # Étape 2 : comptabilité (plan comptable, taxes, positions fiscales, journaux, propriétés)
 # Étape 3 : tables du module liées à la comptabilité (TVA DGET, contrats, lignes de contrats, heures)
 # Étape 4 : factures (account_invoice v12 => account_move), paiements, rapprochements
-# A faire ensuite : pièces jointes, chatter, filtres
+# Étape 5 : pièces jointes, filtres favoris, chatter
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
+import hashlib
 import re
+import subprocess
 
 
 #** Paramètres ****************************************************************
 db_src = "dget12"
 db_dst = "dget20"
+filestore = "/media/sf_dev_odoo/home/odoo/filestore"   # filestore d'Odoo sur ubuntu2604 (data_dir de dget20.conf)
 # Reprise relancée à partir de l'étape N : option --depart N (2 : comptabilité, 3 : tables du module liées à la
-# comptabilité) => dget20 gardée telle quelle, étapes précédentes sautées ; chaque étape vide et recopie ses tables
+# comptabilité, 4 : factures, 5 : pièces jointes, filtres, chatter) => dget20 gardée telle quelle, étapes précédentes
+# sautées ; chaque étape vide et recopie ses tables
 depart = int(sys.argv[sys.argv.index('--depart')+1]) if '--depart' in sys.argv else 1
 #******************************************************************************
 
@@ -27,11 +31,15 @@ depart = int(sys.argv[sys.argv.index('--depart')+1]) if '--depart' in sys.argv e
 # dget20-vierge : base v20 avec is_dget20 installé et le plan comptable fr_comp chargé (677 comptes, 48 taxes,
 # 7 journaux), sans données (créée par Tony le 29/10/2026)
 # Ni dget20 ni dget20-vierge ne doivent être ouvertes (Odoo arrêté ou sur une autre base) : sinon DROP / CREATE refusés
+# Filestore : DROP DATABASE n'y touche pas => fichiers de la production copiés par migration-odoo-dget-12-vers-20.sh
+# gardés ; fichiers de la base vierge ajoutés (cp --update=none : seuls les fichiers absents sont copiés)
 if depart==1:
     db_vierge = db_dst+'-vierge'
-    SQL='DROP DATABASE "'+db_dst+'";CREATE DATABASE "'+db_dst+'" WITH TEMPLATE "'+db_vierge+'"'
-    cde="""echo '"""+SQL+"""' | psql postgres"""
-    lines=os.popen(cde).readlines()
+    for SQL in ['DROP DATABASE IF EXISTS "%s"'%db_dst, 'CREATE DATABASE "%s" WITH TEMPLATE "%s"'%(db_dst,db_vierge)]:
+        if subprocess.run(['psql','-d','postgres','-c',SQL]).returncode:
+            sys.exit("Arrêt : %s refusé (Odoo arrêté ?)"%SQL)
+    if subprocess.run(['cp','-r','--update=none','%s/%s/.'%(filestore,db_vierge),'%s/%s/'%(filestore,db_dst)]).returncode:
+        sys.exit("Arrêt : copie du filestore de %s refusée"%db_vierge)
 #******************************************************************************
 
 cnx_src,cr_src=GetCR(db_src)
@@ -122,6 +130,10 @@ if depart<=1:
     # => les identifiants externes base pointent sur les ids de la source et l'ancien default perd ses groupes
     MigrationUtilisateursTechniques(db_src,db_dst)
 
+    # Création des articles : en v12, droit des administrateurs Ventes, Comptabilité... ; en v20, seulement le nouveau
+    # groupe « Produits : Créer » => donné aux utilisateurs qui avaient ce droit en v12
+    MigrationCreationArticles(db_src,db_dst)
+
     # Utilisateur système __system__ : inactif, comme dans une base Odoo standard
     cr_dst.execute("update res_users set active=false where id=1")
     cnx_dst.commit()
@@ -172,12 +184,22 @@ if depart<=1:
     # Inscription libre au portail fermée : sur invitation seulement
     InscriptionSurInvitation(db_dst)
 
+    # Paiement en ligne des factures : coché par défaut en v20 => décoché si aucun moyen de paiement n'était publié en v12
+    # (v12 : seul « Wire Transfer » publié, réglage par défaut d'Odoo => coché)
+    MigrationPaiementEnLigne(db_src,db_dst)
+
     # Couleur de l'entreprise (is_theme_entreprise : barre de menus, boutons, onglets) : aucune en v12 => vert du logo
     # DGET (#309275, choisi par Tony le 29/10/2026)
     cr_dst.execute("update res_company set is_theme_couleur='#309275', is_theme_eclaircissement=80")
     cnx_dst.commit()
 
     # Comptes bancaires : IBAN écrit en dur sur la facture v12
+    #******************************************************************************
+
+
+    # ** Précisions décimales *****************************************************
+    # Précisions de la v12 (2 par défaut en v20) : prix 4, quantités 6, conditions de paiement 6
+    MigrationPrecisionsDecimales(db_src,db_dst)
     #******************************************************************************
 
 
@@ -886,6 +908,127 @@ if depart<=4:
     if desequilibres:
         print("Pièces déséquilibrées : %s"%desequilibres)
     #******************************************************************************
+
+
+# ** Étape 5 : pièces jointes, filtres favoris, chatter ************************
+if depart<=5:
+
+    # ** Pièces jointes des factures ***********************************************
+    # Filestore de la production copié tel quel dans celui de dget20 par migration-odoo-dget-12-vers-20.sh => données
+    # seulement, store_fname conservé (copier_fichiers=False) ; ids de la v12 conservés (garder_ids), sauf collision avec
+    # les pièces jointes techniques de la v20
+    # PDF des factures (1 113, INV38FC150.pdf) : gardés par le rapport de la v12 à l'impression d'une facture validée,
+    # réimprimés tels quels ensuite ; ceux des factures supprimées (355) non repris. account.invoice => account.move
+    # (facture v20 = id de la facture v12)
+    # Non repris : pièces jointes techniques (vues, menus, pays, moyens de paiement, discussions), avatars des contacts
+    # (ci-dessous)
+    # Pièces jointes des factures déjà reprises supprimées avant la copie (relance avec --depart 5 : sinon en double)
+    cr_dst.execute("delete from ir_attachment where res_model in ('account.invoice','account.move')")
+    cnx_dst.commit()
+    ids_pj = MigrationPiecesJointes(db_src,db_dst,"res_model='account.invoice' and res_id in (select id from account_invoice)",
+        copier_fichiers=False,garder_ids=True)
+    cr_dst.execute("update ir_attachment set res_model='account.move' where res_model='account.invoice'")
+    cnx_dst.commit()
+
+    # PDF officiel des factures et avoirs validés (pièce jointe du champ invoice_pdf_report_file) : réimprimé tel quel par
+    # la v20, comme le faisait la v12 (même méthode qu'ACPL) ; le plus récent si une facture en a plusieurs
+    SQL="""
+        update ir_attachment a set res_field='invoice_pdf_report_file'
+        from account_move m
+        where a.res_model='account.move' and a.res_id=m.id and a.res_field is null and a.mimetype='application/pdf'
+        and m.move_type in ('out_invoice','out_refund') and m.state='posted'
+        and a.id=(select max(b.id) from ir_attachment b where b.res_model='account.move' and b.res_id=m.id
+                  and b.res_field is null and b.mimetype='application/pdf')
+    """
+    cr_dst.execute(SQL)
+    print("PDF des factures (invoice_pdf_report_file) : %s"%cr_dst.rowcount)
+    cnx_dst.commit()
+    #******************************************************************************
+
+
+    # ** Images des contacts et logo **********************************************
+    # v12 : une image générée pour chaque contact (7 885 avatars, 518 images différentes), recalculée par la v20 => non
+    # reprises. Seules les images propres à un contact (utilisées une seule fois : logo DGET de la société et 3 contacts)
+    # sont reprises, sauf celles d'OdooBot et de l'administrateur (images par défaut de la v12)
+    # image (v12) => image_1920, image_1024, image_512, image_256 ; image_medium (128 px) => image_128
+    # Logo de la société (res.company.logo) : image du contact de la société
+    SQL="""
+        select a.* from ir_attachment a
+        where a.res_model='res.partner' and a.res_field in ('image','image_medium')
+        and a.res_id not in (select res_id from ir_model_data where model='res.partner' and module='base' and name in ('partner_root','partner_admin'))
+        and a.res_id in (
+            select res_id from ir_attachment where res_model='res.partner' and res_field='image'
+            and checksum in (select checksum from ir_attachment where res_model='res.partner' and res_field='image' group by 1 having count(*)=1)
+        )
+        order by a.res_id, a.res_field
+    """
+    cr_src.execute(SQL)
+    images = cr_src.fetchall()
+    champs = [c for c in GetChampsCommuns(cr_src,cr_dst,'ir_attachment') if c not in ('id','res_field','name')]
+    champs_v20 = {'image':['image_1920','image_1024','image_512','image_256'], 'image_medium':['image_128']}
+    partenaires_images = sorted({row['res_id'] for row in images})
+    if partenaires_images:
+        cr_dst.execute("delete from ir_attachment where res_model='res.partner' and res_field like 'image\\_%%' and res_id = any(%s)",[partenaires_images])
+    for row in images:
+        for res_field in champs_v20[row['res_field']]:
+            SQL="insert into ir_attachment (res_field,name,"+','.join(champs)+") values (%s,%s,"+','.join(['%s']*len(champs))+")"
+            cr_dst.execute(SQL,[res_field,res_field]+[row[c] for c in champs])
+    cnx_dst.commit()
+    print("Images des contacts : %s contacts (%s)"%(len(partenaires_images),partenaires_images))
+
+    # Logo de l'application (logo_web : barre de navigation, page de connexion), calculé à partir du logo de la société à
+    # l'enregistrement de la société : colonne en base64 en v12, pièce jointe en v20 => logo de la v12 dans la pièce
+    # jointe de la v20 (contenu en base, db_datas : rien à écrire dans le filestore)
+    cr_src.execute("select logo_web from res_company where id=1")
+    logo = cr_src.fetchone()['logo_web']
+    if logo:
+        contenu = base64.b64decode(bytes(logo))
+        SQL="""
+            update ir_attachment set store_fname=null, db_datas=%s, file_size=%s, checksum=%s, mimetype='image/png'
+            where res_model='res.company' and res_field='logo_web' and res_id=1
+        """
+        cr_dst.execute(SQL,[psycopg2.Binary(contenu),len(contenu),hashlib.sha1(contenu).hexdigest()])
+        cnx_dst.commit()
+    #******************************************************************************
+
+
+    # ** Filtres favoris ***********************************************************
+    # Filtres des utilisateurs (30) ; actions retrouvées par identifiant externe (is_dget => is_dget20)
+    # Filtres des modules de la v12 (account, purchase, project : regroupements sur des champs supprimés depuis) non
+    # repris, ceux de la v20 gardés (standards=False)
+    MigrationIrFilters(db_src,db_dst,modules={'is_dget':'is_dget20'},standards=False)
+    # Factures : account.invoice => account.move (4 filtres : factures non payées, regroupements par date)
+    cr_dst.execute("update ir_filters set model_id='account.move' where model_id='account.invoice'")
+    # Contacts : case Client (customer, supprimée en v13) => is_client du module (4 filtres)
+    cr_dst.execute("""update ir_filters set domain=replace(domain,'("customer",','("is_client",') where model_id='res.partner'""")
+    # Lignes de contrats « en cours » : « % facturé » (facture) non stocké, condition ignorée par la recherche en v12 et
+    # refusée en v20 => retirée (même résultat qu'en v12)
+    SQL="""
+        update ir_filters set domain='[["facturable", "=", "oui"]]'
+        where model_id='is.dossier.contrat.detail' and domain='["&", ["facture", "!=", 100], ["facturable", "=", "oui"]]'
+    """
+    cr_dst.execute(SQL)
+    cnx_dst.commit()
+    #******************************************************************************
+
+
+    # ** Chatter *******************************************************************
+    # Abonnés, messages et activités des enregistrements créés pendant les essais dans dget20, supprimés par la relance
+    # (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet »)
+    SupprimerChatterOrphelin(db_dst)
+
+    # Messages et abonnés des factures (account.invoice => account.move, mêmes ids), paiements et contacts ; nouveaux ids
+    # de messages ; suivi des modifications ajouté au corps (format v20)
+    # Non repris : tâches et projets (project non installé en v20), discussions (mail.channel), notifications
+    # Aucune activité ni pièce jointe de message en v12
+    MigrationChatter(db_src,db_dst,['account.invoice','account.payment','res.partner'],renommer={'account.invoice':'account.move'})
+    #******************************************************************************
+
+
+# ** Champs v20 à valeur par défaut ********************************************
+# Déductibilité des lignes de pièces (100 %, sinon duplication d'une facture refusée)
+ValeursParDefautV20(db_dst)
+#******************************************************************************
 
 
 # ** Contrôle (lecture seule) **************************************************
