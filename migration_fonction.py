@@ -782,8 +782,8 @@ def TrackingValues2Html(valeurs):
     return '<div>'+'<br>'.join(lignes)+'</div>'
 
 
-def MigrationChatter(db_src,db_dst,models,types={}):
-    """Migration du chatter (messages et abonnés) des modèles donnés, d'une v14, v15 ou v16 vers une v19 ou v20 :
+def MigrationChatter(db_src,db_dst,models,types={},renommer={}):
+    """Migration du chatter (messages et abonnés) des modèles donnés, d'une v12 à v16 vers une v19 ou v20 :
     - les messages et abonnés existants de ces modèles dans la destination sont supprimés, puis ceux de la source
       sont insérés avec de nouveaux ids (parent_id recalculé)
     - sous-types (subtype_id) : correspondance par identifiant externe
@@ -791,6 +791,7 @@ def MigrationChatter(db_src,db_dst,models,types={}):
       externe ; types permet de remplacer un type supprimé (comme MigrationActivites) ; type sans équivalent => vide
     - suivi des modifications (mail_tracking_value) : ajouté au corps du message, comme le fait la v20
     - messages et abonnés d'enregistrements absents de la destination (supprimés dans la source) : non repris
+    - renommer : modèles renommés, avec les mêmes ids, ex : {'account.invoice': 'account.move'} (source v12)
     Les notifications ne sont pas reprises. Pièces jointes des messages (message_attachment_rel) : non reprises ici ;
     la fonction retourne la correspondance {id message source: id message destination} pour les recoller ensuite."""
     cnx_src,cr_src=GetCR(db_src)
@@ -808,25 +809,30 @@ def MigrationChatter(db_src,db_dst,models,types={}):
     # Suivi des modifications lu en une seule requête (une requête par message : trop long sur 100 000 messages)
     suivis={}
     if tracking:
+        # Ordre des lignes : track_sequence en v12, tracking_sequence à partir de la v13
+        sequence = 'tracking_sequence' if 'tracking_sequence' in GetChamps(cr_src,'mail_tracking_value') else 'track_sequence'
         SQL="""
             select t.* from mail_tracking_value t join mail_message m on m.id=t.mail_message_id
-            where m.model in %s order by t.mail_message_id, t.tracking_sequence, t.id
+            where m.model in %s order by t.mail_message_id, t."""+sequence+""", t.id
         """
         cr_src.execute(SQL,[tuple(models)])
         for t in cr_src.fetchall():
             suivis.setdefault(t['mail_message_id'],[]).append(t)
     # Enregistrements de la destination : messages et abonnés d'enregistrements supprimés dans la source (chatter
     # orphelin, ex : 919 « Variante d'article créé » chez Jurabotec) non repris
+    models_dst = tuple(renommer.get(model,model) for model in models)
     existants={}
     for model in models:
-        cr_dst.execute("select id from "+model.replace('.','_'))
+        cr_dst.execute("select id from "+renommer.get(model,model).replace('.','_'))
         existants[model] = {row['id'] for row in cr_dst.fetchall()}
-    cr_dst.execute("delete from mail_message where model in %s",[tuple(models)])
+    cr_dst.execute("delete from mail_message where model in %s",[models_dst])
     cr_src.execute("select * from mail_message where model in %s order by id",[tuple(models)])
     rows = cr_src.fetchall()
     nb_orphelins = len(rows)
     rows = [row for row in rows if row['res_id'] in existants[row['model']]]
     nb_orphelins -= len(rows)
+    for row in rows:
+        row['model'] = renommer.get(row['model'],row['model'])
     # Nouveaux ids réservés d'avance par la séquence : insertion par lots, sans un aller-retour par message
     cr_dst.execute("select nextval('mail_message_id_seq') as id from generate_series(1,%s)",[len(rows)])
     ids = {row['id']: new['id'] for row,new in zip(rows,cr_dst.fetchall())}
@@ -855,7 +861,7 @@ def MigrationChatter(db_src,db_dst,models,types={}):
     subtypes_followers={}
     for rel in cr_src.fetchall():
         subtypes_followers.setdefault(rel['mail_followers_id'],[]).append(rel['mail_message_subtype_id'])
-    cr_dst.execute("delete from mail_followers where res_model in %s",[tuple(models)])
+    cr_dst.execute("delete from mail_followers where res_model in %s",[models_dst])
     cr_src.execute("select * from mail_followers where res_model in %s and partner_id is not null order by id",[tuple(models)])
     rows = cr_src.fetchall()
     nb_followers_orphelins = len(rows)
@@ -866,7 +872,7 @@ def MigrationChatter(db_src,db_dst,models,types={}):
     followers=[]
     rels=[]
     for row in rows:
-        followers.append((ids_followers[row['id']],row['res_model'],row['res_id'],row['partner_id']))
+        followers.append((ids_followers[row['id']],renommer.get(row['res_model'],row['res_model']),row['res_id'],row['partner_id']))
         for subtype_src in subtypes_followers.get(row['id'],[]):
             subtype_id = subtypes.get(subtype_src)
             if subtype_id:
@@ -977,7 +983,7 @@ def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/shar
     return ids
 
 
-def MigrationIrFilters(db_src,db_dst,modules={},actions={}):
+def MigrationIrFilters(db_src,db_dst,modules={},actions={},standards=True):
     """Migration des filtres favoris (ir_filters), copiés avec les ids de la source :
     - action_id : l'id des actions change d'une version à l'autre => on retrouve l'action de la base destination
       par son identifiant externe (ir_model_data). modules permet de gérer les modules renommés
@@ -990,6 +996,8 @@ def MigrationIrFilters(db_src,db_dst,modules={},actions={}):
       écrasé au prochain -u du module ; identifiants communs repointés sur l'id de la source
     - utilisateur : correspondance par login. À partir d'Odoo 19, user_id est remplacé par la table
       de liaison ir_filters_res_users_rel (sans cette reprise, les filtres personnels deviennent partagés)
+    - standards=False : filtres des modules (avec un identifiant externe dans la source) non repris, ceux de la
+      destination gardés tels quels (source v12 : regroupements et domaines sur des champs supprimés depuis)
     """
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
@@ -997,13 +1005,17 @@ def MigrationIrFilters(db_src,db_dst,modules={},actions={}):
     # ** Filtres des modules de la destination absents de la source ***********
     cr_src.execute("select module, name, res_id from ir_model_data where model='ir.filters'")
     xmlids_src = {(r['module'],r['name']):r['res_id'] for r in cr_src.fetchall()}
+    where = ""
+    if not standards:
+        where = "id not in (select res_id from ir_model_data where model='ir.filters')"
+        xmlids_src = {}
     cr_dst.execute("""
         select d.id as data_id, d.module as data_module, d.name as data_name, f.*
         from ir_model_data d join ir_filters f on f.id=d.res_id
         where d.model='ir.filters' order by f.id
     """)
     a_recreer = [r for r in cr_dst.fetchall() if (r['data_module'],r['data_name']) not in xmlids_src]
-    MigrationTable(db_src,db_dst,'ir_filters')
+    MigrationTable(db_src,db_dst,'ir_filters',where=where)
     cr_dst.execute("select coalesce(max(id),0) as id from ir_filters")
     nouvel_id = cr_dst.fetchone()['id']
     for r in a_recreer:
@@ -1417,7 +1429,8 @@ def ValeursParDefautV20(db_dst):
 def MigrationPaiementEnLigne(db_src,db_dst):
     """Paiement en ligne des factures (Facturation / Paramètres, account_payment.enable_portal_payment) : créé à True par
     account_payment en v20. Valeur de la source si elle a ce paramètre (v17+), sinon décoché si la source n'avait aucun
-    moyen de paiement activé (payment_acquirer jusqu'en v15, payment_provider en v16). A appeler dans chaque script."""
+    moyen de paiement activé (payment_acquirer jusqu'en v15, payment_provider en v16 ; v12 : pas de colonne state,
+    moyen activé = publié, website_published). A appeler dans chaque script."""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     cr_src.execute("select value from ir_config_parameter where key='account_payment.enable_portal_payment'")
@@ -1429,7 +1442,8 @@ def MigrationPaiementEnLigne(db_src,db_dst):
         for table in ['payment_provider','payment_acquirer']:
             cr_src.execute("select to_regclass(%s) is not null existe",[table])
             if cr_src.fetchone()['existe']:
-                cr_src.execute("select count(*) nb from "+table+" where state in ('enabled','test')")
+                actif = "state in ('enabled','test')" if 'state' in GetChamps(cr_src,table) else "website_published"
+                cr_src.execute("select count(*) nb from "+table+" where "+actif)
                 actifs += cr_src.fetchone()['nb']
         valeur = 'True' if actifs else 'False'
     cr_dst.execute("update ir_config_parameter set value=%s where key='account_payment.enable_portal_payment'",[valeur])
