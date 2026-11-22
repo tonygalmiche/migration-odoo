@@ -893,7 +893,8 @@ def MigrationActivites(db_src,db_dst,models,types={}):
       ex : {'sale.mail_act_sale_upsell': 'mail.mail_activity_data_todo'} (vente incitative en v20)
     - modèle (res_model_id) : retrouvé par son nom (ids de ir_model différents)
     - colonnes communes aux 2 bases, sauf les liens vers des tables aux ids différents (types précédent et recommandé,
-      événement du calendrier) ; active (nouveau en v17) à vrai"""
+      événement du calendrier) ; active (nouveau en v17) à vrai
+    Retourne la correspondance {id activité source: id activité destination} (tables de relation des activités)."""
     cnx_src,cr_src=GetCR(db_src)
     cnx_dst,cr_dst=GetCR(db_dst)
     cr_dst.execute("select d.module||'.'||d.name as xmlid, d.res_id from ir_model_data d where d.model='mail.activity.type'")
@@ -910,18 +911,19 @@ def MigrationActivites(db_src,db_dst,models,types={}):
         where a.res_model in %s order by a.id
     """
     cr_src.execute(SQL,[tuple(models)])
-    nb=0
+    ids={}
     for row in cr_src.fetchall():
         vals = {c: row[c] for c in champs}
         vals['activity_type_id'] = types_dst.get(types.get(row['xmlid'],row['xmlid']))
         vals['res_model_id']     = models_dst[row['res_model']]
         if active:
             vals['active'] = True
-        SQL="insert into mail_activity ("+','.join(vals)+") values ("+','.join(['%s']*len(vals))+")"
+        SQL="insert into mail_activity ("+','.join(vals)+") values ("+','.join(['%s']*len(vals))+") returning id"
         cr_dst.execute(SQL,list(vals.values()))
-        nb+=1
+        ids[row['id']] = cr_dst.fetchone()['id']
     cnx_dst.commit()
-    print("MigrationActivites : %s activités reprises"%nb)
+    print("MigrationActivites : %s activités reprises"%len(ids))
+    return ids
 
 
 def MigrationPiecesJointes(db_src,db_dst,where,filestore="/home/odoo/.local/share/Odoo/filestore",copier_fichiers=True,garder_ids=False):
@@ -2135,16 +2137,19 @@ def RattacherPiecesJointes(db_dst,relations):
     ajoutées sur un enregistrement pas encore sauvegardé, elles sont créées sans res_id, et Odoo ne les montre alors qu'à
     leur créateur (d'où des surcharges d'ir.attachment.check() qui retirent ce contrôle : faille). Une fois rattachées,
     les droits standard s'appliquent (lisible si l'enregistrement l'est). Voir migration-vers-odoo20.md § 2.3.
-    relations : liste de (table de relation, colonne de l'enregistrement, modèle), ex :
-        [('sale_order_piece_jointe_attachment_rel','order_id','sale.order')]
-    La colonne de la pièce jointe dans la table de relation doit s'appeler attachment_id.
+    relations : liste de (table de relation, colonne de l'enregistrement, modèle[, colonne de la pièce jointe]), ex :
+        [('sale_order_piece_jointe_attachment_rel','order_id','sale.order'),
+         ('product_is_fiche_technique_rel','product_id','product.template','file_id')]
+    Colonne de la pièce jointe dans la table de relation : attachment_id si elle n'est pas donnée.
     Seules les pièces jointes sans res_id sont modifiées."""
     cnx_dst,cr_dst=GetCR(db_dst)
-    for table,colonne,modele in relations:
+    for relation in relations:
+        table,colonne,modele = relation[:3]
+        colonne_pj = relation[3] if len(relation)>3 else 'attachment_id'
         SQL="""
             update ir_attachment a set res_model=%s, res_id=r."""+colonne+"""
             from """+table+""" r
-            where a.id=r.attachment_id and coalesce(a.res_id,0)=0
+            where a.id=r."""+colonne_pj+""" and coalesce(a.res_id,0)=0
         """
         cr_dst.execute(SQL,[modele])
         print("RattacherPiecesJointes : %s : %s pièces jointes rattachées à %s"%(table,cr_dst.rowcount,modele))

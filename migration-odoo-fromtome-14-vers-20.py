@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 # Reprise des données de Fromtome : Odoo 14 (is_fromtome14) => Odoo 20 (is_fromtome20)
 # Documentation : Documentation/migration-odoo/migration-is_fromtome14-vers-is_fromtome20.md (§ 6 et § 7)
-# Fait (étapes 1 à 10 de la reprise) : contacts, utilisateurs, société, paramétrage is_*, unités, articles, stock, ventes,
+# Étapes 1 à 12 de la reprise : contacts, utilisateurs, société, paramétrage is_*, unités, articles, stock, ventes,
 # achats, comptabilité (paramètres, pièces, lettrages, paiements, exports compta), tables du module, serveurs de mail,
-# prompts IA
-# A faire ensuite : pièces jointes, chatter
+# prompts IA, pièces jointes, filtres favoris, chatter et activités
+# Filestore de la production à copier tel quel dans celui de fromtome20 avant de lancer le script (étape 11)
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
+import hashlib
 import re
 
 
@@ -16,7 +17,7 @@ import re
 db_src = "fromtome14"
 db_dst = "fromtome20"
 # Reprise relancée à partir de l'étape N après un arrêt : option --depart N (7 : comptabilité, 8 : tables du module,
-# 9 : serveurs de mail, 10 : prompts IA)
+# 9 : serveurs de mail, 10 : prompts IA, 11 : pièces jointes, filtres, chatter et activités)
 # => fromtome20 gardée telle quelle (pas recréée), étapes précédentes sautées ; chaque étape vide et recopie ses tables,
 # elle peut être relancée si les étapes précédentes sont allées au bout. Si la base est abîmée : sans l'option, reprise
 # complète à partir de fromtome20-vierge
@@ -1178,7 +1179,173 @@ if depart<=10:
     #******************************************************************************
 
 
+# ** Étapes 11 et 12 : pièces jointes, filtres, chatter, activités ************
+# Ensemble : le chatter et les activités ont besoin de la correspondance des ids des pièces jointes
+if depart<=11:
+
+    # ** Pièces jointes (étape 11) ************************************************
+    Etape("Étape 11 : pièces jointes")
+    # Méthode ACPL et Jurabotec : filestore de la production copié tel quel dans celui de fromtome20 => données seulement,
+    # store_fname conservé (copier_fichiers=False) ; ids de la v14 conservés (garder_ids), sauf collision avec les pièces
+    # jointes techniques de la v20 (ids remplacés ensuite partout)
+    # Repris : factures, transferts, achats, ventes (dont imports Excel), articles (fichiers, fiches techniques, images en
+    # 5 tailles), partenaires (fichiers, images), pièces jointes des messages des partenaires (mail.message, sans res_id),
+    # activités, enseignes, modèles de commande, exports compta, FNC, import Le Cellier, imports Excel de la société,
+    # employés (images, employés repris à l'étape 8), pièces jointes des modèles de mail (étape 8)
+    # Non repris : XML Factur-X des documents EDI (sans modèle, déjà dans les PDF), styles .scss, ordres de paiement et DEB
+    # (OCA, 2e temps), discussions, pièces jointes techniques (vues, menus, icônes de paiement, favicon), assistants
+    modeles = (
+        'account.move','stock.picking','purchase.order','sale.order','product.template','res.partner','hr.employee',
+        'is.modele.commande','is.enseigne.commerciale','is.export.compta','is.fnc','is.import.le.cellier',
+        'mail.message','mail.activity',
+    )
+    # Pièces jointes déjà reprises (relance) et images par défaut de la v20 supprimées avant la copie ; pièces jointes
+    # rattachées par une relance précédente (société, modèles de mail) comprises
+    cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles])
+    cr_dst.execute("delete from ir_attachment where res_model in ('res.company','mail.template') and res_field is null")
+    cnx_dst.commit()
+    where = """
+        (
+            res_model in %s
+            and coalesce(res_field,'') in ('','image_1920','image_1024','image_512','image_256','image_128')
+        )
+        or (res_model='res.company' and res_field is null)
+        or id in (select attachment_id from email_template_attachment_rel)
+    """%str(modeles)
+    ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False,garder_ids=True)
+
+    # Ids qui ont changé (collision avec les pièces jointes techniques de la v20) : remplacés partout (tables de relation
+    # du module, modèles de mail, pièce jointe principale des factures copiée à l'étape 7)
+    RemplacerIdsPiecesJointes(db_dst,ids_pj)
+
+    # Pièces jointes des champs Many2many sans res_id (ajoutées sur un enregistrement pas encore enregistré) : visibles
+    # par leur seul créateur en v20 => rattachées à leur enregistrement (migration-vers-odoo20.md § 2.3) ; une pièce jointe
+    # liée à plusieurs enregistrements (fiches techniques : 1 039 liens, 990 pièces jointes) est rattachée à l'un d'eux
+    # Activités : avec leurs nouveaux ids (étape 12)
+    RattacherPiecesJointes(db_dst,[
+        ('product_is_fiche_technique_rel'             ,'product_id' ,'product.template'       ,'file_id'),
+        ('sale_order_is_import_excel_ids_rel'         ,'order_id'   ,'sale.order'),
+        ('res_company_is_import_excel_ids_rel'        ,'company_id' ,'res.company'),
+        ('is_enseigne_commerciale_modele_commande_rel','enseigne_id','is.enseigne.commerciale','file_id'),
+        ('is_modele_commande_modele_commande_rel'     ,'enseigne_id','is.modele.commande'     ,'file_id'),
+        ('is_import_le_cellier_attachment_rel'        ,'doc_id'     ,'is.import.le.cellier'   ,'file_id'),
+        ('is_export_compta_attachment_rel'            ,'doc_id'     ,'is.export.compta'       ,'file_id'),
+        ('email_template_attachment_rel'              ,'email_template_id','mail.template'    ,'attachment_id'),
+    ])
+
+    # PDF Factur-X des factures et avoirs clients validés : en v14, gardés par le rapport et pièce jointe principale de la
+    # facture ; en v20, PDF officiel = pièce jointe du champ invoice_pdf_report_file (envoi, portail, téléchargement : pas
+    # régénéré). Retrouvés par la pièce jointe principale (méthode ACPL) et non par le nom : les 29 avoirs suffixés -AV
+    # ont le PDF de même nom qu'une facture
+    SQL="""
+        update ir_attachment a set res_field='invoice_pdf_report_file'
+        from account_move m
+        where a.id=m.message_main_attachment_id and a.res_model='account.move' and a.res_id=m.id and a.res_field is null
+        and a.mimetype='application/pdf' and m.move_type in ('out_invoice','out_refund') and m.state='posted'
+    """
+    cr_dst.execute(SQL)
+    print("PDF des factures (invoice_pdf_report_file) : %s"%cr_dst.rowcount)
+    cnx_dst.commit()
+
+    # Logo de l'application (logo_web : barre de navigation, page de connexion) : colonne en base64 en v14, pièce jointe
+    # en v20 => logo de la v14 dans la pièce jointe de la v20 (contenu en base, db_datas : rien à écrire dans le filestore)
+    cr_src.execute("select logo_web from res_company where id=1")
+    logo = cr_src.fetchone()['logo_web']
+    if logo:
+        contenu = base64.b64decode(bytes(logo))
+        SQL="""
+            update ir_attachment set store_fname=null, db_datas=%s, file_size=%s, checksum=%s, mimetype='image/png'
+            where res_model='res.company' and res_field='logo_web' and res_id=1
+        """
+        cr_dst.execute(SQL,[psycopg2.Binary(contenu),len(contenu),hashlib.sha1(contenu).hexdigest()])
+        cnx_dst.commit()
+    #******************************************************************************
+
+
+    # ** Filtres favoris (étape 12) ***********************************************
+    Etape("Étape 12 : filtres favoris")
+    # Actions retrouvées par identifiant externe ; is_fromtome14 => is_fromtome20 ; filtre sans action retrouvée : pour
+    # tous les menus du modèle, plus par défaut (voir MigrationIrFilters)
+    MigrationIrFilters(db_src,db_dst,modules={'is_fromtome14':'is_fromtome20'})
+    # Lots : stock.production.lot => stock.lot (1 filtre) ; rebuts (stock.scrap, supprimé en v20 : rebuts sur les
+    # mouvements, is_scrap) : filtre supprimé
+    cr_dst.execute("update ir_filters set model_id='stock.lot' where model_id='stock.production.lot'")
+    cr_dst.execute("delete from ir_filters where model_id='stock.scrap'")
+    cnx_dst.commit()
+    #******************************************************************************
+
+
+    # ** Chatter et activités (étape 12) ******************************************
+    Etape("Étape 12 : chatter et activités")
+    # Abonnés, messages et activités des enregistrements créés pendant les essais dans fromtome20, supprimés par la relance
+    # (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet »)
+    SupprimerChatterOrphelin(db_dst)
+
+    # Messages et abonnés des modèles repris avec les ids de la v14 (1 328 242 messages en v14) ; nouveaux ids de messages ;
+    # suivi des modifications ajouté au corps (format v20) ; un modèle à la fois (mémoire : 608 070 suivis en v14)
+    # stock.production.lot => stock.lot (mêmes ids)
+    # Non repris : rebuts (stock.scrap : rebuts devenus des mouvements, autres ids) et inventaires (stock.inventory, non
+    # repris), ordres de paiement et DEB (OCA, 2e temps), recherches générales, discussions (mail.channel), mails sans
+    # modèle, notifications
+    ids_messages = {}
+    for model in [
+        'stock.picking',
+        'purchase.order',
+        'account.move',
+        'sale.order',
+        'stock.production.lot',
+        'product.template',
+        'product.product',
+        'account.payment',
+        'res.partner',
+        'res.company',
+        'crm.team',
+        'account.journal',
+        'hr.employee',
+        'hr.job',
+        'hr.department',
+        'is.calcul.des.besoins',
+        'is.fnc',
+        'is.analyse.marge.lot',
+        'is.promo.client',
+    ]:
+        print("Chatter : %s"%model)
+        ids_messages.update(MigrationChatter(db_src,db_dst,[model],renommer={'stock.production.lot':'stock.lot'}))
+
+    # Pièces jointes des messages (factures et commandes envoyées par mail, mails aux partenaires...) : reprises plus haut
+    cr_src.execute("select message_id,attachment_id from message_attachment_rel")
+    execute_values(cr_dst,"insert into message_attachment_rel (message_id,attachment_id) values %s on conflict do nothing",
+        [(ids_messages[row['message_id']],ids_pj[row['attachment_id']]) for row in cr_src.fetchall()
+         if row['message_id'] in ids_messages and row['attachment_id'] in ids_pj],page_size=5000)
+    cnx_dst.commit()
+
+    # Activités (17 096 en v14, dont 12 890 « Exception », surtout sur les transferts) ; sale.mail_act_sale_upsell (2 activités),
+    # supprimé en v20 => « À faire »
+    ids_activites = MigrationActivites(db_src,db_dst,
+        ['account.move','is.fnc','product.product','product.template','purchase.order','res.partner','sale.order','stock.picking'],
+        types={'sale.mail_act_sale_upsell':'mail.mail_activity_data_todo'})
+
+    # Pièces jointes des activités (champ is_attachment_ids du module, 623 liens) : nouveaux ids des activités, pièces
+    # jointes rattachées à leur activité (sans res_id en v14)
+    cr_dst.execute("delete from mail_activity_is_attachment_ids_rel")
+    cr_src.execute("select activity_id,file_id from mail_activity_is_attachment_ids_rel")
+    execute_values(cr_dst,"insert into mail_activity_is_attachment_ids_rel (activity_id,file_id) values %s on conflict do nothing",
+        [(ids_activites[row['activity_id']],ids_pj[row['file_id']]) for row in cr_src.fetchall()
+         if row['activity_id'] in ids_activites and row['file_id'] in ids_pj])
+    cnx_dst.commit()
+    RattacherPiecesJointes(db_dst,[('mail_activity_is_attachment_ids_rel','activity_id','mail.activity','file_id')])
+
+    # Tableaux de bord personnels (board, 99 vues dans ir_ui_view_custom) : non repris, à décider (DGET : non repris)
+    #******************************************************************************
+
+
 # ** Champs v20 à valeur par défaut (à chaque lancement, quelle que soit l'étape) **
 # Déductibilité des lignes de pièces (100 %, sinon duplication d'une facture refusée) et bouton « Retour » des transferts
 ValeursParDefautV20(db_dst)
+#******************************************************************************
+
+
+# ** Contrôle (lecture seule) **************************************************
+# Clés étrangères qui ne pointent sur rien (tables copiées sans contrôle des clés)
+ControleOrphelins(db_dst)
 #******************************************************************************
