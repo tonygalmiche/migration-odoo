@@ -71,7 +71,7 @@ def ThemeEntreprise():
 
 
 # ** res_partner et res_users *************************************************
-Etape("Partenaires, utilisateurs, groupes")
+Etape("Partenaires, utilisateurs, groupes (1 s)")
 # Copiés avec les ids de la source (2 106 partenaires, 28 utilisateurs dans fromtome14)
 # mobile et is_company (case « Société ») : recréés tels quels par is_fromtome20 => colonnes communes, copiées
 # title (civilité, 204 partenaires) : supprimé d'Odoo en v20, non repris
@@ -137,7 +137,7 @@ cnx_dst.commit()
 
 
 # ** res_company **************************************************************
-Etape("Société, mise en page, comptes bancaires")
+Etape("Société, mise en page, comptes bancaires (1 s)")
 # Champs simples (nom, e-mail, téléphone, champs is_* : coefficients et ports des prix, GLN, configuration IA...)
 # Les liens vers d'autres tables (comptes, journaux, taxes, mise en page...) ont des ids différents : non repris ici
 cr_dst.execute("select column_name from information_schema.columns where table_name='res_company' and column_name like '%%\\_id' and column_name<>'currency_id'")
@@ -218,7 +218,7 @@ cnx_dst.commit()
 
 
 # ** Tables de paramétrage is_* ************************************************
-Etape("Tables de paramétrage is_*")
+Etape("Tables de paramétrage is_* (1 s)")
 # Mêmes colonnes en v14 et en v20 : copiées avec les ids de la source
 # Liens vers les partenaires (enseigne, transporteur) : repris ci-dessus ; entrepôt de l'enseigne : configuration du
 # stock reprise avec les ids de la source (plus bas) ; modèles de commande de l'enseigne : pièces jointes reprises avec
@@ -251,14 +251,14 @@ for table in tables:
 
 
 # ** Unités de mesure **********************************************************
-Etape("Unités de mesure")
+Etape("Unités de mesure (1 s)")
 # Copiées avec les ids de la v14 (23 unités) ; noms traduits par ir_translation ; voir MigrationUnites
 MigrationUnites(db_src,db_dst)
 #******************************************************************************
 
 
 # ** Articles ******************************************************************
-Etape("Articles, listes de prix, prix fournisseurs")
+Etape("Articles, listes de prix, prix fournisseurs (25 s)")
 # Catégories (23) : nom texte en v14, traduisible en v20 ; comptes des catégories : repris avec la comptabilité
 MigrationTableJsonb(db_src,db_dst,'product_category')
 parent_store_compute(cr_dst,cnx_dst,'product_category','parent_id')
@@ -362,7 +362,7 @@ MigrationIrModelData(db_src,db_dst,['product.category','product.pricelist'],corr
 
 
 # ** Équipes commerciales ******************************************************
-Etape("Équipes commerciales")
+Etape("Équipes commerciales (1 s)")
 # 4 équipes (Sales, et Website, Point of Sale, eBay archivées) : nom texte en v14, traduisible en v20
 # Membres : sale_team_id de l'utilisateur en v14 (1 utilisateur) => crm_team_member en v20
 MigrationTableJsonb(db_src,db_dst,'crm_team')
@@ -376,7 +376,7 @@ MigrationIrModelData(db_src,db_dst,['crm.team'])
 
 
 # ** Conditions de paiement ****************************************************
-Etape("Conditions de paiement")
+Etape("Conditions de paiement (1 s)")
 # 14 conditions copiées avec les ids de la v14 ; nom et note : texte en v14, traduisibles en v20
 # Échéances (format v14 : days + option) => delay_type et nb_days de la v20 :
 # - day_after_invoice_date : N jours après la date de facture => days_after, N
@@ -427,7 +427,7 @@ MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_supplier_payment_
 
 
 # ** Configuration du stock ****************************************************
-Etape("Configuration du stock")
+Etape("Configuration du stock (1 s)")
 # Entrepôts FT (1) et LC (2), emplacements, types d'opérations, routes, règles : copiés avec les ids de la v14 ;
 # correspondance par rôle avec ceux créés par la v20 (voir MigrationConfigurationStock)
 MigrationConfigurationStock(db_src,db_dst)
@@ -461,7 +461,7 @@ MigrationTable(db_src,db_dst,'stock_warehouse_orderpoint',rename={'qty_to_order'
 
 
 # ** Lots, colis et quants *****************************************************
-Etape("Lots, colis, quants")
+Etape("Lots, colis, quants (7 s)")
 # Lots (88 806, tous avec DLC/DDM) : stock_production_lot => stock_lot ; product_uom_id supprimé en v20
 MigrationTable(db_src,db_dst,'stock_production_lot','stock_lot')
 
@@ -490,7 +490,7 @@ cnx_dst.commit()
 
 
 # ** Ventes ********************************************************************
-Etape("Ventes")
+Etape("Ventes (45 s)")
 # Commandes (20 004 : 17 807 confirmées, 2 185 annulées, 12 devis ; aucune « done ») ; procurement_group_id =>
 # références de stock (MigrationReferencesStock, plus bas) ; document_tax_mode : obligatoire en v20, réglage de la
 # société (hors taxe) ; payment_mode_id (OCA) non repris au 1er temps
@@ -513,7 +513,7 @@ MigrationDevisesParCode(db_src,db_dst,['sale_order','sale_order_line'])
 
 
 # ** Achats ********************************************************************
-Etape("Achats")
+Etape("Achats (25 s)")
 # Commandes (22 092 : 13 551 confirmées, 8 530 annulées, 9 terminées, 2 brouillons) : notes => note ;
 # document_tax_mode obligatoire en v20 (hors taxe) ; état « done » supprimé en v20 => « purchase » verrouillée
 # group_id => références de stock ; payment_mode_id, supplier_partner_bank_id (OCA) non repris au 1er temps
@@ -539,7 +539,7 @@ MigrationDevisesParCode(db_src,db_dst,['purchase_order','purchase_order_line'])
 
 
 # ** Transferts, mouvements et rebuts ******************************************
-Etape("Transferts, mouvements, rebuts, références de stock")
+Etape("Transferts, mouvements, rebuts, références de stock (~3 min)")
 # Transferts (41 612), mouvements (415 161) et lignes (819 591) ; rebuts : scrapped => is_scrap (666 rebuts,
 # stock.scrap supprimé en v20) ; description_picking => description_picking_manual ; voir MigrationTransfertsStock
 # Inventaires (31, stock.inventory supprimé depuis la v15) : en-têtes et lignes non repris (décision du 25/10/2026),
@@ -555,7 +555,7 @@ MigrationReferencesStock(db_src,db_dst)
 
 
 # ** Séquences *****************************************************************
-Etape("Séquences")
+Etape("Séquences (~1 s)")
 # Commandes de vente (CC) et d'achat (CF) ; les transferts ont la séquence de leur type d'opération, recalée par
 # MigrationConfigurationStock
 for code in ['sale.order','purchase.order']:
@@ -568,7 +568,7 @@ for code in ['sale.order','purchase.order']:
 
 
 # ** Paramètres comptables *****************************************************
-Etape("Paramètres comptables (comptes, taxes, positions fiscales, journaux)")
+Etape("Paramètres comptables : comptes, taxes, positions fiscales, journaux (~20 s)")
 # Plan comptable (1 495 comptes, dont un compte client 411xxx par client), groupes de taxes (12), taxes (55), positions
 # fiscales (9) et journaux (12) de la v14 copiés avec leurs ids à la place de ceux du plan fr_comp de la v20 (chargé
 # dans fromtome20-vierge le 26/10/2026 : 677 comptes, 48 taxes, 10 positions, 7 journaux) ; colonnes ajoutées par la
@@ -815,7 +815,7 @@ cnx_dst.commit()
 
 
 # ** Pièces comptables *********************************************************
-Etape("Pièces, lettrages, paiements")
+Etape("Pièces, lettrages, paiements (~3 min)")
 # 45 817 pièces (17 402 factures, 1 517 avoirs, 11 274 factures et 615 avoirs fournisseurs, 15 009 écritures dont les
 # pièces des paiements), 393 701 lignes
 # v14 : aucune pièce « à vérifier », aucune comptabilisation automatique, aucun hachage, aucun litige (blocked), pas de
@@ -971,12 +971,12 @@ for table in ['is_export_compta','is_export_compta_ligne','is_export_compta_atta
 
 
 # ** Tables du module **********************************************************
-Etape("Employés")
+Etape("Employés (~2 s)")
 # 76 employés (16 actifs) : suivi du temps (is_suivi_temps.employe_id, 69 employés) et transferts
 # (stock_picking.is_employe_id, 1 817) ; départements, postes, catégories et une hr_version par employé
 MigrationHrEmployee(db_src,db_dst)
 
-Etape("Traductions allemandes")
+Etape("Traductions allemandes (~5 s)")
 # Les reprises de tables traduisibles ne prennent que le français : noms d'articles (2 308, listings en allemand),
 # listes de prix, unités (Pc), conditions de paiement, routes, types d'opérations. Données standard d'Odoo
 # (groupes, sous-types, incoterms...) : traduites par la v20
@@ -990,12 +990,12 @@ MigrationTraductions(db_src,db_dst,[
     ('stock.picking.type'  ,'name','stock_picking_type'),
 ],['de_DE'])
 
-Etape("Étiquettes des partenaires")
+Etape("Étiquettes des partenaires (~1 s)")
 # 42 étiquettes, 1 338 partenaires étiquetés ; catégories de l'analyse de la facturation (568 143 liens)
 MigrationTableJsonb(db_src,db_dst,'res_partner_category')
 MigrationTable(db_src,db_dst,'res_partner_res_partner_category_rel')
 
-Etape("Tables du module (promos, calcul des besoins, FNC, analyses, scans, étiquettes, relances...)")
+Etape("Tables du module : promos, calcul des besoins, FNC, analyses, scans, étiquettes, relances... (~2 min)")
 # Mêmes colonnes en v14 et en v20, copiées avec les ids de la source (liens vers les articles, commandes, transferts,
 # factures déjà repris avec leurs ids), sauf colonnes supprimées en v20 : message_main_attachment_id (analyses de marge
 # par lot, calcul des besoins, FNC, promos client), is_scan_picking.inventory_id (stock.inventory supprimé)
@@ -1053,7 +1053,7 @@ for table in [
         expressions = {'scrap_id': "(select s.move_id from stock_scrap s where s.id=t.scrap_id)"}
     MigrationTable(db_src,db_dst,table,expressions=expressions)
 
-Etape("Modèles de mail créés à la main")
+Etape("Modèles de mail créés à la main (~1 s)")
 # 23 modèles sans identifiant externe (ruptures, précommandes, promos, gammes...) ; les modèles avec identifiant sont
 # ceux de la v20. Ids de la v20 (17 à 23 déjà pris par des modèles standard), modèle (ir_model) retrouvé par son nom ;
 # nom, sujet et corps traduisibles en v20 ; expressions ${...} de la v14 => {{ ... }} (destinataire des modèles des
@@ -1088,7 +1088,7 @@ for t in modeles:
 cnx_dst.commit()
 print("Modèles de mail : %s"%len(modeles))
 
-Etape("Modèles d'export")
+Etape("Modèles d'export (~1 s)")
 # 61 modèles, 430 champs : copiés avec les ids de la v14 ; stock.production.lot => stock.lot ; fournisseur des prix
 # fournisseurs : name => partner_id ; sequence (nouveau en v20, ordre des champs) : 10 (valeur par défaut, ordre par id)
 # Champs absents en v20 (unité d'achat uom_po_id, champs OCA payment_mode_id et origin_country_id, last_price...) :
@@ -1126,7 +1126,7 @@ for row in supprimes:
 
 
 # ** Serveurs de mail **********************************************************
-Etape("Serveurs de mail")
+Etape("Serveurs de mail (~1 s)")
 # smtp_by_user (v14) => standard v20 : utilisateur du serveur (user_id) => owner_user_id (unique, un serveur par
 # utilisateur en v14 aussi), adresse d'envoi (smtp_user) => from_filter ; 16 serveurs, mots de passe compris
 # Archivés sur la base de test (aucun mail réel envoyé) : le nettoyage quotidien d'Odoo (autovacuum) supprime les
@@ -1142,7 +1142,7 @@ MigrationTable(db_src,db_dst,'ir_mail_server',expressions={
 
 
 # ** Prompts IA ****************************************************************
-Etape("Prompts IA")
+Etape("Prompts IA (~1 s)")
 # Configuration IA de la société (is_vllm_*) : reprise avec la société ; is_llm2odoo installé dans fromtome20-vierge
 # 23 prompts des fiches articles : modèle (ir_model) et champ (ir_model_fields) aux ids différents en v20 =>
 # retrouvés par leur nom après la copie
@@ -1163,7 +1163,7 @@ cnx_dst.commit()
 
 
 # ** Pièces jointes ************************************************************
-Etape("Pièces jointes")
+Etape("Pièces jointes (1 min 35)")
 # Méthode ACPL et Jurabotec : filestore de la production copié tel quel dans celui de fromtome20 => données seulement,
 # store_fname conservé (copier_fichiers=False) ; ids de la v14 conservés (garder_ids), sauf collision avec les pièces
 # jointes techniques de la v20 (ids remplacés ensuite partout)
@@ -1241,7 +1241,7 @@ if logo:
 
 
 # ** Filtres favoris ***********************************************************
-Etape("Filtres favoris")
+Etape("Filtres favoris (1 s)")
 # Actions retrouvées par identifiant externe ; is_fromtome14 => is_fromtome20 ; filtre sans action retrouvée : pour
 # tous les menus du modèle, plus par défaut (voir MigrationIrFilters)
 MigrationIrFilters(db_src,db_dst,modules={'is_fromtome14':'is_fromtome20'})
@@ -1254,7 +1254,7 @@ cnx_dst.commit()
 
 
 # ** Chatter et activités ******************************************************
-Etape("Chatter et activités")
+Etape("Chatter et activités (8 min)")
 # Abonnés, messages et activités des enregistrements créés pendant les essais dans fromtome20, supprimés par la relance
 # (sinon « Erreur, un partenaire ne peut pas suivre deux fois le même objet »)
 SupprimerChatterOrphelin(db_dst)
@@ -1317,7 +1317,7 @@ RattacherPiecesJointes(db_dst,[('mail_activity_is_attachment_ids_rel','activity_
 
 
 # ** Tableaux de bord **********************************************************
-Etape("Tableaux de bord")
+Etape("Tableaux de bord, valeurs par défaut, contrôle (1 min)")
 # Module board (communautaire, même fonctionnement en v20 : « Ajouter au tableau de bord », menu My Dashboard) ;
 # ir_ui_view_custom : 99 lignes en v14 = historique (une ligne par modification), Odoo n'affiche que la dernière de
 # chaque utilisateur => dernière version des 11 utilisateurs ; vue du tableau de bord (ref_id) : id de la v20
