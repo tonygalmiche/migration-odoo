@@ -9,6 +9,7 @@
 from migration_fonction import *
 from psycopg2.extras import execute_values
 import atexit
+import re
 
 
 #** Paramètres ****************************************************************
@@ -135,6 +136,10 @@ if depart<=6:
     # => les identifiants externes base pointent sur les ids de la source et l'ancien default perd ses groupes
     MigrationUtilisateursTechniques(db_src,db_dst)
 
+    # Création des articles : en v14, droit des administrateurs Ventes, Stock, Achats... ; en v20, seulement le nouveau
+    # groupe « Produits : Créer » => donné aux utilisateurs qui avaient ce droit en v14
+    MigrationCreationArticles(db_src,db_dst)
+
     # Utilisateur système __system__ : inactif, comme dans une base Odoo standard
     cr_dst.execute("update res_users set active=false where id=1")
     cnx_dst.commit()
@@ -155,13 +160,8 @@ if depart<=6:
     cnx_dst.commit()
 
     # Précisions décimales de la v14 (4 décimales : quantités, poids, prix, volume ; 2 par défaut en v20 : prix et
-    # quantités arrondis à la saisie, 11,32 kg au lieu de 11,3180 sur les BL) ; « Product Unit of Measure » renommé
-    # « Product Unit » en v20
-    cr_src.execute("select name, digits from decimal_precision")
-    for row in cr_src.fetchall():
-        nom = {'Product Unit of Measure': 'Product Unit'}.get(row['name'],row['name'])
-        cr_dst.execute("update decimal_precision set digits=%s where name=%s",[row['digits'],nom])
-    cnx_dst.commit()
+    # quantités arrondis à la saisie, 11,32 kg au lieu de 11,3180 sur les BL)
+    MigrationPrecisionsDecimales(db_src,db_dst)
 
     # Pied de page des documents : texte traduit en v14 (ir_translation, avec retours à la ligne ; la valeur de base est
     # une ancienne version) => html par langue en v20 (sinon pied de page calculé : téléphone, e-mail, TVA, SIRET)
@@ -203,6 +203,9 @@ if depart<=6:
 
     # Inscription libre au portail (b2c en v14) fermée : sur invitation seulement (point 4 du § 5 de la doc)
     InscriptionSurInvitation(db_dst)
+
+    # Paiement en ligne des factures : coché par défaut en v20 => valeur d'après les moyens de paiement actifs en v14
+    MigrationPaiementEnLigne(db_src,db_dst)
 
     # Couleur de l'entreprise (barre de menus, boutons, onglets)
     ThemeEntreprise()
@@ -310,6 +313,20 @@ if depart<=6:
     # Liste de prix des clients : propriété en v14, champ jsonb par société en v20
     MigrationTableJsonb(db_src,db_dst,'product_pricelist')
     MigrationIrPropertyJsonb(db_src,db_dst,'res.partner','property_product_pricelist','specific_property_product_pricelist')
+
+    # Groupes de pays des listes de prix (15 liens) : groupes « Allemagne » et « Italie » créés à la main en v14 (sans
+    # pays) ; ids différents en v20 => groupe retrouvé par son nom, créé s'il n'existe pas
+    cr_dst.execute("delete from res_country_group_pricelist_rel")
+    cr_src.execute("select r.pricelist_id, g.name from res_country_group_pricelist_rel r join res_country_group g on g.id=r.res_country_group_id")
+    for row in cr_src.fetchall():
+        cr_dst.execute("select id from res_country_group where %s in (name->>'en_US', name->>'fr_FR')",[row['name']])
+        groupe = cr_dst.fetchone()
+        if not groupe:
+            cr_dst.execute("insert into res_country_group (name,create_uid,create_date,write_uid,write_date) values (%s,1,now(),1,now()) returning id",
+                [json.dumps({'en_US': row['name'], 'fr_FR': row['name']})])
+            groupe = cr_dst.fetchone()
+        cr_dst.execute("insert into res_country_group_pricelist_rel (pricelist_id,res_country_group_id) values (%s,%s) on conflict do nothing",[row['pricelist_id'],groupe['id']])
+    cnx_dst.commit()
 
     # Règles de prix (106 557) : active supprimé en v20 (en v14, copie de celui de la liste de prix ; les règles des
     # listes archivées restent masquées par le domaine de is_pricelist_item_ids, voir étape 7 du module)
@@ -614,7 +631,7 @@ if depart<=7:
         'account_tax_filiation_rel',                # taxes groupées (aucune en v14)
         'account_fiscal_position_account_tax_rel',  # recréées plus bas à partir de la v14
         'account_tax_alternatives',                 # recréées plus bas à partir de la v14
-        'account_reconcile_model_line',             # modèles de rapprochement : ceux de la v14 (2) n'existent plus en v20
+        'account_reconcile_model_line',             # modèles de rapprochement : ceux de la v14, repris plus bas
         'account_reconcile_model',
     ]:
         cr_dst.execute("delete from "+table)
@@ -783,6 +800,15 @@ if depart<=7:
     # Taxes des articles (6 263 / 6 266, ids des taxes de la v14)
     for table in ['product_taxes_rel','product_supplier_taxes_rel']:
         MigrationTable(db_src,db_dst,table)
+
+    # Modèles de rapprochement bancaire (2), comme Jurabotec 16→20 : « Frais bancaires » (bouton de contre-passation,
+    # compte 627800) => modèle manuel (rule_type reco_model) ; « Règle de rapprochement des factures » (invoice_matching,
+    # supprimé en v20) : non reprise, le rapprochement avec les factures est intégré aux relevés en v20
+    MigrationTableJsonb(db_src,db_dst,'account_reconcile_model',default={'trigger':'manual','payment_tolerance':0})
+    MigrationTableJsonb(db_src,db_dst,'account_reconcile_model_line')
+    cr_dst.execute("delete from account_reconcile_model where rule_type<>'writeoff_button'") # lignes supprimées en cascade
+    cr_dst.execute("update account_reconcile_model set rule_type='reco_model', trigger='manual'")
+    cnx_dst.commit()
 
     # Identifiants externes des modèles repris (journaux : par la correspondance par code, sans identifiant en v14)
     # Taxes renommées (voir taxes_renommees) : identifiants « biens » de la v20 gardés sur les taxes v14 correspondantes
@@ -1040,6 +1066,76 @@ if depart<=8:
         if table in ('is_analyse_facturation','is_analyse_marge_lot_ligne'):
             expressions = {'scrap_id': "(select s.move_id from stock_scrap s where s.id=t.scrap_id)"}
         MigrationTable(db_src,db_dst,table,expressions=expressions)
+
+    Etape("Étape 8 : modèles de mail créés à la main")
+    # 23 modèles sans identifiant externe (ruptures, précommandes, promos, gammes...) ; les modèles avec identifiant sont
+    # ceux de la v20. Ids de la v20 (17 à 23 déjà pris par des modèles standard), modèle (ir_model) retrouvé par son nom ;
+    # nom, sujet et corps traduisibles en v20 ; expressions ${...} de la v14 => {{ ... }} (destinataire des modèles des
+    # contacts : ${object.id or ''}) ; corps sans expression, repris tel quel ; pièces jointes des modèles (2) : reprises
+    # avec leurs ids (étape 11)
+    sans_identifiant = "not exists (select 1 from ir_model_data d where d.model='mail.template' and d.res_id=t.id)"
+    cr_dst.execute("delete from mail_template t where "+sans_identifiant) # relance de l'étape
+    cr_src.execute("select * from mail_template t where "+sans_identifiant+" order by id")
+    modeles = cr_src.fetchall()
+    def Expressions(texte):
+        return re.sub(r'\$\{\s*(.*?)\s*\}',r'{{ \1 }}',texte) if texte else texte
+    for t in modeles:
+        if re.search(r'\$\{|^\s*%',t['body_html'] or '',re.M):
+            print("Modèle de mail %s : expression v14 dans le corps, à convertir à la main"%t['id'])
+        cr_dst.execute("""
+            insert into mail_template (name,model_id,model,subject,body_html,email_from,email_to,email_cc,partner_to,reply_to,
+                lang,use_default_to,auto_delete,scheduled_date,active,create_uid,create_date,write_uid,write_date)
+            values (%s,(select id from ir_model where model=%s),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            returning id
+        """,[
+            json.dumps({'en_US': t['name'], 'fr_FR': t['name']}), t['model'], t['model'],
+            t['subject'] and json.dumps({'en_US': Expressions(t['subject']), 'fr_FR': Expressions(t['subject'])}),
+            t['body_html'] and json.dumps({'en_US': t['body_html'], 'fr_FR': t['body_html']}),
+            Expressions(t['email_from']), Expressions(t['email_to']), Expressions(t['email_cc']), Expressions(t['partner_to']),
+            Expressions(t['reply_to']), Expressions(t['lang']), t['use_default_to'], t['auto_delete'], t['scheduled_date'],
+            t['active'], t['create_uid'], t['create_date'], t['write_uid'], t['write_date'],
+        ])
+        id20 = cr_dst.fetchone()['id']
+        cr_src.execute("select attachment_id from email_template_attachment_rel where email_template_id=%s",[t['id']])
+        for row in cr_src.fetchall():
+            UpdateSansControle('email_template_attachment_rel',"insert into email_template_attachment_rel (email_template_id,attachment_id) values (%s,%s)",[id20,row['attachment_id']])
+    cnx_dst.commit()
+    print("Modèles de mail : %s"%len(modeles))
+
+    Etape("Étape 8 : modèles d'export")
+    # 61 modèles, 430 champs : copiés avec les ids de la v14 ; stock.production.lot => stock.lot ; fournisseur des prix
+    # fournisseurs : name => partner_id ; sequence (nouveau en v20, ordre des champs) : 10 (valeur par défaut, ordre par id)
+    # Champs absents en v20 (unité d'achat uom_po_id, champs OCA payment_mode_id et origin_country_id, last_price...) :
+    # supprimés, sinon export refusé ; modèles OCA absents en v20 (ordres de paiement, 2 modèles) : gardés tels quels
+    # pour le 2e temps
+    MigrationTable(db_src,db_dst,'ir_exports',expressions={
+        'resource': "case when t.resource='stock.production.lot' then 'stock.lot' else t.resource end",
+    })
+    MigrationTable(db_src,db_dst,'ir_exports_line',expressions={
+        'name'    : "regexp_replace(t.name,'(^|/)seller_ids/name(/|$)','\\1seller_ids/partner_id\\2')",
+        'sequence': "10",
+    })
+    cr_dst.execute("select model,name,relation from ir_model_fields")
+    champs = {(row['model'],row['name']): row['relation'] for row in cr_dst.fetchall()}
+    modeles = {m for m,n in champs}
+    cr_dst.execute("select l.id,l.name,e.resource from ir_exports_line l join ir_exports e on e.id=l.export_id")
+    supprimes = []
+    for row in cr_dst.fetchall():
+        modele = row['resource']
+        if modele not in modeles:
+            continue
+        for champ in row['name'].split('/'):
+            if champ in ('id','.id'):
+                break
+            if (modele,champ) not in champs:
+                supprimes.append(row)
+                break
+            modele = champs[(modele,champ)]
+    if supprimes:
+        cr_dst.execute("delete from ir_exports_line where id = any(%s)",[[row['id'] for row in supprimes]])
+        cnx_dst.commit()
+    for row in supprimes:
+        print("Modèle d'export %s : champ %s absent en v20, supprimé"%(row['resource'],row['name']))
     #******************************************************************************
 
 
