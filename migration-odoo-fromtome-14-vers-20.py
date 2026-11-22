@@ -805,7 +805,8 @@ if depart<=7:
     # Modèles de rapprochement bancaire (2), comme Jurabotec 16→20 : « Frais bancaires » (bouton de contre-passation,
     # compte 627800) => modèle manuel (rule_type reco_model) ; « Règle de rapprochement des factures » (invoice_matching,
     # supprimé en v20) : non reprise, le rapprochement avec les factures est intégré aux relevés en v20
-    MigrationTableJsonb(db_src,db_dst,'account_reconcile_model',default={'trigger':'manual','payment_tolerance':0})
+    # payment_tolerance_type : obligatoire en v20, absent en v14 => valeur par défaut d'Odoo (percentage, comme Jurabotec)
+    MigrationTableJsonb(db_src,db_dst,'account_reconcile_model',default={'trigger':'manual','payment_tolerance':0,'payment_tolerance_type':'percentage'})
     MigrationTableJsonb(db_src,db_dst,'account_reconcile_model_line')
     cr_dst.execute("delete from account_reconcile_model where rule_type<>'writeoff_button'") # lignes supprimées en cascade
     cr_dst.execute("update account_reconcile_model set rule_type='reco_model', trigger='manual'")
