@@ -1336,7 +1336,49 @@ if depart<=11:
     cnx_dst.commit()
     RattacherPiecesJointes(db_dst,[('mail_activity_is_attachment_ids_rel','activity_id','mail.activity','file_id')])
 
-    # Tableaux de bord personnels (board, 99 vues dans ir_ui_view_custom) : non repris, à décider (DGET : non repris)
+    #******************************************************************************
+
+
+    # ** Tableaux de bord (étape 12) **********************************************
+    Etape("Étape 12 : tableaux de bord")
+    # Module board (communautaire, même fonctionnement en v20 : « Ajouter au tableau de bord », menu My Dashboard) ;
+    # ir_ui_view_custom : 99 lignes en v14 = historique (une ligne par modification), Odoo n'affiche que la dernière de
+    # chaque utilisateur => dernière version des 11 utilisateurs ; vue du tableau de bord (ref_id) : id de la v20
+    # Éléments (<action name="id">) : action retrouvée par son identifiant externe (is_fromtome14 => is_fromtome20),
+    # retirée si elle n'existe plus ; filtres, regroupements et mode de vue gardés tels quels ; attribut modifiers retiré
+    import xml.etree.ElementTree as ET
+    cr_src.execute("select d.module, d.name, d.res_id from ir_model_data d where d.model like 'ir.actions.%%'")
+    xmlids_actions = {row['res_id']: (row['module'],row['name']) for row in cr_src.fetchall()}
+    cr_dst.execute("select module, name, res_id from ir_model_data where model like 'ir.actions.%%'")
+    actions_dst = {(row['module'],row['name']): row['res_id'] for row in cr_dst.fetchall()}
+    vue_dst = ExternalId2Id(cr_dst,'board_my_dash_view',module='board',model='ir.ui.view')
+    cr_dst.execute("delete from ir_ui_view_custom")
+    cr_src.execute("""
+        select distinct on (c.user_id) c.*, u.login
+        from ir_ui_view_custom c join res_users u on u.id=c.user_id
+        where c.ref_id=(select res_id from ir_model_data where module='board' and name='board_my_dash_view')
+        order by c.user_id, c.id desc
+    """)
+    for row in cr_src.fetchall():
+        arch = ET.fromstring(row['arch'])
+        for colonne in arch.iter('column'):
+            for action in list(colonne.findall('action')):
+                xmlid = xmlids_actions.get(int(action.get('name')))
+                if xmlid:
+                    xmlid = ({'is_fromtome14':'is_fromtome20'}.get(xmlid[0],xmlid[0]),xmlid[1])
+                id20 = actions_dst.get(xmlid)
+                if id20:
+                    action.set('name',str(id20))
+                    action.attrib.pop('modifiers',None)
+                else:
+                    print("Tableau de bord de %s : « %s » retiré (action %s, %s, absente en v20)"%(row['login'],action.get('string'),action.get('name'),xmlid))
+                    colonne.remove(action)
+        cr_dst.execute("""
+            insert into ir_ui_view_custom (ref_id,user_id,arch,create_uid,create_date,write_uid,write_date)
+            values (%s,%s,%s,%s,%s,%s,%s)
+        """,[vue_dst,row['user_id'],ET.tostring(arch,encoding='unicode'),row['create_uid'],row['create_date'],row['write_uid'],row['write_date']])
+        print("Tableau de bord de %s : %s éléments"%(row['login'],len(arch.findall('.//action'))))
+    cnx_dst.commit()
     #******************************************************************************
 
 
