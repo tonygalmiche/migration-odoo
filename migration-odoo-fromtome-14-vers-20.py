@@ -1073,8 +1073,8 @@ if depart<=8:
     # 23 modèles sans identifiant externe (ruptures, précommandes, promos, gammes...) ; les modèles avec identifiant sont
     # ceux de la v20. Ids de la v20 (17 à 23 déjà pris par des modèles standard), modèle (ir_model) retrouvé par son nom ;
     # nom, sujet et corps traduisibles en v20 ; expressions ${...} de la v14 => {{ ... }} (destinataire des modèles des
-    # contacts : ${object.id or ''}) ; corps sans expression, repris tel quel ; pièces jointes des modèles (2) : liées à
-    # l'étape 11, avec les pièces jointes
+    # contacts : ${object.id or ''}) ; corps sans expression, repris tel quel ; pièces jointes des modèles (2) : reprises
+    # avec leurs ids (étape 11)
     sans_identifiant = "not exists (select 1 from ir_model_data d where d.model='mail.template' and d.res_id=t.id)"
     cr_dst.execute("delete from mail_template t where "+sans_identifiant) # relance de l'étape
     cr_src.execute("select * from mail_template t where "+sans_identifiant+" order by id")
@@ -1088,6 +1088,7 @@ if depart<=8:
             insert into mail_template (name,model_id,model,subject,body_html,email_from,email_to,email_cc,partner_to,reply_to,
                 lang,use_default_to,auto_delete,scheduled_date,active,create_uid,create_date,write_uid,write_date)
             values (%s,(select id from ir_model where model=%s),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            returning id
         """,[
             json.dumps({'en_US': t['name'], 'fr_FR': t['name']}), t['model'], t['model'],
             t['subject'] and json.dumps({'en_US': Expressions(t['subject']), 'fr_FR': Expressions(t['subject'])}),
@@ -1096,6 +1097,10 @@ if depart<=8:
             Expressions(t['reply_to']), Expressions(t['lang']), t['use_default_to'], t['auto_delete'], t['scheduled_date'],
             t['active'], t['create_uid'], t['create_date'], t['write_uid'], t['write_date'],
         ])
+        id20 = cr_dst.fetchone()['id']
+        cr_src.execute("select attachment_id from email_template_attachment_rel where email_template_id=%s",[t['id']])
+        for row in cr_src.fetchall():
+            UpdateSansControle('email_template_attachment_rel',"insert into email_template_attachment_rel (email_template_id,attachment_id) values (%s,%s)",[id20,row['attachment_id']])
     cnx_dst.commit()
     print("Modèles de mail : %s"%len(modeles))
 
@@ -1195,8 +1200,9 @@ if depart<=11:
         'is.modele.commande','is.enseigne.commerciale','is.export.compta','is.fnc','is.import.le.cellier',
         'mail.message','mail.activity',
     )
-    # Pièces jointes déjà reprises (relance) et images par défaut de la v20 supprimées avant la copie ; pièces jointes
-    # rattachées par une relance précédente (société, modèles de mail) comprises
+    # Images par défaut de la v20 supprimées avant la copie. Étape non relançable seule (--depart 11) : la suppression
+    # vide en cascade les liens copiés aux étapes 3 à 8 (fiches techniques, pièce jointe principale des factures, modèles
+    # de mail) => repartir de 0
     cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles])
     cr_dst.execute("delete from ir_attachment where res_model in ('res.company','mail.template') and res_field is null")
     cnx_dst.commit()
@@ -1209,40 +1215,6 @@ if depart<=11:
         or id in (select attachment_id from email_template_attachment_rel)
     """%str(modeles)
     ids_pj = MigrationPiecesJointes(db_src,db_dst,where,copier_fichiers=False,garder_ids=True)
-
-    # Liens vers les pièces jointes copiés aux étapes 2 à 8 : vidés en cascade (pièce jointe principale des factures :
-    # mise à vide) par la suppression des pièces jointes ci-dessus sur une relance (--depart 11) => recopiés ici depuis la
-    # v14, avec les ids de la v14 (remplacés juste après s'ils ont changé)
-    for table in [
-        'product_is_fiche_technique_rel',
-        'sale_order_is_import_excel_ids_rel',
-        'res_company_is_import_excel_ids_rel',
-        'is_enseigne_commerciale_modele_commande_rel',
-        'is_modele_commande_modele_commande_rel',
-        'is_import_le_cellier_attachment_rel',
-        'is_export_compta_attachment_rel',
-    ]:
-        MigrationTable(db_src,db_dst,table)
-    # Pièce jointe principale des factures (PDF, utilisé plus bas) : id de la destination directement
-    cr_src.execute("select id, message_main_attachment_id from account_move where message_main_attachment_id is not null")
-    execute_values(cr_dst,"update account_move m set message_main_attachment_id=s.pj from (values %s) as s(id,pj) where s.id=m.id",
-        [(row['id'],ids_pj[row['message_main_attachment_id']]) for row in cr_src.fetchall() if row['message_main_attachment_id'] in ids_pj],page_size=5000)
-    cnx_dst.commit()
-    # Pièces jointes des modèles de mail (2) : modèle v20 (autre id, étape 8) retrouvé par son nom, son modèle et sa date
-    # de création (copiés de la v14)
-    cr_dst.execute("delete from email_template_attachment_rel")
-    cr_src.execute("""
-        select r.attachment_id, t.name, t.model, t.create_date
-        from email_template_attachment_rel r join mail_template t on t.id=r.email_template_id
-    """)
-    for row in cr_src.fetchall():
-        cr_dst.execute("select id from mail_template where name->>'fr_FR'=%s and model=%s and create_date=%s",[row['name'],row['model'],row['create_date']])
-        modele = cr_dst.fetchone()
-        if modele and row['attachment_id'] in ids_pj:
-            cr_dst.execute("insert into email_template_attachment_rel (email_template_id,attachment_id) values (%s,%s) on conflict do nothing",[modele['id'],ids_pj[row['attachment_id']]])
-        else:
-            print("Modèle de mail « %s » : pièce jointe %s non liée (modèle ou pièce jointe absent)"%(row['name'],row['attachment_id']))
-    cnx_dst.commit()
 
     # Ids qui ont changé (collision avec les pièces jointes techniques de la v20) : remplacés partout (tables de relation
     # du module, modèles de mail, pièce jointe principale des factures copiée à l'étape 7)
