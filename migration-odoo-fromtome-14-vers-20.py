@@ -43,8 +43,10 @@ def UpdateSansControle(table,SQL,params=None):
     cnx_dst.commit()
 
 # Heures de début et de fin, durée : affichées aussi en cas d'arrêt (sys.exit, erreur)
+# Durée prévue : reprise complète du 23/11/2026 (15 min 13)
 debut = datetime.now()
 print("Début : %s"%debut.strftime('%d/%m/%Y %H:%M:%S'))
+print("Durée prévue : 15 min (fin vers %s)"%(debut+timedelta(minutes=15)).strftime('%H:%M'))
 @atexit.register
 def AfficherDuree():
     fin = datetime.now()
