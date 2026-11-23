@@ -164,8 +164,9 @@ if pied:
 # Mise en page des documents : agencement « Boxed » en v14 (web.external_layout_boxed), supprimé en v20 => « Light »
 # (web.external_layout_standard, en-tête et pied de page Fromtome : report/external_layout_boxed.xml du module) avec
 # les tableaux « Encadré » (report_tables_id boxed : classes o_report_layout_boxed de l'ancien Boxed) ;
-# format A4 avec les marges de la v14 (haut 40, bas 32, gauche et droite 7, en-tête 35 mm). Format en noupdate :
-# non écrasé par un -u base
+# format A4 avec les marges de la v14 (haut 40, gauche et droite 7, en-tête 35 mm), sauf le bas : 18 mm au lieu de 32
+# (pied de page v20 sur 3 lignes, société à gauche et numéro de page à droite). Format en noupdate : non écrasé par
+# un -u base
 cr_dst.execute("select res_id from ir_model_data where module='web' and name='external_layout_standard'")
 layout_id = cr_dst.fetchone()['res_id']
 cr_dst.execute("select res_id from ir_model_data where module='base' and name='paperformat_euro'")
@@ -179,7 +180,7 @@ format_src = cr_src.fetchone()
 # Marges CSS (css_margins, nouveau en v20, coché sur l'A4) désactivées : elles ajoutent 11 mm au-dessus de l'en-tête
 # et sur les côtés, en plus des marges de la v14 (en-tête sur le texte des pages suivantes ; trouvé chez ACPL)
 cr_dst.execute("update report_paperformat set margin_top=%s, margin_bottom=%s, margin_left=%s, margin_right=%s, header_spacing=%s, css_margins=false where id=%s",
-    [format_src['margin_top'],format_src['margin_bottom'],format_src['margin_left'],format_src['margin_right'],format_src['header_spacing'],paperformat_id])
+    [format_src['margin_top'],18,format_src['margin_left'],format_src['margin_right'],format_src['header_spacing'],paperformat_id])
 cnx_dst.commit()
 
 # URL utilisée par wkhtmltopdf pour charger les CSS et images des rapports : web.base.url n'est pas joignable depuis
