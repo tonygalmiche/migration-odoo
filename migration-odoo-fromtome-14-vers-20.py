@@ -325,7 +325,10 @@ cnx_dst.commit()
 # listes archivées restent masquées par le domaine de is_pricelist_item_ids, voir étape 7 du module)
 # compute_price : « formula » (13 règles, remise de -8 % à +5 %) et « percentage » (1 règle, 37,619 %) supprimés en
 # v20 => « discount » avec la même remise (price_discount ; pour percentage : percent_price)
-MigrationTable(db_src,db_dst,'product_pricelist_item')
+# 116 règles inactives sur des listes actives (incohérence v14, 2022 à 2024 : PROHOGA, WÜRTH, BARUFE...) : ignorées par
+# le calcul du prix v14 (item.active = TRUE dans _compute_price_rule_get_items) => non reprises (actives en v20)
+MigrationTable(db_src,db_dst,'product_pricelist_item',
+    where="t.active or t.pricelist_id in (select id from product_pricelist where not active)")
 cr_dst.execute("update product_pricelist_item set compute_price='discount' where compute_price='formula'")
 cr_src.execute("select id,percent_price from product_pricelist_item where compute_price='percentage'")
 for row in cr_src.fetchall():
