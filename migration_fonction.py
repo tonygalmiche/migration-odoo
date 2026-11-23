@@ -1473,6 +1473,40 @@ def MigrationConfirmationSms(db_src,db_dst):
     cnx_dst.commit()
 
 
+def MigrationRegions(db_src,db_dst,tables=[('res_partner','state_id')]):
+    """Régions (res.country.state) : ids différents entre la source et la v20 (régions françaises de l'OCA l10n_fr_state
+    ajoutées après celles d'Odoo, pas au même rang) => une colonne state_id recopiée telle quelle pointe sur une région
+    d'un autre pays (Fromtome : 504 partenaires sur 505, Bourgogne-Franche-Comté => Napo, Équateur).
+    Correspondance par identifiant externe (module.nom), sinon par code pays + code région ; région introuvable => vide.
+    A appeler après la reprise des tables données (colonne de la destination, ids de la source)."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    SQL="""
+        select s.id, c.code as pays, s.code, s.name::text as nom,
+            (select d.module||'.'||d.name from ir_model_data d where d.model='res.country.state' and d.res_id=s.id limit 1) as xmlid
+        from res_country_state s join res_country c on c.id=s.country_id
+    """
+    cr_dst.execute(SQL)
+    dst = cr_dst.fetchall()
+    par_xmlid = {row['xmlid']: row['id'] for row in dst if row['xmlid']}
+    par_code  = {(row['pays'], row['code']): row['id'] for row in dst}
+    cr_src.execute(SQL)
+    correspondance = {}
+    for row in cr_src.fetchall():
+        correspondance[row['id']] = par_xmlid.get(row['xmlid']) or par_code.get((row['pays'], row['code']))
+    for table, colonne in tables:
+        cr_src.execute('select id, "%s" as state_id from %s where "%s" is not null'%(colonne, table, colonne))
+        lignes = cr_src.fetchall()
+        valeurs = [(row['id'], correspondance.get(row['state_id'])) for row in lignes]
+        if valeurs:
+            psycopg2.extras.execute_values(cr_dst,
+                'update %s t set "%s"=v.state_id::int from (values %%s) as v(id,state_id) where t.id=v.id'%(table, colonne),
+                valeurs, page_size=1000)
+        perdus = sum(1 for id, state_id in valeurs if not state_id)
+        print("MigrationRegions : %s.%s : %s régions reprises, %s introuvables (vidées)"%(table, colonne, len(valeurs)-perdus, perdus))
+    cnx_dst.commit()
+
+
 def GetFielsdId(cr,model,field):
     SQL="""
         select  id,name,model

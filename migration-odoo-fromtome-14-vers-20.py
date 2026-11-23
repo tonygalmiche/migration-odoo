@@ -88,6 +88,9 @@ MigrationTable(db_src,db_dst,'res_partner',exclure=['credit_limit'],default={
     'group_rfq'     : 'default',
     'group_on'      : 'default',
 })
+# Régions (505 partenaires, presque toutes françaises : OCA l10n_fr_state, installé dans fromtome20-vierge) : ids
+# différents en v20 => retrouvées par identifiant externe ou code (sinon Bourgogne-Franche-Comté => Napo, Équateur)
+MigrationRegions(db_src,db_dst)
 MigrationTable(db_src,db_dst,'res_users')
 MigrationTable(db_src,db_dst,'res_company_users_rel')
 
