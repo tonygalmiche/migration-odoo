@@ -1145,9 +1145,17 @@ Etape("Serveurs de mail (1 s)")
 # utilisateur en v14 aussi), adresse d'envoi (smtp_user) => from_filter ; 16 serveurs, mots de passe compris
 # Archivés sur la base de test (aucun mail réel envoyé) : le nettoyage quotidien d'Odoo (autovacuum) supprime les
 # serveurs personnels archivés, recréés à chaque reprise. À la bascule : option --serveurs-actifs (actifs comme en v14)
+# Adresses partagées (adresse du serveur différente de celle de l'utilisateur : Olivia et Lydia avec odoo@, Magali avec
+# prepa@, Damien avec contact@lecellierdufromager.fr) : pas de propriétaire v20 (refusé si from_filter différent de son
+# adresse), utilisateur dans is_user_id (surcharge de mail.mail dans is_fromtome20, comme smtp_by_user)
 actif = "t.active" if '--serveurs-actifs' in sys.argv else "false"
+partagee = """
+    lower(coalesce((select p.email from res_users u join res_partner p on p.id=u.partner_id where u.id=t.user_id),''))
+    <> lower(coalesce(t.smtp_user,''))
+"""
 MigrationTable(db_src,db_dst,'ir_mail_server',expressions={
-    'owner_user_id'      : "t.user_id",
+    'owner_user_id'      : "case when "+partagee+" then null else t.user_id end",
+    'is_user_id'         : "case when "+partagee+" then t.user_id end",
     'from_filter'        : "lower(t.smtp_user)",
     'smtp_authentication': "'login'",
     'active'             : actif,
