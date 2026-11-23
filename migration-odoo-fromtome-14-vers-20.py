@@ -1028,6 +1028,7 @@ for table in [
     'is_relance_facture_ligne',
     'is_listing_prix_client',                               # Listings de prix client (560, 160 185 articles)
     'is_listing_prix_client_product_rel',
+    'is_listing_prix_client_attachment_rel',                # PDF générés par les boutons du listing (v14 depuis le 06/11)
     'is_imprimer_etiquette_gs1',                            # Étiquettes GS1 imprimées (49 452)
     'is_scan_picking',                                      # Scans des transferts (32 200), lignes (807 000), articles
     'is_scan_picking_line',                                 # (321 427)
@@ -1171,13 +1172,13 @@ Etape("Pièces jointes (55 s)")
 # Repris : factures, transferts, achats, ventes (dont imports Excel), articles (fichiers, fiches techniques, images en
 # 5 tailles), partenaires (fichiers, images), pièces jointes des messages des partenaires (mail.message, sans res_id),
 # activités, enseignes, modèles de commande, exports compta, FNC, import Le Cellier, imports Excel de la société,
-# employés (images), pièces jointes des modèles de mail
+# employés (images), pièces jointes des modèles de mail, PDF générés des listings prix client
 # Non repris : XML Factur-X des documents EDI (sans modèle, déjà dans les PDF), styles .scss, ordres de paiement et DEB
 # (OCA, 2e temps), discussions, pièces jointes techniques (vues, menus, icônes de paiement, favicon), assistants
 modeles = (
     'account.move','stock.picking','purchase.order','sale.order','product.template','res.partner','hr.employee',
     'is.modele.commande','is.enseigne.commerciale','is.export.compta','is.fnc','is.import.le.cellier',
-    'mail.message','mail.activity',
+    'is.listing.prix.client','mail.message','mail.activity',
 )
 # Images par défaut de la v20 supprimées avant la copie
 cr_dst.execute("delete from ir_attachment where res_model in %s",[modeles])
