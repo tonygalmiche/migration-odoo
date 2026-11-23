@@ -587,6 +587,24 @@ for code in codes:
         continue
     MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
 print("Séquences reprises : %s"%len(codes))
+
+# Crons du module (7) : heure de passage, fréquence et état de la v14 (sinon heure de l'installation de la base
+# vierge, traitements lourds en pleine journée), retrouvés par leur identifiant externe
+cr_src.execute("""
+    select d.name, c.nextcall, c.active, c.interval_number, c.interval_type
+    from ir_cron c join ir_model_data d on d.model='ir.cron' and d.res_id=c.id and d.module='is_fromtome14'
+""")
+nb=0
+for row in cr_src.fetchall():
+    cr_dst.execute("""
+        update ir_cron set nextcall=%s, active=%s, interval_number=%s, interval_type=%s
+        where id=(select res_id from ir_model_data where model='ir.cron' and module='is_fromtome20' and name=%s)
+    """,[row['nextcall'], row['active'], row['interval_number'], row['interval_type'], row['name']])
+    nb+=cr_dst.rowcount
+    if not cr_dst.rowcount:
+        print("Cron %s absent en v20 : non repris"%row['name'])
+cnx_dst.commit()
+print("Crons du module repris : %s"%nb)
 #******************************************************************************
 
 
