@@ -204,6 +204,9 @@ MigrationPaiementEnLigne(db_src,db_dst)
 cr_dst.execute("update ir_config_parameter set value='False' where key='account_payment.enable_portal_payment'")
 cnx_dst.commit()
 
+# SMS à la validation des livraisons : désactivé en v14, activé par défaut dans fromtome20-vierge
+MigrationConfirmationSms(db_src,db_dst)
+
 # Couleur de l'entreprise (barre de menus, boutons, onglets)
 ThemeEntreprise()
 

@@ -1453,6 +1453,26 @@ def MigrationPaiementEnLigne(db_src,db_dst):
     print("MigrationPaiementEnLigne : account_payment.enable_portal_payment = %s"%valeur)
 
 
+def MigrationConfirmationSms(db_src,db_dst):
+    """SMS au client à la validation d'une livraison (Inventaire / Paramètres, module stock_sms) :
+    res_company.stock_move_sms_validation jusqu'en v16 => stock_text_confirmation (créé à True dans une base neuve v20,
+    d'où la fenêtre « Vous êtes sur le point de confirmer cet ordre de livraison par SMS » à la 1re validation).
+    Valeur de la source ; avertissement marqué comme déjà vu (has_received_warning_stock_sms). A appeler dans chaque
+    script après la reprise de res_company."""
+    cnx_src,cr_src=GetCR(db_src)
+    cnx_dst,cr_dst=GetCR(db_dst)
+    champs_src = GetChamps(cr_src,'res_company')
+    champ = 'stock_text_confirmation' if 'stock_text_confirmation' in champs_src else 'stock_move_sms_validation'
+    if champ not in champs_src:
+        print("MigrationConfirmationSms : stock_sms absent de la source, non modifié")
+        return
+    cr_src.execute("select id, coalesce("+champ+",false) as valeur from res_company")
+    for row in cr_src.fetchall():
+        cr_dst.execute("update res_company set stock_text_confirmation=%s, has_received_warning_stock_sms=true where id=%s",[row['valeur'],row['id']])
+        print("MigrationConfirmationSms : société %s, SMS à la validation des livraisons = %s"%(row['id'],row['valeur']))
+    cnx_dst.commit()
+
+
 def GetFielsdId(cr,model,field):
     SQL="""
         select  id,name,model
