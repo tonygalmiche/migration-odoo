@@ -574,12 +574,19 @@ MigrationReferencesStock(db_src,db_dst)
 Etape("Séquences (1 s)")
 # Commandes de vente (CC) et d'achat (CF) ; les transferts ont la séquence de leur type d'opération, recalée par
 # MigrationConfigurationStock
-for code in ['sale.order','purchase.order']:
+# Séquences du module (is.fnc, is.commande.fromtome, is.promo.client…, 10 en v14) : sinon reparties à 1 en v20, numéros en double
+cr_src.execute("select code from ir_sequence where code like 'is.%' order by code")
+codes = ['sale.order','purchase.order'] + [row['code'] for row in cr_src.fetchall()]
+for code in codes:
     cr_src.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
     seq_src = cr_src.fetchone()
     cr_dst.execute("select id from ir_sequence where code=%s order by id limit 1",[code])
     seq_dst = cr_dst.fetchone()
+    if not seq_dst:
+        print("Séquence %s absente en v20 : non reprise"%code)
+        continue
     MigrationIrSequence(db_src,db_dst,id_src=seq_src['id'],id_dst=seq_dst['id'])
+print("Séquences reprises : %s"%len(codes))
 #******************************************************************************
 
 
