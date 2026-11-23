@@ -199,6 +199,10 @@ InscriptionSurInvitation(db_dst)
 
 # Paiement en ligne des factures : coché par défaut en v20 => valeur d'après les moyens de paiement actifs en v14
 MigrationPaiementEnLigne(db_src,db_dst)
+# Puis décoché : serveur local, sans portail joignable par les clients (le virement activé en v14 le laissait coché :
+# lien « Payer maintenant » dans les mails et QR code de paiement qui ne mèneraient nulle part)
+cr_dst.execute("update ir_config_parameter set value='False' where key='account_payment.enable_portal_payment'")
+cnx_dst.commit()
 
 # Couleur de l'entreprise (barre de menus, boutons, onglets)
 ThemeEntreprise()
